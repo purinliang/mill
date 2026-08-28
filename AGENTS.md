@@ -101,27 +101,61 @@ job, task, shard, attempt, or state-transition semantics.
 Use a lightweight GitFlow-style workflow:
 
 ```text
-feature/* or fix/*
-        |
-        v
-     develop
-        |
-        v
-       main
+feature/*, fix/*, or docs/*
+              |
+              | --no-ff
+              v
+           develop
+              |
+              | --no-ff at a working milestone
+              v
+             main
 ```
 
-- `main` contains stable project history and working milestones.
-- `develop` is the normal integration branch for active development once
-  implementation begins.
-- Use short-lived `feature/<short-description>` branches for features.
-- Use short-lived `fix/<short-description>` branches for fixes.
-- Use `docs/<short-description>` branches for documentation-only work when a
-  separate branch is useful.
-- Merge completed, milestone-quality feature work into `develop`.
-- Merge `develop` into `main` when the repository reaches a meaningful working
-  milestone.
-- Do not add release or hotfix machinery unless the project develops a concrete
-  need for it.
+### Branch rules
+
+- `main` contains stable project history and working milestones. Do not develop
+  directly on it.
+- `develop` is the integration branch for completed work. Do not use it as a
+  working branch.
+- Create each working branch from an up-to-date `develop` using
+  `feature/<short-description>`, `fix/<short-description>`, or
+  `docs/<short-description>`.
+- Keep one task or coherent change on each working branch, and keep the branch
+  short-lived.
+- Rebase a working branch onto current `develop` before integration. Do not add
+  repeated "merge develop" commits to working branches.
+- Never force-push `main` or `develop`. Use `--force-with-lease`, never
+  `--force`, on a rebased working branch only when its rewrite is intentional.
+- Delete working branches after they are merged.
+- Do not add release or hotfix branches unless the project develops a concrete
+  need for them.
+
+### Merge rules
+
+- Merge completed working branches into `develop` with a merge commit using
+  `git merge --no-ff <branch>`.
+- Preserve the no-fast-forward merge as the visible boundary of the reviewed
+  change. Do not use a squash or rebase merge as the final integration method.
+- Clean up temporary or low-value agent/WIP commits before integration when they
+  would obscure the branch's intent; retain coherent commits that aid review.
+- Merge `develop` into `main` with `--no-ff` only when a meaningful working
+  milestone is reached.
+- Run the relevant tests and inspect the complete diff before either integration
+  merge. Record material test limitations in the handoff.
+- Use a Conventional Commit-style subject for an intentional merge commit when
+  Git does not generate one that clearly identifies the merged branch.
+
+For AI-assisted work, an agent may create, commit, rebase, and push its working
+branch as part of an authorized task. The agent must not merge into or push
+`develop` or `main` unless the user explicitly asks for that integration. Before
+integrating, report the branch, commits, changed files, tests, and any unresolved
+risks so the maintainer can inspect the unit of work.
+
+When repository hosting rules are configured, protect `main` and `develop` from
+force-push and deletion, require changes to arrive through pull requests, and
+allow merge commits as the integration method. Add required status checks when
+the repository has CI checks worth enforcing.
 
 Prefer clean, focused commits. Do not mix unrelated refactors with behavior
 changes.
