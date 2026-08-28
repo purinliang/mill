@@ -52,18 +52,18 @@ User
   |
   | submit/query job (HTTP/REST)
   v
-API ----------------------> PostgreSQL
-  |                          jobs, tasks, durable execution state
-  v
-Coordinator
-  |
-  | create and reconcile native Kubernetes work
-  v
-Kubernetes
-  +--> task 0 container --> S3 shard 0 / task 0 output
-  +--> task 1 container --> S3 shard 1 / task 1 output
-  +--> task 2 container --> S3 shard 2 / task 2 output
-  `--> ...
+API --------------------------> PostgreSQL
+                                 jobs, tasks, attempts, desired/observed state
+                                      ^
+                                      | reconcile durable intent
+                                      v
+                                 Coordinator
+                                      |
+                                      | create/observe native work
+                                      v
+                                 Kubernetes
+                                      |
+                                      +--> workload Pods <--> S3 inputs/outputs
 ```
 
 The API and coordinator are logical responsibilities, not a commitment to
@@ -76,6 +76,120 @@ Mill owns the job abstraction, task intent, reconciliation, and progress view.
 Kubernetes Indexed Jobs are a promising fit for shard-parallel execution and
 will be evaluated before introducing any custom scheduling mechanism.
 
+## Proposed correctness model
+
+The following model is the starting architecture, not an implemented schema or
+API contract. Its purpose is to keep retries and crash recovery consistent as
+the implementation is introduced.
+
+### Durable records
+
+- A **job** holds an immutable submission snapshot: resolved image digest,
+  versioned or checksummed manifest identity, output root, execution policy, and
+  request identity. Its preparation status distinguishes a job whose shards are
+  still being materialized from one with zero tasks.
+- A **task** is the logical obligation to process one immutable shard. There is
+  at most one task for each `(job, shard index)`, and its user-visible state is
+  `pending`, `running`, `completed`, or `failed`.
+- An **attempt** records one Mill-controlled execution generation for a task,
+  including its Kubernetes resource identity and observed outcome. Retrying a
+  task creates another attempt rather than erasing the previous failure.
+- A **result** identifies output from the successful attempt. PostgreSQL stores
+  its location and metadata; the output bytes remain in S3.
+
+This distinction does not imply four separate services or elaborate domain
+layers. It is a persistence and correctness boundary: a logical task can outlive
+any particular Kubernetes Pod, Job, coordinator process, or retry.
+
+### Submission and materialization
+
+Job creation should accept an idempotency key or equivalent client request ID.
+Repeating an identical request returns the original job; reusing the key for a
+different request is rejected.
+
+Before execution, Mill resolves the image to an immutable digest and records an
+immutable manifest version or checksum. It then materializes tasks
+idempotently, using the `(job, shard index)` identity to tolerate a coordinator
+crash halfway through expansion. The final shard count is persisted before job
+progress is treated as runnable. V1 should impose documented manifest-size and
+shard-count limits rather than imply unlimited task cardinality.
+
+### Dispatch and reconciliation
+
+PostgreSQL records desired work before the coordinator calls Kubernetes. There
+is no atomic transaction across PostgreSQL and the Kubernetes API, so correctness
+comes from reconciliation:
+
+1. Claim durable pending work and create an attempt.
+2. Create Kubernetes work with deterministic names and Mill job/task/attempt
+   labels.
+3. Record the observed Kubernetes UID and lifecycle state.
+4. Periodically compare durable intent with Kubernetes resources and repair
+   incomplete steps.
+
+Creating or observing the same attempt repeatedly must be safe. A crash before
+Kubernetes creation leaves an attempt that can be dispatched; a crash after
+creation but before the database update rediscovers the deterministically named
+resource instead of launching duplicate intended work. Watches may reduce
+latency, but periodic reconciliation remains the recovery mechanism.
+
+V1 may run one coordinator instance. Multiple active coordinators require an
+explicit PostgreSQL-backed claim or lease protocol before they are supported.
+
+### Execution, retries, and outputs
+
+Mill owns retry eligibility, retry budgets, and the durable attempt history.
+Kubernetes owns Pod placement and lifecycle. Kubernetes-level retry settings
+must be chosen deliberately so that native retries and Mill retries do not
+silently multiply one another.
+
+Execution is at least once. Kubernetes may start replacement or, rarely,
+overlapping Pods for the same logical work, so a workload must tolerate
+duplicate execution. Each physical execution writes to an attempt- or
+execution-specific S3 prefix and exits successfully only after its output is
+complete. Mill marks the task `completed` only after selecting and recording a
+successful result. Failed or superseded output can be retained temporarily for
+diagnosis and removed later by lifecycle policy.
+
+The expected task transitions are:
+
+```text
+pending --> running --> completed
+               |
+               v
+             failed --> pending (new retry attempt)
+```
+
+Transitions must reject stale observations, for example by checking the active
+attempt or record version. A job is preparing while shards are materialized,
+running while tasks remain active or retryable, completed when every task is
+completed, and failed when preparation fails or at least one task exhausts its
+retry policy.
+
+### Kubernetes execution primitive
+
+The preferred first investigation is one Kubernetes Indexed Job for a set of
+tasks, with completion indexes mapped to an immutable task list and native
+parallelism limiting active Pods. It is acceptable only if Mill can reliably
+attribute per-index failure, execution identity, and output while preserving the
+attempt model above.
+
+The fallback is one Kubernetes Job per task with Mill limiting the number of
+active Jobs. That mapping is simpler but creates more Kubernetes resources and
+is suitable only within explicit V1 task-count limits. This is workload
+admission, not container placement; Kubernetes remains the scheduler in either
+design. The choice will be recorded during Milestone 3 after testing both
+failure and recovery behavior.
+
+### Access boundaries
+
+Trusted workloads do not need an untrusted-code sandbox, but they should not
+inherit control-plane credentials. The coordinator receives only the Kubernetes
+permissions needed to manage Mill-owned resources. Workload Pods receive only
+the S3 permissions required for their assigned inputs and output prefix. Local
+development should preserve the same separation with development credentials or
+test doubles.
+
 ## Core concepts
 
 - **Job**: A user request to run one workload over every shard in a dataset. It
@@ -86,6 +200,8 @@ will be evaluated before introducing any custom scheduling mechanism.
   dataset manifest. Mill does not interpret the shard's data format.
 - **Task**: Mill's durable record of the work for one job and one shard. A task
   moves through explicit execution states and may be retried after failure.
+- **Attempt**: One durable execution generation for a task. Attempts preserve
+  retry history and connect Mill state to Kubernetes resources.
 - **Workload/container**: A trusted OCI image that implements the user
   computation. Mill will define a small contract for passing task identity,
   input location, and output location to it.
@@ -113,20 +229,20 @@ diagnostic or measurement requirement.
 
 ## Execution lifecycle
 
-1. A user submits a trusted image reference, a dataset manifest location, an
-   output destination, and execution settings such as parallelism.
-2. Mill validates the request and persists the job in PostgreSQL.
-3. Mill reads the manifest and creates one `pending` task for each shard.
-4. The coordinator represents the pending work with native Kubernetes
-   primitives and respects the configured parallelism.
-5. Workload containers receive task identity plus input and output locations,
-   read their shard from S3, and write results to S3.
-6. Mill reconciles Kubernetes execution with durable task state, recording each
-   task as `running`, then `completed` or `failed`.
-7. Job progress is reported from task counts, and status responses expose known
-   output locations.
-8. Failed tasks may be retried. Retry limits, backoff, and attempt persistence
-   will be defined during the reliability milestone rather than assumed now.
+1. A user submits an idempotent request containing a trusted image reference, a
+   dataset manifest location, an output destination, and execution settings.
+2. Mill resolves immutable input identities, persists the preparing job, and
+   idempotently materializes one `pending` task for each shard.
+3. The coordinator records an attempt before representing runnable work with a
+   native Kubernetes primitive.
+4. Workload containers receive task and execution identity plus input and output
+   locations, read their shard from S3, and write isolated results to S3.
+5. Mill reconciles Kubernetes observations into attempt and task state without
+   relying on one event delivery or one coordinator process lifetime.
+6. A successful output is recorded before the task becomes `completed`; an
+   unsuccessful attempt makes the task `failed` or eligible for another attempt.
+7. Job progress is calculated from the finalized task count, and status
+   responses expose committed result locations.
 
 ## Development milestones
 
@@ -139,14 +255,15 @@ No application implementation is part of this milestone.
 ### Milestone 1 — Local single-process control plane
 
 Implement the minimum Go domain model and REST API required to create and query
-jobs. Load pre-partitioned shard descriptions, persist metadata in PostgreSQL,
-and use a mock or local executor so control-plane behavior can be tested before
-Kubernetes integration.
+jobs. Establish job, task, attempt, and result persistence; idempotent submission
+and task materialization; explicit state transitions; and restart-safe
+reconciliation against a mock or local executor before Kubernetes integration.
 
 ### Milestone 2 — Container workload contract
 
 Define and document the minimal stable interface between Mill and workload
-containers, covering job/task identity and S3 input/output locations. Provide a
+containers, covering immutable job/task/execution identity, S3 input/output
+locations, duplicate execution, and successful output completion. Provide a
 small demonstration workload to verify the contract without expanding Mill's
 scope.
 
@@ -154,13 +271,15 @@ scope.
 
 Evaluate Kubernetes Indexed Jobs against the task model, then integrate the
 smallest suitable native Job/Pod approach. Support configurable parallelism and
-reconcile Kubernetes lifecycle information into Mill's task state.
+reconcile Kubernetes lifecycle information into Mill's attempt and task state.
+Configure Kubernetes and Mill retry ownership explicitly.
 
 ### Milestone 4 — Reliable execution
 
-Specify retry policy and execution attempts, make required state transitions
-idempotent, and test recovery after task, coordinator, and Kubernetes failures.
-Failures must be observable and must not silently lose durable job intent.
+Add retry backoff and policy controls, cleanup behavior, and fault-injection
+coverage. Test recovery after task, coordinator, and Kubernetes failures,
+including duplicate execution and every dispatch crash window. Failures must be
+observable and must not silently lose durable job intent.
 
 ### Milestone 5 — AWS deployment
 
