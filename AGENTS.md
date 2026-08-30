@@ -6,11 +6,11 @@ scope.
 
 ## Current project state
 
-Mill is in Milestone 0: project foundation. During the initialization task, only
-`README.md` and `AGENTS.md` may be created or modified. Do not add application
-code, source directories, Dockerfiles, Kubernetes manifests, CI workflows,
-Terraform, migrations, or other implementation files unless a later task
-explicitly begins an implementation milestone.
+Mill is entering Milestone 1: local single-process control plane. The project
+foundation is complete, and the first implemented slice is a minimal HTTP health
+endpoint. Add implementation only in small, explicitly requested increments. Do
+not add Dockerfiles, Kubernetes manifests, CI workflows, Terraform, migrations,
+or unrelated infrastructure unless a later task requires them.
 
 Do not describe planned behavior as implemented. Update the status in
 `README.md` whenever a milestone materially changes the repository's actual

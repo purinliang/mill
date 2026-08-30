@@ -227,6 +227,34 @@ Structured logs, Prometheus, Grafana, and OpenTelemetry are candidates, not
 baseline dependencies. They should be introduced only in response to an actual
 diagnostic or measurement requirement.
 
+## Local quick start
+
+The current development slice is a minimal HTTP process with one health
+endpoint. It has no external dependencies beyond Go 1.25 or later.
+
+```bash
+go run ./cmd/mill
+```
+
+The server listens on `:8080` by default. Set `MILL_HTTP_ADDR` to use another
+address. In another shell:
+
+```bash
+curl http://localhost:8080/healthz
+```
+
+The response is:
+
+```json
+{"status":"ok"}
+```
+
+Run the current tests with:
+
+```bash
+go test ./...
+```
+
 ## Execution lifecycle
 
 1. A user submits an idempotent request containing a trusted image reference, a
@@ -296,10 +324,10 @@ test vehicle; Mill remains the project under evaluation.
 
 ## Current status
 
-Mill is at project initialization. The architectural plan and development
-conventions are documented, but no API, control plane, persistence layer,
-executor, deployment, or workload contract has been implemented. All runtime
-capabilities described above are planned.
+Mill has entered Milestone 1. The architectural plan and development
+conventions are documented, and a minimal HTTP process with a health endpoint is
+implemented. The job API, domain model, persistence layer, executor, deployment,
+and workload contract remain planned.
 
 ## Local and cloud development philosophy
 
