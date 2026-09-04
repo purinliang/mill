@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+[[ $# -eq 0 ]] || { printf 'Usage: %s\n' "$0" >&2; exit 1; }
+cd "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+for required in go docker kind kubectl initdb pg_ctl psql curl jq mktemp wc tr tar cmp basename grep; do
+	command -v "${required}" >/dev/null || { printf 'Missing command: %s\n' "${required}" >&2; exit 1; }
+done
+parallelism="${MILL_PARALLELISM:-3}"
+[[ "${parallelism}" == 2 || "${parallelism}" == 3 ]] || { printf 'This demo supports MILL_PARALLELISM=2 or 3.\n' >&2; exit 1; }
+port="${MILL_DEMO_PORT:-18080}"
+[[ "${port}" =~ ^[0-9]+$ ]] && (( port > 1024 && port < 65536 )) || { printf 'Invalid MILL_DEMO_PORT\n' >&2; exit 1; }
+docker info >/dev/null
+kubectl --context kind-mill get node mill-control-plane >/dev/null
+[[ "$(initdb --version)" == *' 18.'* ]] || { printf 'PostgreSQL 18 tools are required.\n' >&2; exit 1; }
+
+run_directory="$(mktemp -d /tmp/mill-batch.XXXXXXXX)"
+node_directory="/var/local/$(basename "${run_directory}" | tr '[:upper:]' '[:lower:]' | tr '.' '-')"
+server_pid=""
+postgres_started=false
+job_id=""
+cleanup() {
+	local status=$?
+	if [[ -n "${server_pid}" ]]; then
+		kill -TERM "${server_pid}" 2>/dev/null || true
+		if ! wait "${server_pid}"; then
+			printf 'Mill did not exit cleanly; inspect server.log\n' >&2
+			status=1
+		fi
+	fi
+	if [[ "${postgres_started}" == true ]]; then
+		pg_ctl -D "${run_directory}/postgres" -m fast -w stop >/dev/null || true
+	fi
+	if (( status != 0 )); then
+		printf '\nDemo failed; inspect %s/server.log and %s/postgres.log\n' "${run_directory}" "${run_directory}" >&2
+		if [[ -n "${job_id}" ]]; then
+			kubectl --context kind-mill -n default get jobs,pods -l "mill.dev/job-id=${job_id}" || true
+		fi
+	fi
+	exit "${status}"
+}
+trap cleanup EXIT
+printf 'Local files: %s\nNode files: %s\n' "${run_directory}" "${node_directory}"
+mkdir "${run_directory}/input" "${run_directory}/output" "${run_directory}/socket"
+go run ./examples/word-count/generate --output "${run_directory}/input/records.jsonl"
+go build -o "${run_directory}/mill" ./cmd/mill
+docker build --file examples/word-count/cmd/word-count/Dockerfile --tag mill/word-count:dev .
+kind load docker-image mill/word-count:dev --name mill
+
+docker exec mill-control-plane mkdir -p /var/local
+docker exec mill-control-plane mkdir "${node_directory}"
+docker exec mill-control-plane chmod 0755 "${node_directory}"
+docker exec mill-control-plane mkdir "${node_directory}/input" "${node_directory}/output"
+docker exec mill-control-plane chmod 0755 "${node_directory}/input" "${node_directory}/output"
+docker exec -i mill-control-plane tee "${node_directory}/input/records.jsonl" < "${run_directory}/input/records.jsonl" >/dev/null
+docker exec mill-control-plane chmod 0444 "${node_directory}/input/records.jsonl"
+docker exec mill-control-plane chown 65532:65532 "${node_directory}/output"
+
+# A private Unix-socket-only database avoids changing a developer's existing
+# PostgreSQL instance. Its files are kept after the demo stops its processes.
+initdb -D "${run_directory}/postgres" --username=mill_demo --auth-local=trust --auth-host=reject --encoding=UTF8 --no-locale > "${run_directory}/initdb.log"
+pg_ctl -D "${run_directory}/postgres" -l "${run_directory}/postgres.log" -o "-k ${run_directory}/socket -h ''" -w start
+postgres_started=true
+psql "postgresql://mill_demo@/postgres?host=${run_directory}/socket" -v ON_ERROR_STOP=1 -c 'CREATE DATABASE mill' >/dev/null
+export MILL_DATABASE_URL="postgresql://mill_demo@/mill?host=${run_directory}/socket"
+for migration in migrations/*.sql; do
+	psql "${MILL_DATABASE_URL}" -v ON_ERROR_STOP=1 -f "${migration}" >/dev/null
+done
+export MILL_HTTP_ADDR="127.0.0.1:${port}" MILL_PARALLELISM="${parallelism}"
+export MILL_OUTPUT_ROOT_URI="file://${run_directory}/output"
+export MILL_EXECUTOR=kubernetes MILL_KUBE_CONTEXT=kind-mill MILL_KUBE_NAMESPACE=default MILL_KUBE_NODE=mill-control-plane
+export MILL_LOCAL_ROOT="${run_directory}" MILL_NODE_ROOT="${node_directory}"
+"${run_directory}/mill" > "${run_directory}/server.log" 2>&1 &
+server_pid=$!
+ready=false
+for _ in {1..60}; do
+	kill -0 "${server_pid}" 2>/dev/null || { printf 'Mill exited; inspect server.log\n' >&2; exit 1; }
+	if grep -q 'Mill HTTP server listening on' "${run_directory}/server.log" && curl -fsS "http://${MILL_HTTP_ADDR}/readyz" >/dev/null; then ready=true; break; fi
+	sleep 0.5
+done
+[[ "${ready}" == true ]] || { printf 'Mill did not become ready\n' >&2; exit 1; }
+
+jq -n --arg uri "file://${run_directory}/input/records.jsonl" \
+	'{executable:{image:"mill/word-count:dev",args:[]},input:{uri:$uri}}' > "${run_directory}/submission.json"
+curl -fsS "http://${MILL_HTTP_ADDR}/jobs" -H 'Content-Type: application/json' -H 'Idempotency-Key: word-count-batch' \
+	--data-binary "@${run_directory}/submission.json" > "${run_directory}/job.json"
+job_id="$(jq -er '.id' "${run_directory}/job.json")"
+expected_tasks="$(jq -er '.progress.total' "${run_directory}/job.json")"
+printf '\nMill job: %s\nWatch Pods: kubectl --context kind-mill -n default get pods -l mill.dev/job-id=%s -w\n' "${job_id}" "${job_id}"
+peak=0
+completed=false
+deadline=$((SECONDS + 180))
+while (( SECONDS < deadline )); do
+	curl -fsS "http://${MILL_HTTP_ADDR}/jobs/${job_id}" > "${run_directory}/status.json"
+	state="$(jq -r '.state' "${run_directory}/status.json")"
+	running="$(jq -r '.progress.running' "${run_directory}/status.json")"
+	(( running <= parallelism )) || { printf 'Concurrency limit exceeded\n' >&2; exit 1; }
+	if (( running > peak )); then peak=${running}; fi
+	jq -c '{state,progress}' "${run_directory}/status.json"
+	if [[ "${state}" == completed ]]; then completed=true; break; fi
+	[[ "${state}" != failed ]] || { printf 'Job failed; inspect server.log\n' >&2; exit 1; }
+	sleep 0.5
+done
+[[ "${completed}" == true ]] || { printf 'Timed out waiting for the batch\n' >&2; exit 1; }
+jq -e --argjson tasks "${expected_tasks}" '.progress.total == $tasks and .progress.completed == $tasks and (.results | length) == $tasks' "${run_directory}/status.json" >/dev/null
+
+docker exec mill-control-plane tar -C "${node_directory}/output" -cf - . | tar -C "${run_directory}/output" -xf -
+mapfile -t partials < <(jq -r '.results[].uri | sub("^file://"; "")' "${run_directory}/status.json")
+go run ./examples/word-count/cmd/merge "${partials[@]}" > "${run_directory}/counts.jsonl"
+input_size="$(wc -c < "${run_directory}/input/records.jsonl")"
+go run ./examples/word-count/cmd/word-count --job-id "${job_id}" --task-id local-baseline --shard-index 0 \
+	--input-uri "file://${run_directory}/input/records.jsonl" --input-start-byte 0 --input-end-byte "${input_size}" \
+	--output-uri "file://${run_directory}/baseline.jsonl" --
+cmp "${run_directory}/baseline.jsonl" "${run_directory}/counts.jsonl"
+printf '\nPASS: %s task outputs merged; exact match with the full-input local count.\nObserved peak running tasks: %s\nFinal counts: %s/counts.jsonl\nJob status: %s/status.json\n' "${expected_tasks}" "${peak}" "${run_directory}" "${run_directory}"
+printf 'Inspect: kubectl --context kind-mill -n default get jobs,pods -l mill.dev/job-id=%s\n' "${job_id}"
+printf 'Remove Jobs/Pods when finished: kubectl --context kind-mill -n default delete jobs -l mill.dev/job-id=%s\n' "${job_id}"

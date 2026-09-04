@@ -1,0 +1,70 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: @RUN_NAME@
+  namespace: default
+  labels:
+    app.kubernetes.io/name: mill-word-count-demo
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 120
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      # This demo's files are staged on this specific kind node.
+      nodeSelector:
+        kubernetes.io/hostname: mill-control-plane
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: word-count
+          image: mill/word-count:dev
+          imagePullPolicy: Never
+          args:
+            - --job-id
+            - '@RUN_NAME@'
+            - --task-id
+            - task-0
+            - --shard-index
+            - '0'
+            - --input-uri
+            - file:///data/input.jsonl
+            - --input-start-byte
+            - '0'
+            - --input-end-byte
+            - '@END_BYTE@'
+            - --output-uri
+            - file:///output/task-0/result.jsonl
+            - '--'
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 32Mi
+            limits:
+              cpu: '1'
+              memory: 128Mi
+          volumeMounts:
+            - name: input
+              mountPath: /data/input.jsonl
+              readOnly: true
+            - name: output
+              mountPath: /output
+      volumes:
+        - name: input
+          hostPath:
+            path: /var/local/@RUN_NAME@/input.jsonl
+            type: File
+        - name: output
+          hostPath:
+            path: /var/local/@RUN_NAME@/output
+            type: Directory
