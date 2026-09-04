@@ -184,8 +184,8 @@ The current request shape keeps execution policy out of the user-facing job:
 
 JSONL is the only format, so there is no redundant `format` field. Shard size
 and parallelism are not request fields. Mill generates the output root and
-returns it with the job. Arguments beginning with `--mill-` are reserved for
-the future Mill-to-container contract.
+returns it with the job. The workload contract uses `--` to keep Mill-owned
+flags separate from arbitrary user executable arguments.
 
 `Idempotency-Key` is required. Repeating the same key and submission returns the
 original job; using the key for different executable arguments or input URI is
@@ -201,9 +201,51 @@ For now, job state `running` means that materialization finished and the job has
 unfinished tasks; it does not claim that a container is currently active. Task
 counts provide the more precise execution view.
 
+## Workload CLI contract
+
+Mill-owned arguments come first, followed by a mandatory `--` separator and the
+user's executable arguments:
+
+```text
+--job-id <job-id>
+--task-id <task-id>
+--shard-index <zero-based-index>
+--input-uri <absolute-uri>
+--input-start-byte <inclusive-offset>
+--input-end-byte <exclusive-offset>
+--output-uri <absolute-uri>
+--
+<user executable arguments>
+```
+
+The half-open byte range `[start, end)` contains complete JSONL records. The
+output URI names the exact file/object for this execution, not merely a shared
+directory. Mill will derive attempt-specific output URIs when retry attempts
+are introduced.
+
+A conforming workload should:
+
+- read only its assigned input range;
+- treat the input as immutable for the duration of the job;
+- write only to its assigned output URI;
+- exit successfully only after publishing a complete output; and
+- return a non-zero exit status for a failed execution.
+
+The separator is always present, even when the user supplied no arguments. It
+makes ownership positional: flags before it belong to Mill and arguments after
+it belong unchanged to the executable. A user argument may therefore have the
+same spelling as a Mill flag without ambiguity. No equivalent environment
+variables are defined in this contract.
+
+`cmd/mill-jsonl-copy` is the first reference workload. It supports local
+`file://` URIs, copies exactly the assigned range to its output atomically, and
+performs no business computation. It proves the protocol; the control plane
+does not launch it yet.
+
 ## Module view
 
-Mill is one Go module and one deployable process. These are code responsibility
+Mill is one Go module with one control-plane process. The reference workload is
+a separate executable, not another service. These are code responsibility
 boundaries, not microservices.
 
 | Module | Status | Responsibility |
@@ -213,6 +255,8 @@ boundaries, not microservices.
 | Job HTTP API/model | Partially implemented | Validate, create, and retrieve jobs; report persisted task counts. Execution-driven transitions remain planned. |
 | JSONL partition planner | Implemented locally | Validate local input, calculate identity, and create logical record-aligned byte ranges. S3 access remains planned. |
 | PostgreSQL repository | Partially implemented | Persist idempotent jobs and atomically materialize logical tasks. Attempts and results remain planned. |
+| Workload CLI contract | Implemented locally | Serialize and parse task identity, logical input range, output URI, and separated user arguments. |
+| JSONL copy workload | Implemented locally | Demonstrate that one process reads and atomically writes exactly one assigned local range. |
 | Coordinator | Planned | Reconcile durable tasks and attempts with an execution backend. |
 | Kubernetes adapter | Planned | Create and observe native Kubernetes work without taking over scheduling. |
 | Object-storage adapter | Planned | Read S3 inputs and expose result metadata after local behavior is understood. |
@@ -248,6 +292,8 @@ cmd/mill/
   main.go                         configuration, assembly, HTTP lifecycle
   main_test.go                    process and health unit tests
   main_integration_test.go        PostgreSQL readiness integration test
+cmd/mill-jsonl-copy/
+  main.go                         local reference workload for one byte range
 internal/job/
   model.go                        API and domain data types
   validation.go                   submission, identifier, and URI rules
@@ -256,6 +302,8 @@ internal/job/
   repository.go                   PostgreSQL job/task persistence
   handler.go                      HTTP transport
   *_test.go                       unit and PostgreSQL integration coverage
+internal/workload/
+  contract.go                     Mill CLI argument builder and parser
 migrations/
   000001_create_jobs.sql          initial job schema
   000002_create_tasks.sql         first task schema
@@ -395,6 +443,21 @@ Retrieve it again with:
 curl http://localhost:8080/jobs/<job-id>
 ```
 
+The reference workload can be invoked manually against the first 12-byte JSONL
+record. This exercises the contract but does not change job or task state:
+
+```bash
+go run ./cmd/mill-jsonl-copy \
+  --job-id 0198b7c9-1d24-7000-8000-000000000001 \
+  --task-id 0198b7c9-1d24-7000-8000-000000000002 \
+  --shard-index 0 \
+  --input-uri file:///tmp/mill-demo/records.jsonl \
+  --input-start-byte 0 \
+  --input-end-byte 12 \
+  --output-uri file:///tmp/mill-output/manual-task-0.jsonl \
+  --
+```
+
 Run hermetic tests:
 
 ```bash
@@ -428,7 +491,9 @@ MILL_TEST_DATABASE_URL='postgresql:///mill_test' go test -race ./...
    new attempt according to retry policy.
 8. Job status aggregates the finalized task set and exposes output locations.
 
-Steps 1–3 are implemented for local files. Steps 4–8 are planned.
+Steps 1–3 are implemented for local files. The CLI shape used by step 5 and a
+standalone reference workload are implemented, but steps 4–8 are not yet wired
+together by the control plane.
 
 ## Development milestones
 
@@ -440,15 +505,15 @@ conventions. **Implemented.**
 ### Milestone 1 — Local single-process control plane
 
 Implement create/get job APIs, PostgreSQL persistence, internal JSONL logical
-sharding, durable tasks, explicit transitions, and a restart-safe local or mock
-execution loop. **In progress:** API, persistence, and task materialization are
-implemented; execution, attempts, and recovery reconciliation are not.
+sharding, durable task materialization, and persisted progress. **Implemented.**
 
 ### Milestone 2 — Container workload contract
 
 Define the smallest stable CLI interface for job/task identity, input byte
 ranges, and output location. Build one demonstration image and exercise it
-locally before involving Kubernetes. **Planned.**
+locally before involving Kubernetes. **In progress:** the CLI protocol and a
+local reference executable are implemented; container packaging and control-
+plane execution are not.
 
 ### Milestone 3 — Kubernetes execution
 
@@ -473,7 +538,7 @@ the project being evaluated. **Planned.**
 
 ## Current status
 
-Mill is in Milestone 1. Implemented behavior includes:
+Mill is in Milestone 2. Implemented behavior includes:
 
 - one Go HTTP process with liveness and PostgreSQL-backed readiness;
 - `POST /jobs` and `GET /jobs/{id}`;
@@ -481,10 +546,13 @@ Mill is in Milestone 1. Implemented behavior includes:
 - local JSONL validation, identity, record counting, and logical byte-range
   planning;
 - atomic PostgreSQL job/task materialization; and
-- persisted task-state progress after restart.
+- persisted task-state progress after restart;
+- a typed workload CLI argument contract; and
+- a local JSONL copy executable that processes one assigned range.
 
-Image inspection, task execution, attempts, results, automatic recovery, S3,
-Docker integration, Kubernetes, and retries are not implemented.
+The control plane still does not launch the executable. Image inspection, task
+execution, attempts, results, automatic recovery, S3, Docker integration,
+Kubernetes, and retries are not implemented.
 
 ## Local and cloud development philosophy
 

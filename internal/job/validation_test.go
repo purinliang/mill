@@ -57,13 +57,6 @@ func TestNormalizeSubmissionRejectsInvalidFields(t *testing.T) {
 				Input:      InputSpec{URI: "file:///data/"},
 			},
 		},
-		{
-			name: "reserved argument",
-			submission: Submission{
-				Executable: Executable{Image: "mill/example:dev", Args: []string{"--mill-task-id=override"}},
-				Input:      InputSpec{URI: "file:///data/records.jsonl"},
-			},
-		},
 	}
 
 	for _, test := range tests {

@@ -33,11 +33,6 @@ func normalizeSubmission(submission Submission) (Submission, error) {
 	if args == nil {
 		args = []string{}
 	}
-	for _, argument := range args {
-		if strings.HasPrefix(argument, "--mill-") {
-			return Submission{}, &ValidationError{Field: "executable.args", Problem: "must not use the reserved --mill- prefix"}
-		}
-	}
 
 	return Submission{
 		Executable: Executable{

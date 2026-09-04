@@ -6,16 +6,16 @@ scope.
 
 ## Current project state
 
-Mill is in Milestone 1: local single-process control plane. The project
-foundation, HTTP process, PostgreSQL connection/readiness behavior, numbered
-`jobs` and `tasks` migrations, and create/get job API are implemented. Job
-submission validates one local JSONL input and transactionally materializes
-pending tasks containing logical byte ranges at record boundaries. Workload
-image inspection, task execution, attempts, results, automatic recovery,
-retries, S3, Docker integration, and Kubernetes are not implemented. Add
-implementation only in small, explicitly requested increments. Do not add
-Dockerfiles, Kubernetes manifests, CI workflows, Terraform, or unrelated
-infrastructure unless a later task requires them.
+Mill is in Milestone 2: container workload contract. Milestone 1's HTTP
+process, PostgreSQL connection/readiness behavior, create/get API, local JSONL
+logical sharding, and durable job/task materialization are implemented. CLI
+argument serialization and a local JSONL copy reference workload are also
+implemented. The control plane does not launch it. Workload image inspection,
+task execution, attempts, results, automatic recovery, retries, S3, Docker
+integration, and Kubernetes are not implemented. Add implementation only in
+small, explicitly requested increments. Do not add Dockerfiles, Kubernetes
+manifests, CI workflows, Terraform, or unrelated infrastructure unless a later
+task requires them.
 
 Do not describe planned behavior as implemented. Update the status in
 `README.md` whenever a milestone materially changes the repository's actual
@@ -55,7 +55,8 @@ operational and maintenance cost.
 - Do not implement a custom cluster scheduler when Kubernetes provides a
   suitable primitive. Evaluate native Jobs, including Indexed Jobs, first.
 - Keep the workload/container contract minimal and stable. Changes to it require
-  documentation and compatibility consideration.
+  documentation and compatibility consideration. Mill-owned CLI flags precede
+  a mandatory `--`; arguments after it belong unchanged to the executable.
 - Make failures observable, reproducible, and testable. Do not silently discard
   reconciliation errors or ambiguous execution state.
 - Prefer deterministic tests where practical. Add fault and recovery tests as
@@ -100,6 +101,9 @@ job, task, shard, attempt, or state-transition semantics.
 - Keep local JSONL partition planning in `internal/job/partition.go` while it is
   part of the cohesive job-creation workflow. Logical shard boundaries must be
   contiguous, non-empty, and aligned to complete JSONL records.
+- Keep the language-neutral CLI protocol and its Go serialization/parser in
+  `internal/workload`. Reference workloads belong under `cmd` and must remain
+  separate from control-plane behavior.
 - Keep interfaces at the consumer boundary and add them only for an existing
   substitute. For example, the job HTTP handler owns the small store interface
   used by its tests; the concrete PostgreSQL repository does not need an
