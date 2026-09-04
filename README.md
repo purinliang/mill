@@ -76,6 +76,78 @@ Mill owns the job abstraction, task intent, reconciliation, and progress view.
 Kubernetes Indexed Jobs are a promising fit for shard-parallel execution and
 will be evaluated before introducing any custom scheduling mechanism.
 
+## Module view
+
+Mill is one Go module and, for V1, one deployable control-plane process. The
+modules below are responsibility boundaries inside that process; they are not
+microservices. Status describes the repository today.
+
+| Module | Status | Responsibility |
+| --- | --- | --- |
+| Process composition | Implemented | Read configuration, connect dependencies, assemble HTTP routes, and manage startup and graceful shutdown. |
+| Health API | Implemented | Report process liveness and PostgreSQL-backed readiness. |
+| Job API and model | Partially implemented | Validate job submissions, expose create/get operations, and represent job state. Task counts and progress remain planned. |
+| Job persistence | Partially implemented | Store immutable job submission data and enforce concurrency-safe idempotency in PostgreSQL. Task, attempt, and result persistence remain planned. |
+| Manifest materialization | Planned | Read a finalized manifest, validate its shard entries, and idempotently create one durable task per shard. |
+| Coordinator | Planned | Reconcile durable task and attempt intent with an execution backend. It may initially use a local test executor before Kubernetes. |
+| Kubernetes adapter | Planned | Create and observe native Kubernetes workloads without taking over scheduling. |
+| Object-storage adapter | Planned | Access manifests and result metadata through storage-neutral boundaries, with S3 as the V1 cloud implementation. |
+
+The HTTP handler calls the job capability, which owns its validation and
+persistence rules. PostgreSQL remains the durable boundary. Future coordination
+will operate from durable jobs, tasks, and attempts rather than directly from an
+HTTP request, so work survives a client disconnect or control-plane restart.
+
+```text
+cmd/mill (configuration and process lifecycle)
+    |
+    +--> health HTTP handlers --> PostgreSQL readiness check
+    |
+    +--> job HTTP handlers --> job validation/model --> PostgreSQL repository
+                                      |
+                                      +--> planned manifest materializer
+                                                   |
+                                                   v
+                                          durable tasks/attempts
+                                                   |
+                                                   v
+                                          planned coordinator
+                                                   |
+                                                   v
+                                          Kubernetes adapter
+```
+
+## Repository structure
+
+The current layout is intentionally shallow. Planned packages and directories
+are not created until they contain a concrete implementation.
+
+```text
+cmd/mill/
+  main.go                         process assembly, configuration, HTTP server,
+                                  health routes, and graceful shutdown
+  main_test.go                    hermetic process and health behavior tests
+  main_integration_test.go        PostgreSQL startup/readiness integration test
+internal/job/
+  model.go                        job API and domain data types
+  validation.go                   submission, identifier, and URI rules
+  handler.go                      HTTP transport for job operations
+  repository.go                   PostgreSQL job persistence and idempotency
+  *_test.go                       unit and PostgreSQL integration coverage
+migrations/
+  000001_create_jobs.sql          initial durable job schema
+README.md                         architecture, behavior, and development guide
+AGENTS.md                         contribution and agent operating conventions
+go.mod, go.sum                    Go module and dependency definitions
+```
+
+New behavior should normally enter through the narrowest existing capability.
+For example, task materialization belongs with the job capability while it is
+small and cohesive. A separate package is justified only when a boundary gains
+an independent lifecycle or a concrete adapter contract, such as Kubernetes or
+object storage. Process wiring stays in `cmd/mill`; business state transitions
+and persistence invariants do not.
+
 ## Proposed correctness model
 
 The following model is the starting architecture, not an implemented schema or

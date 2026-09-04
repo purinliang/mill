@@ -72,6 +72,36 @@ When Go implementation begins:
 Keep domain decisions visible in the code. Avoid generic frameworks that hide
 job, task, shard, attempt, or state-transition semantics.
 
+## Code organization
+
+- Keep Mill as one Go module and one control-plane binary until a concrete
+  deployment or ownership boundary requires otherwise. A logical module is not
+  automatically a service.
+- Keep `cmd/mill` as the composition root: environment configuration,
+  dependency construction, route assembly, process lifecycle, and shutdown
+  belong there. Do not put job or execution policy in `main.go`.
+- Organize `internal` by cohesive capability, not by generic technical layers.
+  The current `internal/job` package may contain its model, validation, HTTP
+  handler, and PostgreSQL repository while that keeps the job behavior easy to
+  understand in one place.
+- Introduce a new package only for a concrete boundary with a distinct purpose,
+  such as a Kubernetes adapter or object-storage adapter. Do not pre-create
+  empty packages or speculative `common`, `util`, `service`, or `manager`
+  layers.
+- Keep interfaces at the consumer boundary and add them only for an existing
+  substitute. For example, the job HTTP handler owns the small store interface
+  used by its tests; the concrete PostgreSQL repository does not need an
+  interface merely because it accesses a database.
+- Keep numbered SQL migrations in `migrations`. After a migration has been
+  shared or applied outside a disposable local database, correct the schema
+  with a new migration instead of rewriting history.
+- Co-locate unit tests with the package under test. Name external-dependency
+  tests clearly as integration tests and make them opt-in when they require a
+  developer-managed service.
+- Update the module view, repository structure, and current status in
+  `README.md` when a change makes any of them materially inaccurate. Document
+  planned paths as planned; do not create placeholder files for them.
+
 ## Testing expectations
 
 - Unit-test domain validation, progress calculation, and allowed state
