@@ -322,6 +322,8 @@ migrations/
   000002_create_tasks.sql         first task schema
   000003_refactor_job_input.sql   executable/input names and byte-range tasks
   000004_create_attempts.sql      durable execution attempts
+scripts/
+  setup                           repeatable local kind environment setup
 README.md                         architecture and development guide
 AGENTS.md                         contribution and agent conventions
 .dockerignore                     files excluded from Docker build context
@@ -389,13 +391,41 @@ their assigned input and output namespace.
 | Dataset and output storage | Local files now; Amazon S3 planned |
 | Workload packaging | OCI images, commonly built with Docker |
 | Distributed execution | Native Kubernetes Jobs/Pods, planned |
-| Local Kubernetes | kind or k3d after the container contract exists |
+| Local Kubernetes | kind, with versions pinned by `scripts/setup` |
 | Cloud demonstration | AWS, likely Amazon EKS |
 | Infrastructure as Code | Terraform when cloud deployment needs it |
 | Testing | Go unit tests, PostgreSQL integration tests, later Kubernetes end-to-end tests |
 
 Logging, metrics, dashboards, and tracing should be added only when a concrete
 diagnostic or evaluation requirement justifies them.
+
+## Local Kubernetes setup
+
+Docker Engine is a machine-level prerequisite because installing its service
+and configuring daemon permissions requires an explicit host decision. After
+Docker works, Linux amd64 developers can prepare the remaining local Kubernetes
+environment with one idempotent command:
+
+```bash
+./scripts/setup
+```
+
+The script verifies Docker access, installs the pinned `kind` and `kubectl`
+versions under `${MILL_TOOLS_DIR:-$HOME/.local/bin}` when an exact version is
+not already available, creates or reuses the `mill` kind cluster, selects its
+kubectl context, waits for the node, and prints status. Downloads are verified
+against their published SHA-256 checksums. It does not install Docker, change
+Docker permissions, replace a cluster created with another node image, or
+delete resources.
+
+The cluster can be removed explicitly when it is no longer needed:
+
+```bash
+kind delete cluster --name mill
+```
+
+The control plane does not submit Kubernetes work yet. This setup establishes a
+repeatable environment for the next execution-adapter milestone.
 
 ## Local quick start
 
@@ -606,9 +636,10 @@ Mill has completed Milestone 2. Implemented behavior includes:
 - persisted task-state progress after restart;
 - concurrency-safe task claims that enforce each job's parallelism;
 - durable attempt lifecycle transitions and atomic task/job completion;
-- a typed workload CLI argument contract; and
+- a typed workload CLI argument contract;
 - a local JSONL copy executable and non-root OCI image that process one assigned
-  range.
+  range; and
+- an idempotent local kind and kubectl setup command.
 
 The control plane still does not launch the executable. Image inspection, task
 execution coordination, result publication, automatic recovery, S3, a Docker

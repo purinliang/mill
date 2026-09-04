@@ -14,10 +14,12 @@ minimal non-root Docker image are also implemented. The control plane does not
 launch it. Concurrency-safe task claiming and durable attempt state transitions
 are implemented in PostgreSQL, but no coordinator calls them yet. Workload
 image inspection, external execution coordination, results, automatic recovery,
-retries, S3, a Docker execution adapter, and Kubernetes are not implemented.
-Add implementation only in small, explicitly requested increments. Do not add
-more Dockerfiles, Kubernetes manifests, CI workflows, Terraform, or unrelated
-infrastructure unless a later task requires them.
+retries, S3, a Docker execution adapter, and Kubernetes execution are not
+implemented. `scripts/setup` provides a repeatable local kind environment; it
+does not imply that Mill integrates with Kubernetes yet. Add implementation
+only in small, explicitly requested increments. Do not add more Dockerfiles,
+Kubernetes manifests, CI workflows, Terraform, or unrelated infrastructure
+unless a later task requires them.
 
 Do not describe planned behavior as implemented. Update the status in
 `README.md` whenever a milestone materially changes the repository's actual
@@ -119,6 +121,10 @@ job, task, shard, attempt, or state-transition semantics.
 - Keep numbered SQL migrations in `migrations`. After a migration has been
   shared or applied outside a disposable local database, correct the schema
   with a new migration instead of rewriting history.
+- Keep `scripts/setup` idempotent and non-destructive. It may install pinned
+  user-space development tools and create or reuse the named local cluster, but
+  must not silently install Docker, change host permissions, replace clusters,
+  or delete resources.
 - Co-locate unit tests with the package under test. Name external-dependency
   tests clearly as integration tests and make them opt-in when they require a
   developer-managed service.
