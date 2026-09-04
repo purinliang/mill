@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+[[ $# -eq 0 ]] || { printf 'Usage: %s\n' "$0" >&2; exit 1; }
+repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${repository_root}"
+
+for required in go docker kind kubectl mktemp head wc sed cmp basename tr; do
+	command -v "${required}" >/dev/null || { printf 'Missing command: %s\n' "${required}" >&2; exit 1; }
+done
+
+readonly node=mill-control-plane
+kubectl_command=(kubectl --context kind-mill --namespace default --request-timeout=10s)
+docker info >/dev/null
+[[ "$(docker inspect --format '{{index .Config.Labels "io.x-k8s.kind.cluster"}}' "${node}")" == mill ]] || {
+	printf 'Expected the mill kind cluster; run ./scripts/setup first.\n' >&2
+	exit 1
+}
+"${kubectl_command[@]}" get node "${node}" >/dev/null
+
+# Fresh names keep previous runs available for inspection.
+run_directory="$(mktemp -d /tmp/mill-word-count-k8s.XXXXXXXX)"
+run_name="$(basename "${run_directory}" | tr '[:upper:]' '[:lower:]' | tr '.' '-')"
+node_directory="/var/local/${run_name}"
+job_created=false
+report_failure() {
+	local status=$?
+	if (( status != 0 )); then
+		printf '\nDemo failed. Local files: %s; node files: %s\n' "${run_directory}" "${node_directory}" >&2
+		if [[ "${job_created}" == true ]]; then
+			"${kubectl_command[@]}" describe job "${run_name}" || true
+			"${kubectl_command[@]}" get pods -l "job-name=${run_name}" -o wide || true
+			"${kubectl_command[@]}" logs "job/${run_name}" --pod-running-timeout=5s || true
+		fi
+	fi
+}
+trap report_failure EXIT
+printf 'Run: %s\nLocal files: %s\nNode files: %s\n' "${run_name}" "${run_directory}" "${node_directory}"
+
+go run ./examples/word-count/generate --output "${run_directory}/input.jsonl"
+# Use one complete record from the shared input; the control-plane planner
+# will supply real task ranges when the Kubernetes adapter is implemented.
+end_byte="$(head -n 1 "${run_directory}/input.jsonl" | wc -c)"
+end_byte="${end_byte//[[:space:]]/}"
+printf 'Assigned input range: [0, %s) (first JSONL record)\n' "${end_byte}"
+go run ./cmd/mill-word-count \
+	--job-id "${run_name}" --task-id task-0 --shard-index 0 \
+	--input-uri "file://${run_directory}/input.jsonl" \
+	--input-start-byte 0 --input-end-byte "${end_byte}" \
+	--output-uri "file://${run_directory}/local-result.jsonl" --
+
+docker build --file cmd/mill-word-count/Dockerfile --tag mill/word-count:dev .
+kind load docker-image mill/word-count:dev --name mill
+
+# hostPath refers to the node filesystem. Stage a snapshot there without
+# requiring extraMounts or recreating the existing kind cluster.
+docker exec "${node}" mkdir -p /var/local
+docker exec "${node}" mkdir "${node_directory}"
+docker exec "${node}" chmod 0755 "${node_directory}"
+docker exec -i "${node}" tee "${node_directory}/input.jsonl" < "${run_directory}/input.jsonl" >/dev/null
+docker exec "${node}" chmod 0444 "${node_directory}/input.jsonl"
+docker exec "${node}" mkdir "${node_directory}/output"
+docker exec "${node}" chown 65532:65532 "${node_directory}/output"
+docker exec "${node}" chmod 0755 "${node_directory}/output"
+
+sed -e "s/@RUN_NAME@/${run_name}/g" -e "s/@END_BYTE@/${end_byte}/g" \
+	examples/word-count/job.yaml.template > "${run_directory}/job.yaml"
+"${kubectl_command[@]}" create -f "${run_directory}/job.yaml"
+job_created=true
+kubectl --context kind-mill --namespace default wait \
+	--for=condition=complete "job/${run_name}" --timeout=150s
+docker exec "${node}" cat "${node_directory}/output/task-0/result.jsonl" > "${run_directory}/pod-result.jsonl"
+cmp "${run_directory}/local-result.jsonl" "${run_directory}/pod-result.jsonl"
+
+printf '\nPASS: Pod output matches the local result byte-for-byte.\n'
+"${kubectl_command[@]}" get job "${run_name}"
+"${kubectl_command[@]}" get pods -l "job-name=${run_name}" -o wide
+printf '\nResult: %s/pod-result.jsonl\nManifest: %s/job.yaml\n' "${run_directory}" "${run_directory}"
+printf 'Inspect: kubectl --context kind-mill -n default describe job %s\n' "${run_name}"
+printf 'Remove Job/Pod when finished: kubectl --context kind-mill -n default delete job %s\n' "${run_name}"

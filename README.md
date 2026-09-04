@@ -271,7 +271,7 @@ boundaries, not microservices.
 | PostgreSQL repository | Partially implemented | Persist idempotent jobs, materialize logical tasks, claim work, and transition attempts. Result publication remains planned. |
 | Workload CLI contract | Implemented locally | Serialize and parse task identity, logical input range, output URI, and separated user arguments. |
 | JSONL copy workload | Implemented locally and in Docker | Demonstrate that one process/container reads and atomically writes exactly one assigned local range. |
-| Word-count workload | Implemented locally and in Docker | Count normalized words in one assigned range and merge deterministic partial results for demonstration. |
+| Word-count workload | Implemented locally, in Docker, and as a manual kind Job | Count words in one assigned range, verify Pod output against a local run, and merge partial results for demonstration. |
 | Coordinator | Planned | Reconcile durable tasks and attempts with an execution backend. |
 | Kubernetes adapter | Planned | Create and observe native Kubernetes work without taking over scheduling. |
 | Object-storage adapter | Planned | Read S3 inputs and expose result metadata after local behavior is understood. |
@@ -321,6 +321,7 @@ examples/word-count/
   walden-economy.txt              committed plain-text Chapter 1 source
   record-config.json              deterministic demo record-grouping config
   generate/                       reproducible JSONL input generator
+  job.yaml.template               single-task kind Job arguments and mounts
   README.md                       demo contract and provenance
 internal/job/
   model.go                        API and domain data types
@@ -340,6 +341,7 @@ migrations/
   000004_create_attempts.sql      durable execution attempts
 scripts/
   setup                           repeatable local kind environment setup
+  demo-word-count-k8s              run one kind task and verify its output
 README.md                         architecture and development guide
 AGENTS.md                         contribution and agent conventions
 .dockerignore                     files excluded from Docker build context
@@ -583,6 +585,18 @@ control plane does not launch or aggregate them yet. See
 rules and the boundary between demo input preparation and Mill's internal
 partitioning.
 
+With the local kind cluster ready, run one word-count task in a Pod:
+
+```bash
+./scripts/demo-word-count-k8s
+```
+
+The script stages the input inside the kind node, mounts it read-only, runs
+the first record's byte range, and copies the output back for comparison with
+a local run. It prints the saved result and rendered manifest paths. Each run
+retains its Job and files for inspection. This manual smoke test does not use
+the PostgreSQL task lifecycle; automated dispatch remains planned.
+
 Run hermetic tests:
 
 ```bash
@@ -679,7 +693,9 @@ Mill has completed Milestone 2. Implemented behavior includes:
 - local JSONL-copy and word-count executables with non-root OCI images that
   process one assigned range;
 - a deterministic Walden word-count input generator and local partial-result
-  merger; and
+  merger;
+- a repeatable one-task kind smoke test that compares Pod and local outputs;
+  and
 - an idempotent local kind and kubectl setup command.
 
 The control plane still does not launch the executable. Image inspection, task

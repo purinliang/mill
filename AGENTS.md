@@ -22,6 +22,12 @@ explicitly requested increments. Do not add more Dockerfiles, Kubernetes
 manifests, CI workflows, Terraform, or unrelated infrastructure unless a later
 task requires them.
 
+`scripts/demo-word-count-k8s` runs one manual word-count Job with staged
+node-local input and verifies its output against a local run. It uses
+`examples/word-count/job.yaml.template`; it does not claim or transition
+PostgreSQL tasks. Keep this demonstration distinct from the planned
+control-plane Kubernetes adapter.
+
 Do not describe planned behavior as implemented. Update the status in
 `README.md` whenever a milestone materially changes the repository's actual
 capabilities.
