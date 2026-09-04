@@ -7,7 +7,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/purinliang/mill/workloads/wordcount"
+	"github.com/purinliang/mill/examples/word-count"
 )
 
 func main() {

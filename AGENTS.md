@@ -114,9 +114,11 @@ job, task, shard, attempt, or state-transition semantics.
   contiguous, non-empty, and aligned to complete JSONL records.
 - Keep the language-neutral CLI protocol and its Go serialization/parser in
   `internal/workload`. Workload executable entrypoints belong under `cmd`,
-  reusable workload-specific computation under `workloads/<name>`, and stable
-  demonstration inputs and documentation under `examples/<name>`. All must
-  remain separate from control-plane behavior.
+  while demonstration-specific computation, inputs, generators, and
+  documentation belong together under `examples/<name>`. All must remain
+  separate from control-plane behavior. Introduce a top-level `workloads`
+  package only if Mill later owns reusable workload implementations beyond
+  examples.
 - Keep a reference workload's Dockerfile beside its command. Prefer a
   multi-stage build and a minimal non-root runtime image; do not place build
   tools in the final workload image.

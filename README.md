@@ -315,10 +315,9 @@ cmd/mill-word-count/
   Dockerfile                      multi-stage non-root mapper image
 cmd/mill-word-count-merge/
   main.go                         local demonstration result merger
-workloads/wordcount/
+examples/word-count/
   wordcount.go                    tokenization, counting, and merge behavior
   wordcount_test.go               workload behavior tests
-examples/word-count/
   walden-economy.txt              committed plain-text Chapter 1 source
   record-config.json              deterministic demo record-grouping config
   generate/                       reproducible JSONL input generator

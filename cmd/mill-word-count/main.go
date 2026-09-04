@@ -9,8 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/purinliang/mill/examples/word-count"
 	"github.com/purinliang/mill/internal/workload"
-	"github.com/purinliang/mill/workloads/wordcount"
 )
 
 func main() {
