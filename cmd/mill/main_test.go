@@ -12,7 +12,7 @@ func TestHealth(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	response := httptest.NewRecorder()
 
-	newHandler(ready).ServeHTTP(response, request)
+	newHandler(ready, nil).ServeHTTP(response, request)
 
 	assertResponse(t, response, http.StatusOK, "{\"status\":\"ok\"}\n")
 }
@@ -25,7 +25,7 @@ func TestLiveness(t *testing.T) {
 		t.Fatal("liveness probe checked database readiness")
 		return nil
 	}
-	newHandler(check).ServeHTTP(response, request)
+	newHandler(check, nil).ServeHTTP(response, request)
 
 	assertResponse(t, response, http.StatusOK, "{\"status\":\"ok\"}\n")
 }
@@ -34,7 +34,7 @@ func TestReadinessWhenDatabaseIsAvailable(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	response := httptest.NewRecorder()
 
-	newHandler(ready).ServeHTTP(response, request)
+	newHandler(ready, nil).ServeHTTP(response, request)
 
 	assertResponse(t, response, http.StatusOK, "{\"status\":\"ready\"}\n")
 }
@@ -46,7 +46,7 @@ func TestReadinessWhenDatabaseIsUnavailable(t *testing.T) {
 	check := func(context.Context) error {
 		return errors.New("database unavailable")
 	}
-	newHandler(check).ServeHTTP(response, request)
+	newHandler(check, nil).ServeHTTP(response, request)
 
 	assertResponse(t, response, http.StatusServiceUnavailable, "{\"status\":\"not_ready\"}\n")
 }
@@ -55,7 +55,7 @@ func TestUnknownRoute(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/unknown", nil)
 	response := httptest.NewRecorder()
 
-	newHandler(ready).ServeHTTP(response, request)
+	newHandler(ready, nil).ServeHTTP(response, request)
 
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("status code = %d, want %d", response.Code, http.StatusNotFound)

@@ -231,19 +231,23 @@ diagnostic or measurement requirement.
 
 The current development slice requires Go 1.27 and a reachable PostgreSQL 18
 database. It opens a pgx connection pool and verifies the database connection
-before accepting HTTP traffic. No schema or migrations exist yet.
+before accepting HTTP traffic. Job metadata is created by the first numbered SQL
+migration.
 
 Create an empty development database using your local PostgreSQL installation:
 
 ```bash
 createdb mill
+export MILL_DATABASE_URL='postgresql:///mill'
+psql "$MILL_DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -f migrations/000001_create_jobs.sql
 ```
 
-Set a pgx-compatible connection URL appropriate for that installation, then
-start Mill. For a local PostgreSQL instance using its default Unix socket:
+Set a local output root and start Mill. The prototype derives a stable output
+URI for each job but does not create the directory or write output yet:
 
 ```bash
-export MILL_DATABASE_URL='postgresql:///mill'
+export MILL_OUTPUT_ROOT_URI='file:///tmp/mill-output'
 go run ./cmd/mill
 ```
 
@@ -271,23 +275,53 @@ The readiness response is:
 {"status":"ready"}
 ```
 
+Submit a job in another shell. The image and manifest are references only in
+this prototype: Mill does not inspect the image or open the manifest yet.
+
+```bash
+curl --include --request POST http://localhost:8080/jobs \
+  --header 'Content-Type: application/json' \
+  --header 'Idempotency-Key: demo-job-001' \
+  --data '{
+    "workload": {
+      "image": "mill/example:dev",
+      "args": ["--mode", "fast"]
+    },
+    "dataset": {
+      "manifest_uri": "file:///tmp/mill-demo/manifest.json"
+    }
+  }'
+```
+
+The first submission returns HTTP `201`; repeating the identical request returns
+HTTP `200` and the same job. Reusing the key with different input returns HTTP
+`409`. Retrieve the stored job using the UUID from the response:
+
+```bash
+curl http://localhost:8080/jobs/<job-id>
+```
+
 Run the hermetic tests with:
 
 ```bash
 go test ./...
 ```
 
-To include the PostgreSQL integration test, point the test-specific variable at
-a disposable database:
+To include PostgreSQL persistence and concurrency tests, create a disposable
+database, apply the migration, and point the test-specific variable at it:
 
 ```bash
-MILL_TEST_DATABASE_URL='postgresql:///mill' go test ./...
+createdb mill_test
+psql 'postgresql:///mill_test' -v ON_ERROR_STOP=1 \
+  -f migrations/000001_create_jobs.sql
+MILL_TEST_DATABASE_URL='postgresql:///mill_test' go test ./...
 ```
 
 ## Execution lifecycle
 
 1. A user submits an idempotent request containing a trusted image reference, a
-   dataset manifest location, an output destination, and execution settings.
+   dataset manifest location, and execution settings. Mill derives the job's
+   output namespace from its configured storage root and generated job ID.
 2. Mill resolves immutable input identities, persists the preparing job, and
    idempotently materializes one `pending` task for each shard.
 3. The coordinator records an attempt before representing runnable work with a
@@ -353,13 +387,14 @@ test vehicle; Mill remains the project under evaluation.
 
 ## Current status
 
-Mill is in Milestone 1. The architectural plan and development conventions are
-documented. The Go control-plane process now establishes a PostgreSQL connection
-pool, fails startup when its required database is unavailable, exposes separate
-liveness and database-backed readiness probes, and shuts down cleanly on process
-signals. No metadata schema or job data is persisted yet. The job API, domain
-model, persistence operations, executor, deployment, and workload contract
-remain planned.
+Mill is in Milestone 1. The Go control plane establishes a PostgreSQL connection
+pool, exposes liveness and database-backed readiness probes, and shuts down
+cleanly. A numbered migration defines the `jobs` table. `POST /jobs` persists a
+local job submission with concurrency-safe idempotency, and `GET /jobs/{id}`
+retrieves it after restart. Image and `file://` manifest references are stored
+but not opened, and output URIs are derived but not written. Task persistence,
+manifest materialization, execution, S3, Kubernetes, and the complete workload
+contract remain planned.
 
 ## Local and cloud development philosophy
 

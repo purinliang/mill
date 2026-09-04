@@ -7,11 +7,12 @@ scope.
 ## Current project state
 
 Mill is in Milestone 1: local single-process control plane. The project
-foundation, minimal HTTP process, and PostgreSQL connection/readiness slice are
-implemented. No metadata schema or persistence behavior exists yet. Add
-implementation only in small, explicitly requested increments. Do not add
-Dockerfiles, Kubernetes manifests, CI workflows, Terraform, migrations, or
-unrelated infrastructure unless a later task requires them.
+foundation, HTTP process, PostgreSQL connection/readiness behavior, initial
+`jobs` migration, and create/get job API are implemented. Job submission stores
+local references only; manifest materialization and execution are not
+implemented. Add implementation only in small, explicitly requested
+increments. Do not add Dockerfiles, Kubernetes manifests, CI workflows,
+Terraform, or unrelated infrastructure unless a later task requires them.
 
 Do not describe planned behavior as implemented. Update the status in
 `README.md` whenever a milestone materially changes the repository's actual

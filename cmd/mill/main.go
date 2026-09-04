@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/purinliang/mill/internal/job"
 )
 
 const (
@@ -28,17 +30,25 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := run(ctx, os.Getenv("MILL_HTTP_ADDR"), os.Getenv("MILL_DATABASE_URL")); err != nil {
+	if err := run(
+		ctx,
+		os.Getenv("MILL_HTTP_ADDR"),
+		os.Getenv("MILL_DATABASE_URL"),
+		os.Getenv("MILL_OUTPUT_ROOT_URI"),
+	); err != nil {
 		log.Fatalf("run Mill: %v", err)
 	}
 }
 
-func run(ctx context.Context, address, databaseURL string) error {
+func run(ctx context.Context, address, databaseURL, outputRootURI string) error {
 	if address == "" {
 		address = defaultHTTPAddress
 	}
 	if databaseURL == "" {
 		return errors.New("MILL_DATABASE_URL is required")
+	}
+	if outputRootURI == "" {
+		return errors.New("MILL_OUTPUT_ROOT_URI is required")
 	}
 
 	database, err := openDatabase(ctx, databaseURL)
@@ -47,9 +57,15 @@ func run(ctx context.Context, address, databaseURL string) error {
 	}
 	defer database.Close()
 
+	jobRepository, err := job.NewRepository(database, outputRootURI)
+	if err != nil {
+		return err
+	}
+	jobHandler := job.NewHandler(jobRepository, log.Default())
+
 	server := &http.Server{
 		Addr:              address,
-		Handler:           newHandler(database.Ping),
+		Handler:           newHandler(database.Ping, jobHandler),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -101,11 +117,14 @@ func openDatabase(ctx context.Context, databaseURL string) (*pgxpool.Pool, error
 	return database, nil
 }
 
-func newHandler(checkReady readinessCheck) http.Handler {
+func newHandler(checkReady readinessCheck, jobHandler *job.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleLiveness)
 	mux.HandleFunc("GET /livez", handleLiveness)
 	mux.HandleFunc("GET /readyz", handleReadiness(checkReady))
+	if jobHandler != nil {
+		jobHandler.RegisterRoutes(mux)
+	}
 	return mux
 }
 
