@@ -212,9 +212,9 @@ test doubles.
 
 | Concern | Direction |
 | --- | --- |
-| Control plane | Go, initially one process |
+| Control plane | Go 1.27.x, initially one process |
 | External API | HTTP/REST |
-| Durable metadata | PostgreSQL |
+| Durable metadata | PostgreSQL 18.x through pgx v5 |
 | Dataset and result storage | Amazon S3 |
 | Workload packaging | OCI images, commonly built with Docker |
 | Distributed execution | Native Kubernetes Jobs/Pods |
@@ -229,30 +229,59 @@ diagnostic or measurement requirement.
 
 ## Local quick start
 
-The current development slice is a minimal HTTP process with one health
-endpoint. It has no external dependencies beyond Go 1.25 or later.
+The current development slice requires Go 1.27 and a reachable PostgreSQL 18
+database. It opens a pgx connection pool and verifies the database connection
+before accepting HTTP traffic. No schema or migrations exist yet.
+
+Create an empty development database using your local PostgreSQL installation:
 
 ```bash
+createdb mill
+```
+
+Set a pgx-compatible connection URL appropriate for that installation, then
+start Mill. For a local PostgreSQL instance using its default Unix socket:
+
+```bash
+export MILL_DATABASE_URL='postgresql:///mill'
 go run ./cmd/mill
 ```
 
 The server listens on `:8080` by default. Set `MILL_HTTP_ADDR` to use another
-address. In another shell:
+address. A TCP connection URL can include the database user, password, host,
+and port; keep real credentials in the environment and out of the repository.
+
+The health endpoints have distinct purposes:
+
+- `GET /healthz` and `GET /livez` report that the HTTP process is alive without
+  depending on PostgreSQL.
+- `GET /readyz` checks PostgreSQL and returns HTTP `503` while the dependency is
+  unavailable.
+
+In another shell:
 
 ```bash
-curl http://localhost:8080/healthz
+curl http://localhost:8080/livez
+curl http://localhost:8080/readyz
 ```
 
-The response is:
+The readiness response is:
 
 ```json
-{"status":"ok"}
+{"status":"ready"}
 ```
 
-Run the current tests with:
+Run the hermetic tests with:
 
 ```bash
 go test ./...
+```
+
+To include the PostgreSQL integration test, point the test-specific variable at
+a disposable database:
+
+```bash
+MILL_TEST_DATABASE_URL='postgresql:///mill' go test ./...
 ```
 
 ## Execution lifecycle
@@ -324,10 +353,13 @@ test vehicle; Mill remains the project under evaluation.
 
 ## Current status
 
-Mill has entered Milestone 1. The architectural plan and development
-conventions are documented, and a minimal HTTP process with a health endpoint is
-implemented. The job API, domain model, persistence layer, executor, deployment,
-and workload contract remain planned.
+Mill is in Milestone 1. The architectural plan and development conventions are
+documented. The Go control-plane process now establishes a PostgreSQL connection
+pool, fails startup when its required database is unavailable, exposes separate
+liveness and database-backed readiness probes, and shuts down cleanly on process
+signals. No metadata schema or job data is persisted yet. The job API, domain
+model, persistence operations, executor, deployment, and workload contract
+remain planned.
 
 ## Local and cloud development philosophy
 

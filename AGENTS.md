@@ -6,11 +6,12 @@ scope.
 
 ## Current project state
 
-Mill is entering Milestone 1: local single-process control plane. The project
-foundation is complete, and the first implemented slice is a minimal HTTP health
-endpoint. Add implementation only in small, explicitly requested increments. Do
-not add Dockerfiles, Kubernetes manifests, CI workflows, Terraform, migrations,
-or unrelated infrastructure unless a later task requires them.
+Mill is in Milestone 1: local single-process control plane. The project
+foundation, minimal HTTP process, and PostgreSQL connection/readiness slice are
+implemented. No metadata schema or persistence behavior exists yet. Add
+implementation only in small, explicitly requested increments. Do not add
+Dockerfiles, Kubernetes manifests, CI workflows, Terraform, migrations, or
+unrelated infrastructure unless a later task requires them.
 
 Do not describe planned behavior as implemented. Update the status in
 `README.md` whenever a milestone materially changes the repository's actual
@@ -103,7 +104,7 @@ Use a lightweight GitFlow-style workflow:
 ```text
 feature/*, fix/*, or docs/*
               |
-              | --no-ff
+              | rebase, then --ff-only
               v
            develop
               |
@@ -133,12 +134,12 @@ feature/*, fix/*, or docs/*
 
 ### Merge rules
 
-- Merge completed working branches into `develop` with a merge commit using
-  `git merge --no-ff <branch>`.
-- Preserve the no-fast-forward merge as the visible boundary of the reviewed
-  change. Do not use a squash or rebase merge as the final integration method.
-- Clean up temporary or low-value agent/WIP commits before integration when they
-  would obscure the branch's intent; retain coherent commits that aid review.
+- Rebase a completed working branch onto current `develop`, then integrate it
+  with `git merge --ff-only <branch>`. Working-branch integration stays linear;
+  do not create merge commits for small feature, fix, or documentation branches.
+- Do not squash coherent commits merely to reduce the commit count. Clean up
+  temporary or low-value agent/WIP commits before the final rebase when they
+  would obscure the branch's intent.
 - Merge `develop` into `main` with `--no-ff` only when a meaningful working
   milestone is reached.
 - Run the relevant tests and inspect the complete diff before either integration
@@ -153,9 +154,11 @@ integrating, report the branch, commits, changed files, tests, and any unresolve
 risks so the maintainer can inspect the unit of work.
 
 When repository hosting rules are configured, protect `main` and `develop` from
-force-push and deletion, require changes to arrive through pull requests, and
-allow merge commits as the integration method. Add required status checks when
-the repository has CI checks worth enforcing.
+force-push and deletion. A solo maintainer may review a pushed working branch
+and then perform the rebase and fast-forward integration locally. If pull
+requests are required, use a rebase-style merge that keeps `develop` linear;
+GitHub does not expose a true fast-forward-only pull-request merge. Add required
+status checks only when the repository has CI checks worth enforcing.
 
 Prefer clean, focused commits. Do not mix unrelated refactors with behavior
 changes.
