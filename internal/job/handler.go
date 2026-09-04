@@ -95,8 +95,17 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	createdJob, created, err := h.store.Create(r.Context(), idempotencyKeys[0], normalizedSubmission)
+	var validationError *ValidationError
+	if errors.As(err, &validationError) {
+		writeError(w, http.StatusBadRequest, "invalid_manifest", validationError.Error())
+		return
+	}
 	if errors.Is(err, ErrIdempotencyConflict) {
 		writeError(w, http.StatusConflict, "idempotency_conflict", "the idempotency key is already associated with a different submission")
+		return
+	}
+	if errors.Is(err, ErrManifestConflict) {
+		writeError(w, http.StatusConflict, "manifest_conflict", "the dataset manifest differs from the materialized task set")
 		return
 	}
 	if err != nil {

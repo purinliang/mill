@@ -99,6 +99,28 @@ func TestCreateJobConflict(t *testing.T) {
 	assertErrorResponse(t, response, http.StatusConflict, "idempotency_conflict")
 }
 
+func TestCreateJobManifestErrors(t *testing.T) {
+	t.Run("invalid manifest", func(t *testing.T) {
+		store := fakeStore{
+			create: func(context.Context, string, Submission) (Job, bool, error) {
+				return Job{}, false, &ValidationError{Field: "manifest.version", Problem: "must be 1"}
+			},
+		}
+		response := serveValidCreate(store)
+		assertErrorResponse(t, response, http.StatusBadRequest, "invalid_manifest")
+	})
+
+	t.Run("manifest changed after materialization", func(t *testing.T) {
+		store := fakeStore{
+			create: func(context.Context, string, Submission) (Job, bool, error) {
+				return Job{}, false, ErrManifestConflict
+			},
+		}
+		response := serveValidCreate(store)
+		assertErrorResponse(t, response, http.StatusConflict, "manifest_conflict")
+	})
+}
+
 func TestCreateJobValidation(t *testing.T) {
 	unusedStore := fakeStore{
 		create: func(context.Context, string, Submission) (Job, bool, error) {

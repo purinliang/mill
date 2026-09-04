@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -162,6 +164,122 @@ func TestRepositoryConcurrentIdempotentCreate(t *testing.T) {
 	}
 }
 
+func TestRepositoryMaterializeAndReportProgress(t *testing.T) {
+	databaseURL := integrationDatabaseURL(t)
+	pool := openIntegrationDatabase(t, databaseURL)
+	defer pool.Close()
+
+	key := "integration:materialize-progress"
+	deleteJobByKey(t, pool, key)
+	defer deleteJobByKey(t, pool, key)
+
+	repository, err := NewRepository(pool, "file:///tmp/mill-output")
+	if err != nil {
+		t.Fatalf("create repository: %v", err)
+	}
+	createdJob, _, err := repository.Create(context.Background(), key, Submission{
+		Workload: Workload{Image: "mill/example:dev"},
+		Dataset:  Dataset{ManifestURI: "file:///data/manifest.json"},
+	})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	manifest := Manifest{
+		Version: manifestVersion,
+		SHA256:  strings.Repeat("a", 64),
+		Shards: []ManifestShard{
+			{URI: "file:///data/shard-000.json"},
+			{URI: "file:///data/shard-001.json"},
+			{URI: "file:///data/shard-002.json"},
+		},
+	}
+
+	materializedJob, err := repository.Materialize(context.Background(), createdJob.ID, manifest)
+	if err != nil {
+		t.Fatalf("materialize tasks: %v", err)
+	}
+	if materializedJob.State != StateRunning {
+		t.Errorf("state = %q, want %q", materializedJob.State, StateRunning)
+	}
+	if materializedJob.Dataset.ManifestSHA256 != manifest.SHA256 {
+		t.Errorf("manifest SHA-256 = %q, want %q", materializedJob.Dataset.ManifestSHA256, manifest.SHA256)
+	}
+	if materializedJob.Progress != (Progress{Total: 3, Pending: 3}) {
+		t.Errorf("progress = %+v, want total=3 pending=3", materializedJob.Progress)
+	}
+
+	rows, err := pool.Query(context.Background(), `
+		SELECT id::text, shard_index, input_uri, output_uri, state
+		FROM public.tasks
+		WHERE job_id = $1::uuid
+		ORDER BY shard_index
+	`, createdJob.ID)
+	if err != nil {
+		t.Fatalf("query tasks: %v", err)
+	}
+	defer rows.Close()
+	index := 0
+	for rows.Next() {
+		var id, inputURI, outputURI, state string
+		var shardIndex int
+		if err := rows.Scan(&id, &shardIndex, &inputURI, &outputURI, &state); err != nil {
+			t.Fatalf("scan task: %v", err)
+		}
+		if len(id) != 36 || id[14] != '7' {
+			t.Errorf("task ID = %q, want a UUIDv7", id)
+		}
+		if shardIndex != index {
+			t.Errorf("shard index = %d, want %d", shardIndex, index)
+		}
+		if inputURI != manifest.Shards[index].URI {
+			t.Errorf("input URI = %q, want %q", inputURI, manifest.Shards[index].URI)
+		}
+		wantOutputURI := materializedJob.Output.URI + "tasks/" + strconv.Itoa(index) + "/"
+		if outputURI != wantOutputURI {
+			t.Errorf("output URI = %q, want %q", outputURI, wantOutputURI)
+		}
+		if state != "pending" {
+			t.Errorf("task state = %q, want pending", state)
+		}
+		index++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate tasks: %v", err)
+	}
+	if index != len(manifest.Shards) {
+		t.Fatalf("task count = %d, want %d", index, len(manifest.Shards))
+	}
+
+	replayedJob, err := repository.Materialize(context.Background(), createdJob.ID, manifest)
+	if err != nil {
+		t.Fatalf("replay materialization: %v", err)
+	}
+	if replayedJob.Progress != materializedJob.Progress {
+		t.Errorf("replayed progress = %+v, want %+v", replayedJob.Progress, materializedJob.Progress)
+	}
+
+	changedManifest := manifest
+	changedManifest.SHA256 = strings.Repeat("b", 64)
+	if _, err := repository.Materialize(context.Background(), createdJob.ID, changedManifest); !errors.Is(err, ErrManifestConflict) {
+		t.Fatalf("changed manifest error = %v, want %v", err, ErrManifestConflict)
+	}
+
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE public.tasks
+		SET state = 'completed', updated_at = now()
+		WHERE job_id = $1::uuid AND shard_index = 0
+	`, createdJob.ID); err != nil {
+		t.Fatalf("complete task: %v", err)
+	}
+	progressJob, err := repository.Get(context.Background(), createdJob.ID)
+	if err != nil {
+		t.Fatalf("get job progress: %v", err)
+	}
+	if progressJob.Progress != (Progress{Total: 3, Pending: 2, Completed: 1}) {
+		t.Errorf("progress = %+v, want total=3 pending=2 completed=1", progressJob.Progress)
+	}
+}
+
 type createResult struct {
 	job     Job
 	created bool
@@ -191,14 +309,16 @@ func openIntegrationDatabase(t *testing.T, databaseURL string) *pgxpool.Pool {
 		t.Fatalf("ping integration database: %v", err)
 	}
 
-	var tableName *string
-	if err := pool.QueryRow(ctx, "SELECT to_regclass('public.jobs')::text").Scan(&tableName); err != nil {
+	var jobsTable, tasksTable *string
+	if err := pool.QueryRow(ctx, `
+		SELECT to_regclass('public.jobs')::text, to_regclass('public.tasks')::text
+	`).Scan(&jobsTable, &tasksTable); err != nil {
 		pool.Close()
-		t.Fatalf("check jobs migration: %v", err)
+		t.Fatalf("check database migrations: %v", err)
 	}
-	if tableName == nil {
+	if jobsTable == nil || tasksTable == nil {
 		pool.Close()
-		t.Fatal("public.jobs does not exist; apply migrations/000001_create_jobs.sql to the test database")
+		t.Fatal("required tables do not exist; apply all numbered migrations to the test database")
 	}
 	return pool
 }

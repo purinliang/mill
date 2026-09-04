@@ -24,7 +24,7 @@ func normalizeSubmission(submission Submission) (Submission, error) {
 		return Submission{}, &ValidationError{Field: "workload.image", Problem: "must be non-empty and have no surrounding whitespace"}
 	}
 
-	manifestURI, err := normalizeLocalFileURI(submission.Dataset.ManifestURI, false)
+	manifestURI, err := normalizeManifestURI(submission.Dataset.ManifestURI)
 	if err != nil {
 		return Submission{}, &ValidationError{Field: "dataset.manifest_uri", Problem: err.Error()}
 	}
@@ -57,10 +57,32 @@ func validateIdempotencyKey(key string) error {
 }
 
 func normalizeOutputRootURI(raw string) (string, error) {
-	return normalizeLocalFileURI(raw, true)
+	return normalizeLocalFileURI(raw)
 }
 
-func normalizeLocalFileURI(raw string, directory bool) (string, error) {
+func normalizeManifestURI(raw string) (string, error) {
+	normalized, err := normalizeLocalFileURI(raw)
+	if err != nil {
+		return "", err
+	}
+	if strings.HasSuffix(raw, "/") {
+		return "", fmt.Errorf("must refer to a manifest file")
+	}
+	return normalized, nil
+}
+
+func normalizeShardURI(raw string) (string, error) {
+	normalized, err := normalizeLocalFileURI(raw)
+	if err != nil {
+		return "", err
+	}
+	if strings.HasSuffix(raw, "/") {
+		return "", fmt.Errorf("must refer to a shard file")
+	}
+	return normalized, nil
+}
+
+func normalizeLocalFileURI(raw string) (string, error) {
 	if raw == "" || raw != strings.TrimSpace(raw) {
 		return "", fmt.Errorf("must be non-empty and have no surrounding whitespace")
 	}
@@ -83,10 +105,6 @@ func normalizeLocalFileURI(raw string, directory bool) (string, error) {
 	if cleanPath == "/" {
 		return "", fmt.Errorf("must not refer to the filesystem root")
 	}
-	if !directory && strings.HasSuffix(parsed.Path, "/") {
-		return "", fmt.Errorf("must refer to a manifest file")
-	}
-
 	parsed.Path = cleanPath
 	parsed.RawPath = ""
 	return parsed.String(), nil
@@ -96,6 +114,14 @@ func deriveOutputURI(outputRootURI, id string) (string, error) {
 	outputURI, err := url.JoinPath(outputRootURI, "jobs", id)
 	if err != nil {
 		return "", fmt.Errorf("derive output URI: %w", err)
+	}
+	return outputURI + "/", nil
+}
+
+func deriveTaskOutputURI(jobOutputURI string, shardIndex int) (string, error) {
+	outputURI, err := url.JoinPath(jobOutputURI, "tasks", fmt.Sprintf("%d", shardIndex))
+	if err != nil {
+		return "", fmt.Errorf("derive task output URI: %w", err)
 	}
 	return outputURI + "/", nil
 }

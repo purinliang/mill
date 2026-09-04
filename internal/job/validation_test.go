@@ -97,6 +97,15 @@ func TestNormalizeOutputRootAndDeriveOutputURI(t *testing.T) {
 	if outputURI != want {
 		t.Fatalf("output URI = %q, want %q", outputURI, want)
 	}
+
+	taskOutputURI, err := deriveTaskOutputURI(outputURI, 7)
+	if err != nil {
+		t.Fatalf("derive task output URI: %v", err)
+	}
+	taskWant := want + "tasks/7/"
+	if taskOutputURI != taskWant {
+		t.Fatalf("task output URI = %q, want %q", taskOutputURI, taskWant)
+	}
 }
 
 func TestNormalizeOutputRootRejectsUnsafeLocations(t *testing.T) {

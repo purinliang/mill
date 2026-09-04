@@ -8,11 +8,13 @@ scope.
 
 Mill is in Milestone 1: local single-process control plane. The project
 foundation, HTTP process, PostgreSQL connection/readiness behavior, initial
-`jobs` migration, and create/get job API are implemented. Job submission stores
-local references only; manifest materialization and execution are not
-implemented. Add implementation only in small, explicitly requested
-increments. Do not add Dockerfiles, Kubernetes manifests, CI workflows,
-Terraform, or unrelated infrastructure unless a later task requires them.
+`jobs` and `tasks` migrations, and create/get job API are implemented. Job
+submission reads a bounded local JSON manifest and transactionally materializes
+pending tasks. Workload image inspection, shard access, execution, attempts,
+results, retries, S3, and Kubernetes are not implemented. Add implementation
+only in small, explicitly requested increments. Do not add Dockerfiles,
+Kubernetes manifests, CI workflows, Terraform, or unrelated infrastructure
+unless a later task requires them.
 
 Do not describe planned behavior as implemented. Update the status in
 `README.md` whenever a milestone materially changes the repository's actual

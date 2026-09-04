@@ -86,9 +86,9 @@ microservices. Status describes the repository today.
 | --- | --- | --- |
 | Process composition | Implemented | Read configuration, connect dependencies, assemble HTTP routes, and manage startup and graceful shutdown. |
 | Health API | Implemented | Report process liveness and PostgreSQL-backed readiness. |
-| Job API and model | Partially implemented | Validate job submissions, expose create/get operations, and represent job state. Task counts and progress remain planned. |
-| Job persistence | Partially implemented | Store immutable job submission data and enforce concurrency-safe idempotency in PostgreSQL. Task, attempt, and result persistence remain planned. |
-| Manifest materialization | Planned | Read a finalized manifest, validate its shard entries, and idempotently create one durable task per shard. |
+| Job API and model | Partially implemented | Validate job submissions, expose create/get operations, and report task-state counts. Execution-driven state changes remain planned. |
+| Job persistence | Partially implemented | Store immutable job submission data, task intent, and concurrency-safe idempotency in PostgreSQL. Attempt and result persistence remain planned. |
+| Manifest materialization | Implemented locally | Strictly decode a bounded local JSON manifest, record its checksum, and transactionally create one durable task per ordered shard. S3 manifest loading remains planned. |
 | Coordinator | Planned | Reconcile durable task and attempt intent with an execution backend. It may initially use a local test executor before Kubernetes. |
 | Kubernetes adapter | Planned | Create and observe native Kubernetes workloads without taking over scheduling. |
 | Object-storage adapter | Planned | Access manifests and result metadata through storage-neutral boundaries, with S3 as the V1 cloud implementation. |
@@ -103,18 +103,21 @@ cmd/mill (configuration and process lifecycle)
     |
     +--> health HTTP handlers --> PostgreSQL readiness check
     |
-    +--> job HTTP handlers --> job validation/model --> PostgreSQL repository
-                                      |
-                                      +--> planned manifest materializer
-                                                   |
-                                                   v
-                                          durable tasks/attempts
-                                                   |
-                                                   v
-                                          planned coordinator
-                                                   |
-                                                   v
-                                          Kubernetes adapter
+    +--> job HTTP handlers --> job service
+                                  |
+                         +--------+--------+
+                         |                 |
+                         v                 v
+               local manifest loader   PostgreSQL repository
+                                             |
+                                             v
+                                        durable tasks
+                                             |
+                                             v
+                                    planned coordinator
+                                             |
+                                             v
+                                    Kubernetes adapter
 ```
 
 ## Repository structure
@@ -132,10 +135,13 @@ internal/job/
   model.go                        job API and domain data types
   validation.go                   submission, identifier, and URI rules
   handler.go                      HTTP transport for job operations
-  repository.go                   PostgreSQL job persistence and idempotency
+  service.go                      submission and materialization workflow
+  manifest.go                     bounded local JSON manifest loader
+  repository.go                   PostgreSQL jobs, tasks, and idempotency
   *_test.go                       unit and PostgreSQL integration coverage
 migrations/
   000001_create_jobs.sql          initial durable job schema
+  000002_create_tasks.sql         manifest identity and durable task schema
 README.md                         architecture, behavior, and development guide
 AGENTS.md                         contribution and agent operating conventions
 go.mod, go.sum                    Go module and dependency definitions
@@ -179,12 +185,12 @@ Job creation should accept an idempotency key or equivalent client request ID.
 Repeating an identical request returns the original job; reusing the key for a
 different request is rejected.
 
-Before execution, Mill resolves the image to an immutable digest and records an
-immutable manifest version or checksum. It then materializes tasks
-idempotently, using the `(job, shard index)` identity to tolerate a coordinator
-crash halfway through expansion. The final shard count is persisted before job
-progress is treated as runnable. V1 should impose documented manifest-size and
-shard-count limits rather than imply unlimited task cardinality.
+Before execution, Mill should resolve the image to an immutable digest; image
+resolution is still planned. The local prototype records the exact manifest
+bytes as a SHA-256 checksum. It then materializes tasks idempotently, using the
+`(job, shard index)` identity and one database transaction so a crash cannot
+commit a partial task set. The final shard count is persisted before the job is
+treated as runnable. Local manifests are limited to 4 MiB and 10,000 shards.
 
 ### Dispatch and reconciliation
 
@@ -299,12 +305,45 @@ Structured logs, Prometheus, Grafana, and OpenTelemetry are candidates, not
 baseline dependencies. They should be introduced only in response to an actual
 diagnostic or measurement requirement.
 
+## Local dataset manifest
+
+The implemented manifest contract is deliberately small. It is a JSON object
+with version `1` and an ordered, non-empty `shards` array:
+
+```json
+{
+  "version": 1,
+  "shards": [
+    {"uri": "file:///tmp/mill-demo/shard-000.json"},
+    {"uri": "file:///tmp/mill-demo/shard-001.json"},
+    {"uri": "file:///tmp/mill-demo/shard-002.json"}
+  ]
+}
+```
+
+The array position is the stable zero-based shard index. Mill creates one task
+per entry and assigns outputs below `<job-output-uri>/tasks/<shard-index>/`.
+Duplicate shard URIs are allowed because two positions may intentionally refer
+to the same input. The local loader accepts only absolute `file://` URIs, does
+not open the shard files, rejects unknown JSON fields, and limits a manifest to
+4 MiB and 10,000 shards. These are prototype limits, not scalability claims.
+
+The SHA-256 recorded on the job identifies the exact manifest bytes that were
+materialized. Once materialization succeeds, an idempotent replay returns the
+stored job without requiring the manifest file to remain available.
+
+Task creation and the transition from `preparing` to `running` commit in one
+PostgreSQL transaction. A process failure can therefore leave a job preparing,
+but cannot commit only part of its task set. The current recovery trigger is an
+idempotent replay of the same submission; automatic background reconciliation
+of preparing jobs remains planned.
+
 ## Local quick start
 
 The current development slice requires Go 1.27 and a reachable PostgreSQL 18
 database. It opens a pgx connection pool and verifies the database connection
-before accepting HTTP traffic. Job metadata is created by the first numbered SQL
-migration.
+before accepting HTTP traffic. Numbered SQL migrations create the job and task
+metadata schema.
 
 Create an empty development database using your local PostgreSQL installation:
 
@@ -313,6 +352,23 @@ createdb mill
 export MILL_DATABASE_URL='postgresql:///mill'
 psql "$MILL_DATABASE_URL" -v ON_ERROR_STOP=1 \
   -f migrations/000001_create_jobs.sql
+psql "$MILL_DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -f migrations/000002_create_tasks.sql
+```
+
+Create a local manifest. The shard files are references in this slice and do
+not need to exist yet:
+
+```bash
+mkdir -p /tmp/mill-demo
+printf '%s\n' '{' \
+  '  "version": 1,' \
+  '  "shards": [' \
+  '    {"uri": "file:///tmp/mill-demo/shard-000.json"},' \
+  '    {"uri": "file:///tmp/mill-demo/shard-001.json"},' \
+  '    {"uri": "file:///tmp/mill-demo/shard-002.json"}' \
+  '  ]' \
+  '}' > /tmp/mill-demo/manifest.json
 ```
 
 Set a local output root and start Mill. The prototype derives a stable output
@@ -347,8 +403,9 @@ The readiness response is:
 {"status":"ready"}
 ```
 
-Submit a job in another shell. The image and manifest are references only in
-this prototype: Mill does not inspect the image or open the manifest yet.
+Submit a job in another shell. The image remains a reference only. Mill reads
+the manifest, records its checksum, and creates the pending task records, but it
+does not inspect the image, open shard files, or execute tasks yet.
 
 ```bash
 curl --include --request POST http://localhost:8080/jobs \
@@ -367,7 +424,9 @@ curl --include --request POST http://localhost:8080/jobs \
 
 The first submission returns HTTP `201`; repeating the identical request returns
 HTTP `200` and the same job. Reusing the key with different input returns HTTP
-`409`. Retrieve the stored job using the UUID from the response:
+`409`. The response reports `state: "running"`, the manifest checksum, and task
+progress such as three total and three pending. Retrieve the stored job using
+the UUID from the response:
 
 ```bash
 curl http://localhost:8080/jobs/<job-id>
@@ -386,6 +445,8 @@ database, apply the migration, and point the test-specific variable at it:
 createdb mill_test
 psql 'postgresql:///mill_test' -v ON_ERROR_STOP=1 \
   -f migrations/000001_create_jobs.sql
+psql 'postgresql:///mill_test' -v ON_ERROR_STOP=1 \
+  -f migrations/000002_create_tasks.sql
 MILL_TEST_DATABASE_URL='postgresql:///mill_test' go test ./...
 ```
 
@@ -461,12 +522,13 @@ test vehicle; Mill remains the project under evaluation.
 
 Mill is in Milestone 1. The Go control plane establishes a PostgreSQL connection
 pool, exposes liveness and database-backed readiness probes, and shuts down
-cleanly. A numbered migration defines the `jobs` table. `POST /jobs` persists a
-local job submission with concurrency-safe idempotency, and `GET /jobs/{id}`
-retrieves it after restart. Image and `file://` manifest references are stored
-but not opened, and output URIs are derived but not written. Task persistence,
-manifest materialization, execution, S3, Kubernetes, and the complete workload
-contract remain planned.
+cleanly. Numbered migrations define durable `jobs` and `tasks`. `POST /jobs`
+persists a submission with concurrency-safe idempotency, strictly reads a local
+JSON manifest, and transactionally creates one pending task per ordered shard.
+`GET /jobs/{id}` retrieves the job, manifest checksum, output location, and
+task-state counts after restart. Image inspection, shard access, task execution,
+attempts, results, S3, Kubernetes, retries, and the complete workload contract
+remain planned.
 
 ## Local and cloud development philosophy
 

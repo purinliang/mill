@@ -61,7 +61,11 @@ func run(ctx context.Context, address, databaseURL, outputRootURI string) error 
 	if err != nil {
 		return err
 	}
-	jobHandler := job.NewHandler(jobRepository, log.Default())
+	jobService, err := job.NewService(jobRepository, job.FileManifestLoader{})
+	if err != nil {
+		return err
+	}
+	jobHandler := job.NewHandler(jobService, log.Default())
 
 	server := &http.Server{
 		Addr:              address,
