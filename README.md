@@ -97,8 +97,8 @@ per-shard execution and failure information that the task model needs.
 - **Task**: the durable obligation to process one logical shard for one job. The
   pair `(job_id, shard_index)` is unique, so `job-1/shard-0` and
   `job-2/shard-0` are different tasks.
-- **Attempt**: one future execution generation of a task. A retry creates a new
-  attempt instead of erasing failure history.
+- **Attempt**: one durable execution generation of a task. A future retry will
+  create a new attempt instead of erasing failure history.
 - **Executable/container**: the trusted OCI image and user arguments. The image
   is only recorded today; image resolution and execution are planned.
 - **Result**: output from a successful attempt. Output bytes belong in object
@@ -124,12 +124,21 @@ Task
   shard index           stable zero-based position within the job
   input range           [start byte, end byte)
   state                 pending/running/completed/failed
+
+Attempt
+  id                    UUIDv7
+  task ID               logical task being executed
+  attempt number        monotonically increasing within the task
+  executor              execution backend identity
+  state                 starting/running/completed/failed
+  external ID           nullable runtime resource identity
+  lifecycle metadata    timestamps and an optional failure message
 ```
 
 Input and output URIs are not repeated on every task. A task reads the job's
-input URI. Its output namespace is derived from the job output root and shard
-index. An attempt-specific suffix will be added when retries are implemented,
-so overlapping executions do not overwrite one another.
+input URI. Each attempt's output URI is derived from the job output root, shard
+index, and attempt ID, so overlapping or retried executions cannot overwrite
+one another.
 
 The job/task distinction is important: a job is the user's whole batch request,
 while a task is one independently executable piece of that request. A future
@@ -221,8 +230,8 @@ user's executable arguments:
 
 The half-open byte range `[start, end)` contains complete JSONL records. The
 output URI names the exact file/object for this execution, not merely a shared
-directory. Mill will derive attempt-specific output URIs when retry attempts
-are introduced.
+directory. Mill derives it below the job output root as
+`tasks/<shard-index>/attempts/<attempt-id>/result.jsonl`.
 
 A conforming workload should:
 
@@ -256,7 +265,7 @@ boundaries, not microservices.
 | Health API | Implemented | Report process liveness and PostgreSQL-backed readiness. |
 | Job HTTP API/model | Partially implemented | Validate, create, and retrieve jobs; report persisted task counts. Execution-driven transitions remain planned. |
 | JSONL partition planner | Implemented locally | Validate local input, calculate identity, and create logical record-aligned byte ranges. S3 access remains planned. |
-| PostgreSQL repository | Partially implemented | Persist idempotent jobs and atomically materialize logical tasks. Attempts and results remain planned. |
+| PostgreSQL repository | Partially implemented | Persist idempotent jobs, materialize logical tasks, claim work, and transition attempts. Result publication remains planned. |
 | Workload CLI contract | Implemented locally | Serialize and parse task identity, logical input range, output URI, and separated user arguments. |
 | JSONL copy workload | Implemented locally and in Docker | Demonstrate that one process/container reads and atomically writes exactly one assigned local range. |
 | Coordinator | Planned | Reconcile durable tasks and attempts with an execution backend. |
@@ -303,6 +312,7 @@ internal/job/
   partition.go                    local JSONL logical-shard planner
   service.go                      idempotent planning/materialization workflow
   repository.go                   PostgreSQL job/task persistence
+  attempt_repository.go           task claiming and attempt transitions
   handler.go                      HTTP transport
   *_test.go                       unit and PostgreSQL integration coverage
 internal/workload/
@@ -311,6 +321,7 @@ migrations/
   000001_create_jobs.sql          initial job schema
   000002_create_tasks.sql         first task schema
   000003_refactor_job_input.sql   executable/input names and byte-range tasks
+  000004_create_attempts.sql      durable execution attempts
 README.md                         architecture and development guide
 AGENTS.md                         contribution and agent conventions
 .dockerignore                     files excluded from Docker build context
@@ -326,31 +337,36 @@ useful.
 
 ### Durable intent and reconciliation
 
-The future coordinator must persist desired work before calling Kubernetes.
-PostgreSQL and the Kubernetes API do not share a transaction, so Mill will use
-reconciliation rather than assume one request completes exactly once:
+Mill persists execution intent before an external runtime call. PostgreSQL and
+Docker or Kubernetes do not share a transaction, so execution must eventually
+be reconciled rather than treated as an exactly-once request:
 
-1. Claim a durable pending task and create an attempt record.
-2. Create Kubernetes work with deterministic Mill identity labels.
-3. Record the observed Kubernetes resource identity and state.
-4. Periodically compare PostgreSQL intent with Kubernetes state and repair
-   incomplete steps.
+1. Lock a job with available parallelism and claim its oldest pending task.
+2. Create a `starting` attempt and mark the task `running` in one transaction.
+3. Ask the execution backend to create the external container or Pod.
+4. Record its external identity and transition the attempt to `running`.
+5. Atomically finish the attempt, task, and, when appropriate, job.
+6. Reconcile attempts left between these steps after a process or API failure.
 
-V1 may use one coordinator instance. Multiple active coordinators require an
-explicit PostgreSQL-backed claim or lease design first.
+The repository implements the durable transitions in steps 1, 2, 4, and 5.
+External execution and reconciliation remain planned. PostgreSQL row locks make
+claims concurrency-safe, enforce each job's captured parallelism, and allow at
+most one active attempt per task. Running multiple coordinators is deferred
+until ownership and recovery behavior are explicitly designed.
 
 ### Retries and outputs
 
-Execution will be at least once. A workload must tolerate duplicate execution.
-Each attempt should write to its own output prefix and publish completion only
-after its output is complete. Mill chooses one successful result before marking
-the task complete; retry history remains durable.
+Execution will be at least once, so a workload must tolerate duplicate
+execution. Each attempt writes to its own output location and should publish
+completion only after its output is complete. A future retry will create a new
+attempt while retaining terminal attempt history. Until retry policy is added,
+a failed attempt immediately fails its task and job.
 
 ```text
 pending --> running --> completed
                |
                v
-             failed --> pending (new attempt)
+             failed --> pending (future retry creates a new attempt)
 ```
 
 Kubernetes-native retries and Mill retries must be configured together so they
@@ -392,7 +408,8 @@ export MILL_DATABASE_URL='postgresql:///mill'
 psql "$MILL_DATABASE_URL" -v ON_ERROR_STOP=1 \
   -f migrations/000001_create_jobs.sql \
   -f migrations/000002_create_tasks.sql \
-  -f migrations/000003_refactor_job_input.sql
+  -f migrations/000003_refactor_job_input.sql \
+  -f migrations/000004_create_attempts.sql
 ```
 
 Create an input containing 100 independent JSON records:
@@ -510,7 +527,8 @@ createdb mill_test
 psql 'postgresql:///mill_test' -v ON_ERROR_STOP=1 \
   -f migrations/000001_create_jobs.sql \
   -f migrations/000002_create_tasks.sql \
-  -f migrations/000003_refactor_job_input.sql
+  -f migrations/000003_refactor_job_input.sql \
+  -f migrations/000004_create_attempts.sql
 MILL_TEST_DATABASE_URL='postgresql:///mill_test' go test -race ./...
 ```
 
@@ -521,8 +539,8 @@ MILL_TEST_DATABASE_URL='postgresql:///mill_test' go test -race ./...
 2. Mill validates and identifies the input, chooses a task count from its
    configured parallelism, and plans record-aligned logical ranges.
 3. Mill persists the job and atomically creates one pending task per range.
-4. The future coordinator creates an attempt and represents runnable work with
-   a native Kubernetes primitive.
+4. A coordinator claims a task and durably creates an attempt before asking a
+   local Docker adapter, or later Kubernetes, to run it.
 5. A workload container receives task identity, its input range, and a derived
    attempt output location through a small CLI contract.
 6. Mill reconciles Kubernetes observations into durable attempt and task state.
@@ -530,9 +548,9 @@ MILL_TEST_DATABASE_URL='postgresql:///mill_test' go test -race ./...
    new attempt according to retry policy.
 8. Job status aggregates the finalized task set and exposes output locations.
 
-Steps 1–3 are implemented for local files. The CLI shape used by step 5 and a
-standalone reference workload are implemented, but steps 4–8 are not yet wired
-together by the control plane.
+Steps 1–3 and the durable claim/transition part of step 4 are implemented. The
+CLI shape used by step 5 and a standalone reference workload are implemented,
+but no coordinator or execution adapter wires them together yet.
 
 ## Development milestones
 
@@ -584,19 +602,22 @@ Mill has completed Milestone 2. Implemented behavior includes:
 - concurrency-safe idempotent submission;
 - local JSONL validation, identity, record counting, and logical byte-range
   planning;
-- atomic PostgreSQL job/task materialization; and
+- atomic PostgreSQL job/task materialization;
 - persisted task-state progress after restart;
+- concurrency-safe task claims that enforce each job's parallelism;
+- durable attempt lifecycle transitions and atomic task/job completion;
 - a typed workload CLI argument contract; and
 - a local JSONL copy executable and non-root OCI image that process one assigned
   range.
 
 The control plane still does not launch the executable. Image inspection, task
-execution coordination, attempts, results, automatic recovery, S3, a Docker
-execution adapter, Kubernetes, and retries are not implemented.
+execution coordination, result publication, automatic recovery, S3, a Docker
+execution adapter, Kubernetes, and retries are not implemented. Until retries
+exist, one failed attempt immediately fails its task and job.
 
 ## Local and cloud development philosophy
 
 Development starts locally so each domain and persistence decision can be
-learned and tested in isolation. The next layer should be a tiny local container
-contract, then Kubernetes, then AWS. A cloud environment should be reproducible
-and disposable rather than the default development setup.
+learned and tested in isolation. The next layer should be a small local Docker
+execution adapter, then Kubernetes, then AWS. A cloud environment should be
+reproducible and disposable rather than the default development setup.

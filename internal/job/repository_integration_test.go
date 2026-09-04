@@ -297,12 +297,13 @@ func openIntegrationDatabase(t *testing.T, databaseURL string) *pgxpool.Pool {
 		t.Fatalf("ping integration database: %v", err)
 	}
 
-	var jobsTable, tasksTable *string
+	var jobsTable, tasksTable, attemptsTable *string
 	var hasLogicalRanges bool
 	if err := pool.QueryRow(ctx, `
 		SELECT
 			to_regclass('public.jobs')::text,
 			to_regclass('public.tasks')::text,
+			to_regclass('public.attempts')::text,
 			EXISTS (
 				SELECT 1
 				FROM information_schema.columns
@@ -310,11 +311,11 @@ func openIntegrationDatabase(t *testing.T, databaseURL string) *pgxpool.Pool {
 					AND table_name = 'tasks'
 					AND column_name = 'input_start_byte'
 			)
-	`).Scan(&jobsTable, &tasksTable, &hasLogicalRanges); err != nil {
+	`).Scan(&jobsTable, &tasksTable, &attemptsTable, &hasLogicalRanges); err != nil {
 		pool.Close()
 		t.Fatalf("check database migrations: %v", err)
 	}
-	if jobsTable == nil || tasksTable == nil || !hasLogicalRanges {
+	if jobsTable == nil || tasksTable == nil || attemptsTable == nil || !hasLogicalRanges {
 		pool.Close()
 		t.Fatal("required schema does not exist; apply all numbered migrations to the test database")
 	}

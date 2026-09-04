@@ -4,11 +4,20 @@ import "time"
 
 type State string
 
+type AttemptState string
+
 const (
 	StatePreparing State = "preparing"
 	StateRunning   State = "running"
 	StateCompleted State = "completed"
 	StateFailed    State = "failed"
+)
+
+const (
+	AttemptStateStarting  AttemptState = "starting"
+	AttemptStateRunning   AttemptState = "running"
+	AttemptStateCompleted AttemptState = "completed"
+	AttemptStateFailed    AttemptState = "failed"
 )
 
 type Executable struct {
@@ -53,4 +62,29 @@ type Job struct {
 	Progress    Progress   `json:"progress"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+type Attempt struct {
+	ID             string
+	JobID          string
+	TaskID         string
+	Number         int
+	Executor       string
+	State          AttemptState
+	ExternalID     string
+	FailureMessage string
+	CreatedAt      time.Time
+	StartedAt      *time.Time
+	FinishedAt     *time.Time
+	UpdatedAt      time.Time
+}
+
+type ClaimedAttempt struct {
+	Attempt        Attempt
+	Executable     Executable
+	ShardIndex     int
+	InputURI       string
+	InputStartByte int64
+	InputEndByte   int64
+	OutputURI      string
 }

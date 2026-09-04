@@ -11,12 +11,13 @@ HTTP process, PostgreSQL connection/readiness behavior, create/get API, local
 JSONL logical sharding, and durable job/task materialization are implemented.
 CLI argument serialization, a local JSONL copy reference workload, and its
 minimal non-root Docker image are also implemented. The control plane does not
-launch it. Workload image inspection, task execution coordination, attempts,
-results, automatic recovery, retries, S3, a Docker execution adapter, and
-Kubernetes are not implemented. Add implementation only in small, explicitly
-requested increments. Do not add more Dockerfiles, Kubernetes manifests, CI
-workflows, Terraform, or unrelated infrastructure unless a later task requires
-them.
+launch it. Concurrency-safe task claiming and durable attempt state transitions
+are implemented in PostgreSQL, but no coordinator calls them yet. Workload
+image inspection, external execution coordination, results, automatic recovery,
+retries, S3, a Docker execution adapter, and Kubernetes are not implemented.
+Add implementation only in small, explicitly requested increments. Do not add
+more Dockerfiles, Kubernetes manifests, CI workflows, Terraform, or unrelated
+infrastructure unless a later task requires them.
 
 Do not describe planned behavior as implemented. Update the status in
 `README.md` whenever a milestone materially changes the repository's actual
@@ -53,6 +54,9 @@ operational and maintenance cost.
   server configuration captured durably on each job.
 - Use explicit, validated state transitions. Make transitions idempotent where
   retries, reconciliation, or process restarts can repeat an operation.
+- Persist a `starting` attempt and mark its task active in one transaction
+  before calling an external runtime. Permit at most one active attempt per
+  task and retain terminal attempts as execution history.
 - Do not implement a custom cluster scheduler when Kubernetes provides a
   suitable primitive. Evaluate native Jobs, including Indexed Jobs, first.
 - Keep the workload/container contract minimal and stable. Changes to it require
