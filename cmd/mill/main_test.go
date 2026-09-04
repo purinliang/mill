@@ -62,6 +62,21 @@ func TestUnknownRoute(t *testing.T) {
 	}
 }
 
+func TestParseParallelism(t *testing.T) {
+	for _, value := range []string{"", "zero", "0", "10001"} {
+		if _, err := parseParallelism(value); err == nil {
+			t.Errorf("parseParallelism(%q) succeeded, want an error", value)
+		}
+	}
+	parallelism, err := parseParallelism("3")
+	if err != nil {
+		t.Fatalf("parse parallelism: %v", err)
+	}
+	if parallelism != 3 {
+		t.Errorf("parallelism = %d, want 3", parallelism)
+	}
+}
+
 func ready(context.Context) error {
 	return nil
 }

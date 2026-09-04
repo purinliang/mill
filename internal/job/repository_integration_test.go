@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +11,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const testInputSHA256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func TestRepositoryCreateReplayGetAndPersist(t *testing.T) {
 	databaseURL := integrationDatabaseURL(t)
@@ -24,11 +25,11 @@ func TestRepositoryCreateReplayGetAndPersist(t *testing.T) {
 		t.Fatalf("create repository: %v", err)
 	}
 	submission := Submission{
-		Workload: Workload{Image: "mill/example:dev"},
-		Dataset:  Dataset{ManifestURI: "file:///definitely/not/present/manifest.json"},
+		Executable: Executable{Image: "mill/example:dev"},
+		Input:      InputSpec{URI: "file:///definitely/not/present/records.jsonl"},
 	}
 
-	createdJob, created, err := repository.Create(context.Background(), key, submission)
+	createdJob, created, err := repository.Create(context.Background(), key, submission, testInputSHA256, 100, 3)
 	if err != nil {
 		t.Fatalf("create job: %v", err)
 	}
@@ -45,8 +46,14 @@ func TestRepositoryCreateReplayGetAndPersist(t *testing.T) {
 	if createdJob.Output.URI != wantOutputURI {
 		t.Errorf("output URI = %q, want %q", createdJob.Output.URI, wantOutputURI)
 	}
-	if createdJob.Workload.Args == nil {
-		t.Error("workload args are nil, want an empty array")
+	if createdJob.Input.SHA256 != testInputSHA256 || createdJob.Input.RecordCount != 100 {
+		t.Errorf("input identity = SHA %q records %d, want SHA %q records 100", createdJob.Input.SHA256, createdJob.Input.RecordCount, testInputSHA256)
+	}
+	if createdJob.Parallelism != 3 {
+		t.Errorf("parallelism = %d, want 3", createdJob.Parallelism)
+	}
+	if createdJob.Executable.Args == nil {
+		t.Error("executable args are nil, want an empty array")
 	}
 
 	pool.Close()
@@ -58,7 +65,6 @@ func TestRepositoryCreateReplayGetAndPersist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create restarted repository: %v", err)
 	}
-
 	persistedJob, err := restartedRepository.Get(context.Background(), createdJob.ID)
 	if err != nil {
 		t.Fatalf("get persisted job: %v", err)
@@ -67,37 +73,38 @@ func TestRepositoryCreateReplayGetAndPersist(t *testing.T) {
 		t.Errorf("persisted ID = %q, want %q", persistedJob.ID, createdJob.ID)
 	}
 
-	replayedJob, replayCreated, err := restartedRepository.Create(context.Background(), key, submission)
+	replayedJob, replayCreated, err := restartedRepository.Create(
+		context.Background(), key, submission, strings.Repeat("b", 64), 200, 9,
+	)
 	if err != nil {
 		t.Fatalf("replay job: %v", err)
 	}
 	if replayCreated {
 		t.Fatal("created = true on replay, want false")
 	}
-	if replayedJob.ID != createdJob.ID {
-		t.Errorf("replayed ID = %q, want %q", replayedJob.ID, createdJob.ID)
-	}
-	if replayedJob.Output.URI != wantOutputURI {
-		t.Errorf("replayed output URI = %q, want original %q", replayedJob.Output.URI, wantOutputURI)
+	if replayedJob.ID != createdJob.ID || replayedJob.Output.URI != wantOutputURI || replayedJob.Parallelism != 3 {
+		t.Errorf("replayed job = ID %q output %q parallelism %d, want original values", replayedJob.ID, replayedJob.Output.URI, replayedJob.Parallelism)
 	}
 
 	conflictingSubmissions := map[string]Submission{
 		"image": {
-			Workload: Workload{Image: "mill/other:dev"},
-			Dataset:  submission.Dataset,
+			Executable: Executable{Image: "mill/other:dev"},
+			Input:      submission.Input,
 		},
 		"arguments": {
-			Workload: Workload{Image: submission.Workload.Image, Args: []string{"--changed"}},
-			Dataset:  submission.Dataset,
+			Executable: Executable{Image: submission.Executable.Image, Args: []string{"--changed"}},
+			Input:      submission.Input,
 		},
-		"manifest": {
-			Workload: submission.Workload,
-			Dataset:  Dataset{ManifestURI: "file:///data/other-manifest.json"},
+		"input": {
+			Executable: submission.Executable,
+			Input:      InputSpec{URI: "file:///data/other.jsonl"},
 		},
 	}
 	for name, conflictingSubmission := range conflictingSubmissions {
 		t.Run("conflicting "+name, func(t *testing.T) {
-			if _, _, err := restartedRepository.Create(context.Background(), key, conflictingSubmission); !errors.Is(err, ErrIdempotencyConflict) {
+			if _, _, err := restartedRepository.Create(
+				context.Background(), key, conflictingSubmission, testInputSHA256, 100, 3,
+			); !errors.Is(err, ErrIdempotencyConflict) {
 				t.Fatalf("conflicting create error = %v, want %v", err, ErrIdempotencyConflict)
 			}
 		})
@@ -116,14 +123,13 @@ func TestRepositoryConcurrentIdempotentCreate(t *testing.T) {
 	key := "integration:concurrent-create"
 	deleteJobByKey(t, pool, key)
 	defer deleteJobByKey(t, pool, key)
-
 	repository, err := NewRepository(pool, "file:///tmp/mill-output")
 	if err != nil {
 		t.Fatalf("create repository: %v", err)
 	}
 	submission := Submission{
-		Workload: Workload{Image: "mill/example:dev", Args: []string{"--mode", "fast"}},
-		Dataset:  Dataset{ManifestURI: "file:///data/manifest.json"},
+		Executable: Executable{Image: "mill/example:dev", Args: []string{"--mode", "fast"}},
+		Input:      InputSpec{URI: "file:///data/records.jsonl"},
 	}
 
 	const callers = 8
@@ -135,7 +141,7 @@ func TestRepositoryConcurrentIdempotentCreate(t *testing.T) {
 		go func() {
 			defer callersDone.Done()
 			<-start
-			job, created, err := repository.Create(context.Background(), key, submission)
+			job, created, err := repository.Create(context.Background(), key, submission, testInputSHA256, 100, 3)
 			results <- createResult{job: job, created: created, err: err}
 		}()
 	}
@@ -164,7 +170,7 @@ func TestRepositoryConcurrentIdempotentCreate(t *testing.T) {
 	}
 }
 
-func TestRepositoryMaterializeAndReportProgress(t *testing.T) {
+func TestRepositoryMaterializeLogicalShardsAndReportProgress(t *testing.T) {
 	databaseURL := integrationDatabaseURL(t)
 	pool := openIntegrationDatabase(t, databaseURL)
 	defer pool.Close()
@@ -172,44 +178,37 @@ func TestRepositoryMaterializeAndReportProgress(t *testing.T) {
 	key := "integration:materialize-progress"
 	deleteJobByKey(t, pool, key)
 	defer deleteJobByKey(t, pool, key)
-
 	repository, err := NewRepository(pool, "file:///tmp/mill-output")
 	if err != nil {
 		t.Fatalf("create repository: %v", err)
 	}
 	createdJob, _, err := repository.Create(context.Background(), key, Submission{
-		Workload: Workload{Image: "mill/example:dev"},
-		Dataset:  Dataset{ManifestURI: "file:///data/manifest.json"},
-	})
+		Executable: Executable{Image: "mill/example:dev"},
+		Input:      InputSpec{URI: "file:///data/records.jsonl"},
+	}, testInputSHA256, 30, 3)
 	if err != nil {
 		t.Fatalf("create job: %v", err)
 	}
-	manifest := Manifest{
-		Version: manifestVersion,
-		SHA256:  strings.Repeat("a", 64),
-		Shards: []ManifestShard{
-			{URI: "file:///data/shard-000.json"},
-			{URI: "file:///data/shard-001.json"},
-			{URI: "file:///data/shard-002.json"},
+	plan := PartitionPlan{
+		InputSHA256: testInputSHA256,
+		RecordCount: 30,
+		Shards: []LogicalShard{
+			{StartByte: 0, EndByte: 100},
+			{StartByte: 100, EndByte: 220},
+			{StartByte: 220, EndByte: 360},
 		},
 	}
 
-	materializedJob, err := repository.Materialize(context.Background(), createdJob.ID, manifest)
+	materializedJob, err := repository.Materialize(context.Background(), createdJob.ID, plan)
 	if err != nil {
 		t.Fatalf("materialize tasks: %v", err)
 	}
-	if materializedJob.State != StateRunning {
-		t.Errorf("state = %q, want %q", materializedJob.State, StateRunning)
-	}
-	if materializedJob.Dataset.ManifestSHA256 != manifest.SHA256 {
-		t.Errorf("manifest SHA-256 = %q, want %q", materializedJob.Dataset.ManifestSHA256, manifest.SHA256)
-	}
-	if materializedJob.Progress != (Progress{Total: 3, Pending: 3}) {
-		t.Errorf("progress = %+v, want total=3 pending=3", materializedJob.Progress)
+	if materializedJob.State != StateRunning || materializedJob.Progress != (Progress{Total: 3, Pending: 3}) {
+		t.Errorf("materialized job = state %q progress %+v, want running with 3 pending", materializedJob.State, materializedJob.Progress)
 	}
 
 	rows, err := pool.Query(context.Background(), `
-		SELECT id::text, shard_index, input_uri, output_uri, state
+		SELECT id::text, shard_index, input_start_byte, input_end_byte, state
 		FROM public.tasks
 		WHERE job_id = $1::uuid
 		ORDER BY shard_index
@@ -220,23 +219,17 @@ func TestRepositoryMaterializeAndReportProgress(t *testing.T) {
 	defer rows.Close()
 	index := 0
 	for rows.Next() {
-		var id, inputURI, outputURI, state string
+		var id, state string
 		var shardIndex int
-		if err := rows.Scan(&id, &shardIndex, &inputURI, &outputURI, &state); err != nil {
+		var startByte, endByte int64
+		if err := rows.Scan(&id, &shardIndex, &startByte, &endByte, &state); err != nil {
 			t.Fatalf("scan task: %v", err)
 		}
 		if len(id) != 36 || id[14] != '7' {
 			t.Errorf("task ID = %q, want a UUIDv7", id)
 		}
-		if shardIndex != index {
-			t.Errorf("shard index = %d, want %d", shardIndex, index)
-		}
-		if inputURI != manifest.Shards[index].URI {
-			t.Errorf("input URI = %q, want %q", inputURI, manifest.Shards[index].URI)
-		}
-		wantOutputURI := materializedJob.Output.URI + "tasks/" + strconv.Itoa(index) + "/"
-		if outputURI != wantOutputURI {
-			t.Errorf("output URI = %q, want %q", outputURI, wantOutputURI)
+		if shardIndex != index || startByte != plan.Shards[index].StartByte || endByte != plan.Shards[index].EndByte {
+			t.Errorf("task %d = shard %d range [%d,%d), want shard %d range %+v", index, shardIndex, startByte, endByte, index, plan.Shards[index])
 		}
 		if state != "pending" {
 			t.Errorf("task state = %q, want pending", state)
@@ -246,22 +239,17 @@ func TestRepositoryMaterializeAndReportProgress(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate tasks: %v", err)
 	}
-	if index != len(manifest.Shards) {
-		t.Fatalf("task count = %d, want %d", index, len(manifest.Shards))
+	if index != len(plan.Shards) {
+		t.Fatalf("task count = %d, want %d", index, len(plan.Shards))
 	}
 
-	replayedJob, err := repository.Materialize(context.Background(), createdJob.ID, manifest)
-	if err != nil {
+	if _, err := repository.Materialize(context.Background(), createdJob.ID, plan); err != nil {
 		t.Fatalf("replay materialization: %v", err)
 	}
-	if replayedJob.Progress != materializedJob.Progress {
-		t.Errorf("replayed progress = %+v, want %+v", replayedJob.Progress, materializedJob.Progress)
-	}
-
-	changedManifest := manifest
-	changedManifest.SHA256 = strings.Repeat("b", 64)
-	if _, err := repository.Materialize(context.Background(), createdJob.ID, changedManifest); !errors.Is(err, ErrManifestConflict) {
-		t.Fatalf("changed manifest error = %v, want %v", err, ErrManifestConflict)
+	changedPlan := plan
+	changedPlan.InputSHA256 = strings.Repeat("b", 64)
+	if _, err := repository.Materialize(context.Background(), createdJob.ID, changedPlan); !errors.Is(err, ErrInputConflict) {
+		t.Fatalf("changed input error = %v, want %v", err, ErrInputConflict)
 	}
 
 	if _, err := pool.Exec(context.Background(), `
@@ -310,15 +298,25 @@ func openIntegrationDatabase(t *testing.T, databaseURL string) *pgxpool.Pool {
 	}
 
 	var jobsTable, tasksTable *string
+	var hasLogicalRanges bool
 	if err := pool.QueryRow(ctx, `
-		SELECT to_regclass('public.jobs')::text, to_regclass('public.tasks')::text
-	`).Scan(&jobsTable, &tasksTable); err != nil {
+		SELECT
+			to_regclass('public.jobs')::text,
+			to_regclass('public.tasks')::text,
+			EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+					AND table_name = 'tasks'
+					AND column_name = 'input_start_byte'
+			)
+	`).Scan(&jobsTable, &tasksTable, &hasLogicalRanges); err != nil {
 		pool.Close()
 		t.Fatalf("check database migrations: %v", err)
 	}
-	if jobsTable == nil || tasksTable == nil {
+	if jobsTable == nil || tasksTable == nil || !hasLogicalRanges {
 		pool.Close()
-		t.Fatal("required tables do not exist; apply all numbered migrations to the test database")
+		t.Fatal("required schema does not exist; apply all numbered migrations to the test database")
 	}
 	return pool
 }

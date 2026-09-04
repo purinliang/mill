@@ -33,10 +33,10 @@ func TestCreateJob(t *testing.T) {
 			if key != "request-001" {
 				t.Errorf("idempotency key = %q, want %q", key, "request-001")
 			}
-			if submission.Workload.Image != "mill/example:dev" {
-				t.Errorf("image = %q, want %q", submission.Workload.Image, "mill/example:dev")
+			if submission.Executable.Image != "mill/example:dev" {
+				t.Errorf("image = %q, want %q", submission.Executable.Image, "mill/example:dev")
 			}
-			if submission.Workload.Args == nil {
+			if submission.Executable.Args == nil {
 				t.Error("args are nil, want an empty array")
 			}
 			return exampleJob(), true, nil
@@ -44,8 +44,8 @@ func TestCreateJob(t *testing.T) {
 	}
 
 	response := serveRequest(store, http.MethodPost, "/jobs", `{
-		"workload":{"image":"mill/example:dev"},
-		"dataset":{"manifest_uri":"file:///data/manifest.json"}
+		"executable":{"image":"mill/example:dev"},
+		"input":{"uri":"file:///data/records.jsonl"}
 	}`, map[string]string{
 		"Content-Type":    "application/json; charset=utf-8",
 		"Idempotency-Key": "request-001",
@@ -65,7 +65,7 @@ func TestCreateJob(t *testing.T) {
 	if got.ID != testJobID {
 		t.Errorf("job ID = %q, want %q", got.ID, testJobID)
 	}
-	if got.Workload.Args == nil {
+	if got.Executable.Args == nil {
 		t.Error("response args are null, want an empty array")
 	}
 }
@@ -99,25 +99,25 @@ func TestCreateJobConflict(t *testing.T) {
 	assertErrorResponse(t, response, http.StatusConflict, "idempotency_conflict")
 }
 
-func TestCreateJobManifestErrors(t *testing.T) {
-	t.Run("invalid manifest", func(t *testing.T) {
+func TestCreateJobInputErrors(t *testing.T) {
+	t.Run("invalid input", func(t *testing.T) {
 		store := fakeStore{
 			create: func(context.Context, string, Submission) (Job, bool, error) {
-				return Job{}, false, &ValidationError{Field: "manifest.version", Problem: "must be 1"}
+				return Job{}, false, &ValidationError{Field: "input record 0", Problem: "must be valid JSON"}
 			},
 		}
 		response := serveValidCreate(store)
-		assertErrorResponse(t, response, http.StatusBadRequest, "invalid_manifest")
+		assertErrorResponse(t, response, http.StatusBadRequest, "invalid_input")
 	})
 
-	t.Run("manifest changed after materialization", func(t *testing.T) {
+	t.Run("input changed after planning", func(t *testing.T) {
 		store := fakeStore{
 			create: func(context.Context, string, Submission) (Job, bool, error) {
-				return Job{}, false, ErrManifestConflict
+				return Job{}, false, ErrInputConflict
 			},
 		}
 		response := serveValidCreate(store)
-		assertErrorResponse(t, response, http.StatusConflict, "manifest_conflict")
+		assertErrorResponse(t, response, http.StatusConflict, "input_conflict")
 	})
 }
 
@@ -153,7 +153,7 @@ func TestCreateJobValidation(t *testing.T) {
 		},
 		{
 			name: "unknown field",
-			body: `{"workload":{"image":"mill/example:dev"},"dataset":{"manifest_uri":"file:///data/manifest.json"},"unknown":true}`,
+			body: `{"executable":{"image":"mill/example:dev"},"input":{"uri":"file:///data/records.jsonl"},"unknown":true}`,
 			headers: map[string]string{
 				"Content-Type":    "application/json",
 				"Idempotency-Key": "request-001",
@@ -172,8 +172,8 @@ func TestCreateJobValidation(t *testing.T) {
 			code:   "invalid_request",
 		},
 		{
-			name: "unsupported manifest scheme",
-			body: `{"workload":{"image":"mill/example:dev"},"dataset":{"manifest_uri":"s3://bucket/manifest.json"}}`,
+			name: "unsupported input scheme",
+			body: `{"executable":{"image":"mill/example:dev"},"input":{"uri":"s3://bucket/records.jsonl"}}`,
 			headers: map[string]string{
 				"Content-Type":    "application/json",
 				"Idempotency-Key": "request-001",
@@ -249,8 +249,8 @@ func TestJobMethodNotAllowed(t *testing.T) {
 
 func serveValidCreate(store Store) *httptest.ResponseRecorder {
 	return serveRequest(store, http.MethodPost, "/jobs", `{
-		"workload":{"image":"mill/example:dev","args":[]},
-		"dataset":{"manifest_uri":"file:///data/manifest.json"}
+		"executable":{"image":"mill/example:dev","args":[]},
+		"input":{"uri":"file:///data/records.jsonl"}
 	}`, map[string]string{
 		"Content-Type":    "application/json",
 		"Idempotency-Key": "request-001",
@@ -293,13 +293,14 @@ func exampleJob() Job {
 	return Job{
 		ID:    testJobID,
 		State: StatePreparing,
-		Workload: Workload{
+		Executable: Executable{
 			Image: "mill/example:dev",
 			Args:  []string{},
 		},
-		Dataset:   Dataset{ManifestURI: "file:///data/manifest.json"},
-		Output:    Output{URI: "file:///var/lib/mill/output/jobs/" + testJobID + "/"},
-		CreatedAt: timestamp,
-		UpdatedAt: timestamp,
+		Input:       Input{URI: "file:///data/records.jsonl"},
+		Output:      Output{URI: "file:///var/lib/mill/output/jobs/" + testJobID + "/"},
+		Parallelism: 3,
+		CreatedAt:   timestamp,
+		UpdatedAt:   timestamp,
 	}
 }

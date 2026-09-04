@@ -7,21 +7,21 @@ import (
 
 func TestNormalizeSubmission(t *testing.T) {
 	submission, err := normalizeSubmission(Submission{
-		Workload: Workload{Image: "mill/example:dev"},
-		Dataset:  Dataset{ManifestURI: "file:///data/example/../manifest.json"},
+		Executable: Executable{Image: "mill/example:dev"},
+		Input:      InputSpec{URI: "file:///data/example/../records.jsonl"},
 	})
 	if err != nil {
 		t.Fatalf("normalize submission: %v", err)
 	}
 
-	if submission.Dataset.ManifestURI != "file:///data/manifest.json" {
-		t.Errorf("manifest URI = %q, want %q", submission.Dataset.ManifestURI, "file:///data/manifest.json")
+	if submission.Input.URI != "file:///data/records.jsonl" {
+		t.Errorf("input URI = %q, want %q", submission.Input.URI, "file:///data/records.jsonl")
 	}
-	if submission.Workload.Args == nil {
-		t.Fatal("workload args are nil, want an empty array")
+	if submission.Executable.Args == nil {
+		t.Fatal("executable args are nil, want an empty array")
 	}
-	if len(submission.Workload.Args) != 0 {
-		t.Fatalf("workload args = %v, want empty", submission.Workload.Args)
+	if len(submission.Executable.Args) != 0 {
+		t.Fatalf("executable args = %v, want empty", submission.Executable.Args)
 	}
 }
 
@@ -33,28 +33,35 @@ func TestNormalizeSubmissionRejectsInvalidFields(t *testing.T) {
 		{
 			name: "empty image",
 			submission: Submission{
-				Dataset: Dataset{ManifestURI: "file:///data/manifest.json"},
+				Input: InputSpec{URI: "file:///data/records.jsonl"},
 			},
 		},
 		{
 			name: "image whitespace",
 			submission: Submission{
-				Workload: Workload{Image: " mill/example:dev"},
-				Dataset:  Dataset{ManifestURI: "file:///data/manifest.json"},
+				Executable: Executable{Image: " mill/example:dev"},
+				Input:      InputSpec{URI: "file:///data/records.jsonl"},
 			},
 		},
 		{
-			name: "s3 manifest",
+			name: "s3 input",
 			submission: Submission{
-				Workload: Workload{Image: "mill/example:dev"},
-				Dataset:  Dataset{ManifestURI: "s3://bucket/manifest.json"},
+				Executable: Executable{Image: "mill/example:dev"},
+				Input:      InputSpec{URI: "s3://bucket/records.jsonl"},
 			},
 		},
 		{
-			name: "manifest directory",
+			name: "input directory",
 			submission: Submission{
-				Workload: Workload{Image: "mill/example:dev"},
-				Dataset:  Dataset{ManifestURI: "file:///data/"},
+				Executable: Executable{Image: "mill/example:dev"},
+				Input:      InputSpec{URI: "file:///data/"},
+			},
+		},
+		{
+			name: "reserved argument",
+			submission: Submission{
+				Executable: Executable{Image: "mill/example:dev", Args: []string{"--mill-task-id=override"}},
+				Input:      InputSpec{URI: "file:///data/records.jsonl"},
 			},
 		},
 	}
@@ -89,22 +96,13 @@ func TestNormalizeOutputRootAndDeriveOutputURI(t *testing.T) {
 		t.Fatalf("root = %q, want %q", root, "file:///var/lib/mill/output")
 	}
 
-	outputURI, err := deriveOutputURI(root, "0198b7c9-1d24-7000-8000-000000000001")
+	outputURI, err := deriveOutputRootURI(root, "0198b7c9-1d24-7000-8000-000000000001")
 	if err != nil {
 		t.Fatalf("derive output URI: %v", err)
 	}
 	want := "file:///var/lib/mill/output/jobs/0198b7c9-1d24-7000-8000-000000000001/"
 	if outputURI != want {
 		t.Fatalf("output URI = %q, want %q", outputURI, want)
-	}
-
-	taskOutputURI, err := deriveTaskOutputURI(outputURI, 7)
-	if err != nil {
-		t.Fatalf("derive task output URI: %v", err)
-	}
-	taskWant := want + "tasks/7/"
-	if taskOutputURI != taskWant {
-		t.Fatalf("task output URI = %q, want %q", taskOutputURI, taskWant)
 	}
 }
 

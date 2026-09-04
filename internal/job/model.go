@@ -11,14 +11,19 @@ const (
 	StateFailed    State = "failed"
 )
 
-type Workload struct {
+type Executable struct {
 	Image string   `json:"image"`
 	Args  []string `json:"args"`
 }
 
-type Dataset struct {
-	ManifestURI    string `json:"manifest_uri"`
-	ManifestSHA256 string `json:"manifest_sha256,omitempty"`
+type InputSpec struct {
+	URI string `json:"uri"`
+}
+
+type Input struct {
+	URI         string `json:"uri"`
+	SHA256      string `json:"sha256,omitempty"`
+	RecordCount int64  `json:"record_count,omitempty"`
 }
 
 type Output struct {
@@ -26,8 +31,8 @@ type Output struct {
 }
 
 type Submission struct {
-	Workload Workload `json:"workload"`
-	Dataset  Dataset  `json:"dataset"`
+	Executable Executable `json:"executable"`
+	Input      InputSpec  `json:"input"`
 }
 
 type Progress struct {
@@ -39,12 +44,13 @@ type Progress struct {
 }
 
 type Job struct {
-	ID        string    `json:"id"`
-	State     State     `json:"state"`
-	Workload  Workload  `json:"workload"`
-	Dataset   Dataset   `json:"dataset"`
-	Output    Output    `json:"output"`
-	Progress  Progress  `json:"progress"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          string     `json:"id"`
+	State       State      `json:"state"`
+	Executable  Executable `json:"executable"`
+	Input       Input      `json:"input"`
+	Output      Output     `json:"output"`
+	Parallelism int        `json:"parallelism"`
+	Progress    Progress   `json:"progress"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }

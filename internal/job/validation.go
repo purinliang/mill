@@ -20,26 +20,31 @@ func (e *ValidationError) Error() string {
 }
 
 func normalizeSubmission(submission Submission) (Submission, error) {
-	if submission.Workload.Image == "" || submission.Workload.Image != strings.TrimSpace(submission.Workload.Image) {
-		return Submission{}, &ValidationError{Field: "workload.image", Problem: "must be non-empty and have no surrounding whitespace"}
+	if submission.Executable.Image == "" || submission.Executable.Image != strings.TrimSpace(submission.Executable.Image) {
+		return Submission{}, &ValidationError{Field: "executable.image", Problem: "must be non-empty and have no surrounding whitespace"}
 	}
 
-	manifestURI, err := normalizeManifestURI(submission.Dataset.ManifestURI)
+	inputURI, err := normalizeInputURI(submission.Input.URI)
 	if err != nil {
-		return Submission{}, &ValidationError{Field: "dataset.manifest_uri", Problem: err.Error()}
+		return Submission{}, &ValidationError{Field: "input.uri", Problem: err.Error()}
 	}
 
-	args := append([]string(nil), submission.Workload.Args...)
+	args := append([]string(nil), submission.Executable.Args...)
 	if args == nil {
 		args = []string{}
 	}
+	for _, argument := range args {
+		if strings.HasPrefix(argument, "--mill-") {
+			return Submission{}, &ValidationError{Field: "executable.args", Problem: "must not use the reserved --mill- prefix"}
+		}
+	}
 
 	return Submission{
-		Workload: Workload{
-			Image: submission.Workload.Image,
+		Executable: Executable{
+			Image: submission.Executable.Image,
 			Args:  args,
 		},
-		Dataset: Dataset{ManifestURI: manifestURI},
+		Input: InputSpec{URI: inputURI},
 	}, nil
 }
 
@@ -60,24 +65,13 @@ func normalizeOutputRootURI(raw string) (string, error) {
 	return normalizeLocalFileURI(raw)
 }
 
-func normalizeManifestURI(raw string) (string, error) {
+func normalizeInputURI(raw string) (string, error) {
 	normalized, err := normalizeLocalFileURI(raw)
 	if err != nil {
 		return "", err
 	}
 	if strings.HasSuffix(raw, "/") {
-		return "", fmt.Errorf("must refer to a manifest file")
-	}
-	return normalized, nil
-}
-
-func normalizeShardURI(raw string) (string, error) {
-	normalized, err := normalizeLocalFileURI(raw)
-	if err != nil {
-		return "", err
-	}
-	if strings.HasSuffix(raw, "/") {
-		return "", fmt.Errorf("must refer to a shard file")
+		return "", fmt.Errorf("must refer to a JSONL file")
 	}
 	return normalized, nil
 }
@@ -110,18 +104,10 @@ func normalizeLocalFileURI(raw string) (string, error) {
 	return parsed.String(), nil
 }
 
-func deriveOutputURI(outputRootURI, id string) (string, error) {
+func deriveOutputRootURI(outputRootURI, id string) (string, error) {
 	outputURI, err := url.JoinPath(outputRootURI, "jobs", id)
 	if err != nil {
 		return "", fmt.Errorf("derive output URI: %w", err)
-	}
-	return outputURI + "/", nil
-}
-
-func deriveTaskOutputURI(jobOutputURI string, shardIndex int) (string, error) {
-	outputURI, err := url.JoinPath(jobOutputURI, "tasks", fmt.Sprintf("%d", shardIndex))
-	if err != nil {
-		return "", fmt.Errorf("derive task output URI: %w", err)
 	}
 	return outputURI + "/", nil
 }

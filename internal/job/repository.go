@@ -12,17 +12,19 @@ import (
 
 var (
 	ErrIdempotencyConflict = errors.New("idempotency key is already associated with a different submission")
-	ErrManifestConflict    = errors.New("dataset manifest differs from the materialized task set")
+	ErrInputConflict       = errors.New("input differs from the logical shards already planned for the job")
 	ErrNotFound            = errors.New("job not found")
 )
 
 const jobSelectColumns = `
 	j.id::text,
-	j.workload_image_ref,
-	j.workload_args,
-	j.dataset_manifest_uri,
-	j.dataset_manifest_sha256,
-	j.output_uri,
+	j.executable_image_ref,
+	j.executable_args,
+	j.input_uri,
+	j.input_sha256,
+	j.input_record_count,
+	j.output_root_uri,
+	j.parallelism,
 	j.state,
 	COALESCE(j.task_count, 0),
 	(SELECT count(*) FROM public.tasks AS t WHERE t.job_id = j.id AND t.state = 'pending'),
@@ -81,14 +83,26 @@ func (r *Repository) FindSubmission(ctx context.Context, idempotencyKey string, 
 	return existingJob, true, nil
 }
 
-func (r *Repository) Create(ctx context.Context, idempotencyKey string, submission Submission) (Job, bool, error) {
+func (r *Repository) Create(
+	ctx context.Context,
+	idempotencyKey string,
+	submission Submission,
+	inputSHA256 string,
+	inputRecordCount int64,
+	parallelism int,
+) (Job, bool, error) {
 	if err := validateIdempotencyKey(idempotencyKey); err != nil {
 		return Job{}, false, err
 	}
-
 	normalizedSubmission, err := normalizeSubmission(submission)
 	if err != nil {
 		return Job{}, false, err
+	}
+	if err := validateInputIdentity(inputSHA256, inputRecordCount); err != nil {
+		return Job{}, false, err
+	}
+	if parallelism < 1 || parallelism > maxParallelism {
+		return Job{}, false, &ValidationError{Field: "parallelism", Problem: "must be between 1 and 10000"}
 	}
 
 	tx, err := r.database.Begin(ctx)
@@ -102,7 +116,7 @@ func (r *Repository) Create(ctx context.Context, idempotencyKey string, submissi
 		return Job{}, false, fmt.Errorf("generate job ID: %w", err)
 	}
 
-	outputURI, err := deriveOutputURI(r.outputRootURI, id)
+	outputRootURI, err := deriveOutputRootURI(r.outputRootURI, id)
 	if err != nil {
 		return Job{}, false, err
 	}
@@ -112,21 +126,27 @@ func (r *Repository) Create(ctx context.Context, idempotencyKey string, submissi
 		INSERT INTO public.jobs (
 			id,
 			idempotency_key,
-			workload_image_ref,
-			workload_args,
-			dataset_manifest_uri,
-			output_uri
+			executable_image_ref,
+			executable_args,
+			input_uri,
+			input_sha256,
+			input_record_count,
+			output_root_uri,
+			parallelism
 		)
-		VALUES ($1::uuid, $2, $3, $4, $5, $6)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (idempotency_key) DO NOTHING
 		RETURNING id::text
 	`,
 		id,
 		idempotencyKey,
-		normalizedSubmission.Workload.Image,
-		normalizedSubmission.Workload.Args,
-		normalizedSubmission.Dataset.ManifestURI,
-		outputURI,
+		normalizedSubmission.Executable.Image,
+		normalizedSubmission.Executable.Args,
+		normalizedSubmission.Input.URI,
+		inputSHA256,
+		inputRecordCount,
+		outputRootURI,
+		parallelism,
 	).Scan(&createdID)
 	if err == nil {
 		createdJob, err := queryJob(ctx, tx, jobSelectByID, createdID)
@@ -156,11 +176,11 @@ func (r *Repository) Create(ctx context.Context, idempotencyKey string, submissi
 	return existingJob, false, nil
 }
 
-func (r *Repository) Materialize(ctx context.Context, id string, manifest Manifest) (Job, error) {
+func (r *Repository) Materialize(ctx context.Context, id string, plan PartitionPlan) (Job, error) {
 	if !validJobID(id) {
 		return Job{}, &ValidationError{Field: "job ID", Problem: "must be a UUID"}
 	}
-	if err := validateMaterializedManifest(manifest); err != nil {
+	if err := validatePartitionPlan(plan); err != nil {
 		return Job{}, err
 	}
 
@@ -171,28 +191,31 @@ func (r *Repository) Materialize(ctx context.Context, id string, manifest Manife
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var (
-		state          State
-		existingSHA256 *string
-		existingCount  *int
-		jobOutputURI   string
+		state               State
+		existingSHA256      *string
+		existingRecordCount *int64
+		existingTaskCount   *int
 	)
 	err = tx.QueryRow(ctx, `
-		SELECT state, dataset_manifest_sha256, task_count, output_uri
+		SELECT state, input_sha256, input_record_count, task_count
 		FROM public.jobs
 		WHERE id = $1::uuid
 		FOR UPDATE
-	`, id).Scan(&state, &existingSHA256, &existingCount, &jobOutputURI)
+	`, id).Scan(&state, &existingSHA256, &existingRecordCount, &existingTaskCount)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Job{}, ErrNotFound
 	}
 	if err != nil {
 		return Job{}, fmt.Errorf("lock job for task materialization: %w", err)
 	}
+	if existingSHA256 == nil || existingRecordCount == nil ||
+		*existingSHA256 != plan.InputSHA256 || *existingRecordCount != plan.RecordCount {
+		return Job{}, ErrInputConflict
+	}
 
 	if state != StatePreparing {
-		if existingSHA256 == nil || existingCount == nil ||
-			*existingSHA256 != manifest.SHA256 || *existingCount != len(manifest.Shards) {
-			return Job{}, ErrManifestConflict
+		if existingTaskCount == nil || *existingTaskCount != len(plan.Shards) {
+			return Job{}, ErrInputConflict
 		}
 		materializedJob, err := queryJob(ctx, tx, jobSelectByID, id)
 		if err != nil {
@@ -204,35 +227,30 @@ func (r *Repository) Materialize(ctx context.Context, id string, manifest Manife
 		return materializedJob, nil
 	}
 
-	rows := make([][]any, len(manifest.Shards))
-	for index, shard := range manifest.Shards {
-		outputURI, err := deriveTaskOutputURI(jobOutputURI, index)
-		if err != nil {
-			return Job{}, err
-		}
-		rows[index] = []any{id, index, shard.URI, outputURI}
+	rows := make([][]any, len(plan.Shards))
+	for index, shard := range plan.Shards {
+		rows[index] = []any{id, index, shard.StartByte, shard.EndByte}
 	}
 	inserted, err := tx.CopyFrom(
 		ctx,
 		pgx.Identifier{"public", "tasks"},
-		[]string{"job_id", "shard_index", "input_uri", "output_uri"},
+		[]string{"job_id", "shard_index", "input_start_byte", "input_end_byte"},
 		pgx.CopyFromRows(rows),
 	)
 	if err != nil {
-		return Job{}, fmt.Errorf("insert materialized tasks: %w", err)
+		return Job{}, fmt.Errorf("insert logical shard tasks: %w", err)
 	}
 	if inserted != int64(len(rows)) {
-		return Job{}, fmt.Errorf("inserted %d materialized tasks, want %d", inserted, len(rows))
+		return Job{}, fmt.Errorf("inserted %d logical shard tasks, want %d", inserted, len(rows))
 	}
 
 	command, err := tx.Exec(ctx, `
 		UPDATE public.jobs
-		SET dataset_manifest_sha256 = $2,
-			task_count = $3,
+		SET task_count = $2,
 			state = 'running',
 			updated_at = now()
 		WHERE id = $1::uuid AND state = 'preparing'
-	`, id, manifest.SHA256, len(manifest.Shards))
+	`, id, len(plan.Shards))
 	if err != nil {
 		return Job{}, fmt.Errorf("finalize task materialization: %w", err)
 	}
@@ -275,14 +293,17 @@ func queryJob(ctx context.Context, querier rowQuerier, query string, argument an
 
 func scanJob(row pgx.Row) (Job, error) {
 	var job Job
-	var manifestSHA256 *string
+	var inputSHA256 *string
+	var inputRecordCount *int64
 	if err := row.Scan(
 		&job.ID,
-		&job.Workload.Image,
-		&job.Workload.Args,
-		&job.Dataset.ManifestURI,
-		&manifestSHA256,
+		&job.Executable.Image,
+		&job.Executable.Args,
+		&job.Input.URI,
+		&inputSHA256,
+		&inputRecordCount,
 		&job.Output.URI,
+		&job.Parallelism,
 		&job.State,
 		&job.Progress.Total,
 		&job.Progress.Pending,
@@ -295,11 +316,14 @@ func scanJob(row pgx.Row) (Job, error) {
 		return Job{}, err
 	}
 
-	if job.Workload.Args == nil {
-		job.Workload.Args = []string{}
+	if job.Executable.Args == nil {
+		job.Executable.Args = []string{}
 	}
-	if manifestSHA256 != nil {
-		job.Dataset.ManifestSHA256 = *manifestSHA256
+	if inputSHA256 != nil {
+		job.Input.SHA256 = *inputSHA256
+	}
+	if inputRecordCount != nil {
+		job.Input.RecordCount = *inputRecordCount
 	}
 	job.CreatedAt = job.CreatedAt.UTC()
 	job.UpdatedAt = job.UpdatedAt.UTC()
@@ -307,7 +331,7 @@ func scanJob(row pgx.Row) (Job, error) {
 }
 
 func sameSubmission(job Job, submission Submission) bool {
-	return job.Workload.Image == submission.Workload.Image &&
-		slices.Equal(job.Workload.Args, submission.Workload.Args) &&
-		job.Dataset.ManifestURI == submission.Dataset.ManifestURI
+	return job.Executable.Image == submission.Executable.Image &&
+		slices.Equal(job.Executable.Args, submission.Executable.Args) &&
+		job.Input.URI == submission.Input.URI
 }

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -35,12 +36,13 @@ func main() {
 		os.Getenv("MILL_HTTP_ADDR"),
 		os.Getenv("MILL_DATABASE_URL"),
 		os.Getenv("MILL_OUTPUT_ROOT_URI"),
+		os.Getenv("MILL_PARALLELISM"),
 	); err != nil {
 		log.Fatalf("run Mill: %v", err)
 	}
 }
 
-func run(ctx context.Context, address, databaseURL, outputRootURI string) error {
+func run(ctx context.Context, address, databaseURL, outputRootURI, parallelismValue string) error {
 	if address == "" {
 		address = defaultHTTPAddress
 	}
@@ -49,6 +51,10 @@ func run(ctx context.Context, address, databaseURL, outputRootURI string) error 
 	}
 	if outputRootURI == "" {
 		return errors.New("MILL_OUTPUT_ROOT_URI is required")
+	}
+	parallelism, err := parseParallelism(parallelismValue)
+	if err != nil {
+		return err
 	}
 
 	database, err := openDatabase(ctx, databaseURL)
@@ -61,7 +67,7 @@ func run(ctx context.Context, address, databaseURL, outputRootURI string) error 
 	if err != nil {
 		return err
 	}
-	jobService, err := job.NewService(jobRepository, job.FileManifestLoader{})
+	jobService, err := job.NewService(jobRepository, job.JSONLPartitioner{}, parallelism)
 	if err != nil {
 		return err
 	}
@@ -98,6 +104,17 @@ func run(ctx context.Context, address, databaseURL, outputRootURI string) error 
 		}
 		return nil
 	}
+}
+
+func parseParallelism(value string) (int, error) {
+	if value == "" {
+		return 0, errors.New("MILL_PARALLELISM is required")
+	}
+	parallelism, err := strconv.Atoi(value)
+	if err != nil || parallelism < 1 || parallelism > 10000 {
+		return 0, errors.New("MILL_PARALLELISM must be an integer between 1 and 10000")
+	}
+	return parallelism, nil
 }
 
 func openDatabase(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {

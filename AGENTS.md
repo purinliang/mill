@@ -7,14 +7,15 @@ scope.
 ## Current project state
 
 Mill is in Milestone 1: local single-process control plane. The project
-foundation, HTTP process, PostgreSQL connection/readiness behavior, initial
+foundation, HTTP process, PostgreSQL connection/readiness behavior, numbered
 `jobs` and `tasks` migrations, and create/get job API are implemented. Job
-submission reads a bounded local JSON manifest and transactionally materializes
-pending tasks. Workload image inspection, shard access, execution, attempts,
-results, retries, S3, and Kubernetes are not implemented. Add implementation
-only in small, explicitly requested increments. Do not add Dockerfiles,
-Kubernetes manifests, CI workflows, Terraform, or unrelated infrastructure
-unless a later task requires them.
+submission validates one local JSONL input and transactionally materializes
+pending tasks containing logical byte ranges at record boundaries. Workload
+image inspection, task execution, attempts, results, automatic recovery,
+retries, S3, Docker integration, and Kubernetes are not implemented. Add
+implementation only in small, explicitly requested increments. Do not add
+Dockerfiles, Kubernetes manifests, CI workflows, Terraform, or unrelated
+infrastructure unless a later task requires them.
 
 Do not describe planned behavior as implemented. Update the status in
 `README.md` whenever a milestone materially changes the repository's actual
@@ -41,8 +42,14 @@ operational and maintenance cost.
   manages job intent and state; workload containers perform user computation.
 - Treat PostgreSQL as the durable source of truth for job and task metadata
   unless a deliberate architecture change is documented.
-- Store large datasets, manifests where appropriate, and task outputs in S3 or
-  compatible object storage. Never store large binary datasets in PostgreSQL.
+- Store large datasets and task outputs in S3 or compatible object storage.
+  Never store large binary datasets in PostgreSQL.
+- Keep one input URI and generated output root on the job. A logical task owns
+  its shard index and input byte range; do not duplicate calculable input or
+  output URIs on every task.
+- Keep user-facing submission simple: `executable` plus `input`. JSONL is the
+  only current format, partition sizing is internal policy, and parallelism is
+  server configuration captured durably on each job.
 - Use explicit, validated state transitions. Make transitions idempotent where
   retries, reconciliation, or process restarts can repeat an operation.
 - Do not implement a custom cluster scheduler when Kubernetes provides a
@@ -90,6 +97,9 @@ job, task, shard, attempt, or state-transition semantics.
   such as a Kubernetes adapter or object-storage adapter. Do not pre-create
   empty packages or speculative `common`, `util`, `service`, or `manager`
   layers.
+- Keep local JSONL partition planning in `internal/job/partition.go` while it is
+  part of the cohesive job-creation workflow. Logical shard boundaries must be
+  contiguous, non-empty, and aligned to complete JSONL records.
 - Keep interfaces at the consumer boundary and add them only for an existing
   substitute. For example, the job HTTP handler owns the small store interface
   used by its tests; the concrete PostgreSQL repository does not need an
