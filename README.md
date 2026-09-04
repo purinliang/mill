@@ -7,7 +7,7 @@ and task state in PostgreSQL, and will later ask Kubernetes to run copies of the
 image in parallel. Large cloud inputs and outputs will live in Amazon S3.
 
 Mill is in active development and is not production-ready. Its reference
-workload can be built and run manually with Docker, but the control plane does
+workloads can be built and run manually with Docker, but the control plane does
 not execute containers yet.
 
 ## Motivation
@@ -80,9 +80,12 @@ for control-plane metadata. Object storage holds large data. Kubernetes will
 own Pod placement, resource allocation, and container lifecycle; Mill owns job
 intent, logical tasks, retries, reconciliation, and progress.
 
-Kubernetes Indexed Jobs are the first execution primitive to evaluate. Mill
-should use one Kubernetes Job per task only if Indexed Jobs cannot expose the
-per-shard execution and failure information that the task model needs.
+The first Kubernetes adapter should create one Kubernetes Job for each Mill
+attempt. That maps unique task arguments, output locations, and retry history
+directly to independently observable resources. Mill will limit how many
+attempts are active; Kubernetes will place their Pods. Indexed Jobs remain a
+later option if a concrete need justifies adding a shared shard-manifest lookup
+contract.
 
 ## Core concepts
 
@@ -268,6 +271,7 @@ boundaries, not microservices.
 | PostgreSQL repository | Partially implemented | Persist idempotent jobs, materialize logical tasks, claim work, and transition attempts. Result publication remains planned. |
 | Workload CLI contract | Implemented locally | Serialize and parse task identity, logical input range, output URI, and separated user arguments. |
 | JSONL copy workload | Implemented locally and in Docker | Demonstrate that one process/container reads and atomically writes exactly one assigned local range. |
+| Word-count workload | Implemented locally and in Docker | Count normalized words in one assigned range and merge deterministic partial results for demonstration. |
 | Coordinator | Planned | Reconcile durable tasks and attempts with an execution backend. |
 | Kubernetes adapter | Planned | Create and observe native Kubernetes work without taking over scheduling. |
 | Object-storage adapter | Planned | Read S3 inputs and expose result metadata after local behavior is understood. |
@@ -306,6 +310,19 @@ cmd/mill/
 cmd/mill-jsonl-copy/
   main.go                         local reference workload for one byte range
   Dockerfile                      multi-stage non-root reference image
+cmd/mill-word-count/
+  main.go                         word-count mapper for one assigned range
+  Dockerfile                      multi-stage non-root mapper image
+cmd/mill-word-count-merge/
+  main.go                         local demonstration result merger
+workloads/wordcount/
+  wordcount.go                    tokenization, counting, and merge behavior
+  wordcount_test.go               workload behavior tests
+examples/word-count/
+  walden-economy.txt              committed plain-text Chapter 1 source
+  record-config.json              deterministic demo record-grouping config
+  generate/                       reproducible JSONL input generator
+  README.md                       demo contract and provenance
 internal/job/
   model.go                        API and domain data types
   validation.go                   submission, identifier, and URI rules
@@ -544,6 +561,29 @@ The `file://` URIs refer to paths inside the container. The bind mounts are the
 adapter between host storage and that container-visible namespace. S3-backed
 execution will not need this path translation.
 
+### Word-count demonstration
+
+The word-count example starts from a committed plain-text chapter and produces
+one disposable JSONL input file:
+
+```bash
+go run ./examples/word-count/generate
+```
+
+The fixed configuration turns the first 60 parsed paragraphs into 12
+deterministic, variable-size JSONL records at
+`/tmp/mill-word-count/walden-economy.jsonl`. Submit that one file to Mill; do
+not split it into shard files. With `MILL_PARALLELISM=3`, the planner creates 12
+logical byte-range tasks. The future Kubernetes adapter will execute at most
+three attempts concurrently, allowing shorter work to free capacity for the
+next pending task.
+
+The mapper and local result merger are independently testable now, but the
+control plane does not launch or aggregate them yet. See
+[`examples/word-count/README.md`](examples/word-count/README.md) for the token
+rules and the boundary between demo input preparation and Mill's internal
+partitioning.
+
 Run hermetic tests:
 
 ```bash
@@ -637,8 +677,10 @@ Mill has completed Milestone 2. Implemented behavior includes:
 - concurrency-safe task claims that enforce each job's parallelism;
 - durable attempt lifecycle transitions and atomic task/job completion;
 - a typed workload CLI argument contract;
-- a local JSONL copy executable and non-root OCI image that process one assigned
-  range; and
+- local JSONL-copy and word-count executables with non-root OCI images that
+  process one assigned range;
+- a deterministic Walden word-count input generator and local partial-result
+  merger; and
 - an idempotent local kind and kubectl setup command.
 
 The control plane still does not launch the executable. Image inspection, task
@@ -649,6 +691,7 @@ exist, one failed attempt immediately fails its task and job.
 ## Local and cloud development philosophy
 
 Development starts locally so each domain and persistence decision can be
-learned and tested in isolation. The next layer should be a small local Docker
-execution adapter, then Kubernetes, then AWS. A cloud environment should be
-reproducible and disposable rather than the default development setup.
+learned and tested in isolation. Manual Docker runs validate the container
+contract; the next control-plane layer is a small Kubernetes execution adapter,
+followed by AWS. A cloud environment should be reproducible and disposable
+rather than the default development setup.

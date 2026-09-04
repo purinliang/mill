@@ -9,17 +9,18 @@ scope.
 Mill has completed Milestone 2's container workload contract. Milestone 1's
 HTTP process, PostgreSQL connection/readiness behavior, create/get API, local
 JSONL logical sharding, and durable job/task materialization are implemented.
-CLI argument serialization, a local JSONL copy reference workload, and its
-minimal non-root Docker image are also implemented. The control plane does not
-launch it. Concurrency-safe task claiming and durable attempt state transitions
-are implemented in PostgreSQL, but no coordinator calls them yet. Workload
-image inspection, external execution coordination, results, automatic recovery,
-retries, S3, a Docker execution adapter, and Kubernetes execution are not
-implemented. `scripts/setup` provides a repeatable local kind environment; it
-does not imply that Mill integrates with Kubernetes yet. Add implementation
-only in small, explicitly requested increments. Do not add more Dockerfiles,
-Kubernetes manifests, CI workflows, Terraform, or unrelated infrastructure
-unless a later task requires them.
+CLI argument serialization, local JSONL-copy and word-count reference workloads,
+their minimal non-root Docker images, and a deterministic word-count input
+generator are also implemented. The control plane does not launch them.
+Concurrency-safe task claiming and durable attempt state transitions are
+implemented in PostgreSQL, but no coordinator calls them yet. Workload image
+inspection, external execution coordination, result aggregation, automatic
+recovery, retries, S3, and Kubernetes execution are not implemented.
+`scripts/setup` provides a repeatable local kind environment; it does not imply
+that Mill integrates with Kubernetes yet. Add implementation only in small,
+explicitly requested increments. Do not add more Dockerfiles, Kubernetes
+manifests, CI workflows, Terraform, or unrelated infrastructure unless a later
+task requires them.
 
 Do not describe planned behavior as implemented. Update the status in
 `README.md` whenever a milestone materially changes the repository's actual
@@ -60,7 +61,10 @@ operational and maintenance cost.
   before calling an external runtime. Permit at most one active attempt per
   task and retain terminal attempts as execution history.
 - Do not implement a custom cluster scheduler when Kubernetes provides a
-  suitable primitive. Evaluate native Jobs, including Indexed Jobs, first.
+  suitable primitive. Initially map one Mill attempt to one Kubernetes Job so
+  its arguments, output, and retry history remain independently observable.
+  Reconsider Indexed Jobs only for a concrete requirement that justifies a
+  shared shard-manifest lookup contract.
 - Keep the workload/container contract minimal and stable. Changes to it require
   documentation and compatibility consideration. Mill-owned CLI flags precede
   a mandatory `--`; arguments after it belong unchanged to the executable.
@@ -109,11 +113,16 @@ job, task, shard, attempt, or state-transition semantics.
   part of the cohesive job-creation workflow. Logical shard boundaries must be
   contiguous, non-empty, and aligned to complete JSONL records.
 - Keep the language-neutral CLI protocol and its Go serialization/parser in
-  `internal/workload`. Reference workloads belong under `cmd` and must remain
-  separate from control-plane behavior.
+  `internal/workload`. Workload executable entrypoints belong under `cmd`,
+  reusable workload-specific computation under `workloads/<name>`, and stable
+  demonstration inputs and documentation under `examples/<name>`. All must
+  remain separate from control-plane behavior.
 - Keep a reference workload's Dockerfile beside its command. Prefer a
   multi-stage build and a minimal non-root runtime image; do not place build
   tools in the final workload image.
+- Commit small, stable source fixtures and deterministic generation
+  configuration when they explain a demonstration. Do not commit generated
+  JSONL inputs, task outputs, or other reproducible artifacts.
 - Keep interfaces at the consumer boundary and add them only for an existing
   substitute. For example, the job HTTP handler owns the small store interface
   used by its tests; the concrete PostgreSQL repository does not need an

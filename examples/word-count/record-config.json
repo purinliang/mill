@@ -1,0 +1,6 @@
+{
+  "algorithm": "splitmix64-boundary-v1",
+  "seed": 205,
+  "new_record_percent": 20,
+  "paragraph_limit": 60
+}
