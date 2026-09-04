@@ -3,12 +3,12 @@
 Mill is a learning-oriented distributed batch execution system for running a
 trusted OCI container over independent parts of a dataset. A user submits an
 executable image and one input; Mill plans logical shards, stores durable job
-and task state in PostgreSQL, and will later ask Kubernetes to run copies of the
-image in parallel. Large cloud inputs and outputs will live in Amazon S3.
+and task state in PostgreSQL, and can ask Kubernetes to run copies of the
+image in parallel. Large cloud inputs and outputs will later live in Amazon S3.
 
-Mill is in active development and is not production-ready. Its reference
-workloads can be built and run manually with Docker, but the control plane does
-not execute containers yet.
+Mill is in active development and is not production-ready. The current
+execution prototype runs on local kind with explicitly staged files and an
+optional coordinator in the HTTP process.
 
 ## Motivation
 
@@ -36,8 +36,9 @@ V1 is intended to support:
 - retrying failed tasks; and
 - retrieving job state and generated output locations.
 
-The local prototype uses `file://` input and output URIs. S3, container
-execution, and Kubernetes integration are planned rather than implemented.
+The local prototype uses `file://` input and output URIs and native Kubernetes
+Jobs on a configured node. S3, automatic task retries, and cloud storage remain
+planned.
 
 ## Non-goals
 
@@ -66,9 +67,9 @@ Single Go control plane
   +--> PostgreSQL
   |      jobs, tasks, durable execution state
   |
-  `--> coordinator (planned)
+  `--> coordinator (optional, same process)
           |
-          `--> Kubernetes Jobs/Pods (planned)
+          `--> Kubernetes Job per attempt
                   |
                   +--> read input range from file/S3
                   `--> write result to file/S3
@@ -80,10 +81,10 @@ for control-plane metadata. Object storage holds large data. Kubernetes will
 own Pod placement, resource allocation, and container lifecycle; Mill owns job
 intent, logical tasks, retries, reconciliation, and progress.
 
-The first Kubernetes adapter should create one Kubernetes Job for each Mill
+The local Kubernetes adapter creates one Kubernetes Job for each Mill
 attempt. That maps unique task arguments, output locations, and retry history
-directly to independently observable resources. Mill will limit how many
-attempts are active; Kubernetes will place their Pods. Indexed Jobs remain a
+directly to independently observable resources. Mill limits how many
+attempts are active; Kubernetes places their Pods. Indexed Jobs remain a
 later option if a concrete need justifies adding a shared shard-manifest lookup
 contract.
 
@@ -102,8 +103,8 @@ contract.
   `job-2/shard-0` are different tasks.
 - **Attempt**: one durable execution generation of a task. A future retry will
   create a new attempt instead of erasing failure history.
-- **Executable/container**: the trusted OCI image and user arguments. The image
-  is only recorded today; image resolution and execution are planned.
+- **Executable/container**: the trusted OCI image and user arguments. The local
+  adapter requires the image to be loaded into kind before submission.
 - **Result**: output from a successful attempt. Output bytes belong in object
   storage; PostgreSQL stores only their identity and metadata.
 
@@ -166,10 +167,12 @@ of concurrent workers. The first learning heuristic targets four waves of work:
 
 ```text
 target tasks = min(record count, parallelism * 4, 10,000)
+records per task = ceil(record count / target tasks)
+actual tasks = ceil(record count / records per task)
 ```
 
 For example, 100 records and `MILL_PARALLELISM=3` produce 12 logical tasks, of
-which at most three will eventually run at once. The factor and limits are
+which at most three attempts run at once with execution enabled. These are
 prototype policy, not API promises; the user does not need to choose a shard
 size.
 
@@ -254,7 +257,8 @@ variables are defined in this contract.
 `file://` URIs, copies exactly the assigned range to its output atomically, and
 performs no business computation. Its Docker image contains a statically linked
 binary in a scratch filesystem and runs as non-root UID/GID `65532`. It proves
-the protocol; the control plane does not launch it yet.
+the protocol and can also run through the Kubernetes adapter when its image is
+loaded and its input/output paths are staged.
 
 ## Module view
 
@@ -266,14 +270,14 @@ boundaries, not microservices.
 | --- | --- | --- |
 | Process composition | Implemented | Read environment configuration, connect PostgreSQL, assemble routes, and shut down cleanly. |
 | Health API | Implemented | Report process liveness and PostgreSQL-backed readiness. |
-| Job HTTP API/model | Partially implemented | Validate, create, and retrieve jobs; report persisted task counts. Execution-driven transitions remain planned. |
+| Job HTTP API/model | Implemented locally | Validate, create, and retrieve jobs; report persisted task counts and successful output URIs after completion. |
 | JSONL partition planner | Implemented locally | Validate local input, calculate identity, and create logical record-aligned byte ranges. S3 access remains planned. |
 | PostgreSQL repository | Partially implemented | Persist idempotent jobs, materialize logical tasks, claim work, and transition attempts. Result publication remains planned. |
 | Workload CLI contract | Implemented locally | Serialize and parse task identity, logical input range, output URI, and separated user arguments. |
 | JSONL copy workload | Implemented locally and in Docker | Demonstrate that one process/container reads and atomically writes exactly one assigned local range. |
 | Word-count workload | Implemented locally, in Docker, and as a manual kind Job | Count words in one assigned range, verify Pod output against a local run, and merge partial results for demonstration. |
-| Coordinator | Planned | Reconcile durable tasks and attempts with an execution backend. |
-| Kubernetes adapter | Planned | Create and observe native Kubernetes work without taking over scheduling. |
+| Coordinator | Implemented locally | Observe active attempts, claim pending tasks within PostgreSQL concurrency limits, and persist completion/failure. |
+| Kubernetes adapter | Implemented for kind | Create and observe one native Job per attempt, with staged node-local mounts. |
 | Object-storage adapter | Planned | Read S3 inputs and expose result metadata after local behavior is understood. |
 
 ```text
@@ -292,10 +296,10 @@ cmd/mill (configuration and process lifecycle)
                                   durable tasks
                                        |
                                        v
-                              coordinator (planned)
+                              coordinator (optional)
                                        |
                                        v
-                              Kubernetes (planned)
+                              Kubernetes adapter --> Jobs/Pods
 ```
 
 ## Repository structure
@@ -305,6 +309,7 @@ Only concrete implementation paths exist:
 ```text
 cmd/mill/
   main.go                         configuration, assembly, HTTP lifecycle
+  execution.go                    optional coordinator loop and ownership lock
   main_test.go                    process and health unit tests
   main_integration_test.go        PostgreSQL readiness integration test
 cmd/mill-jsonl-copy/
@@ -330,10 +335,15 @@ internal/job/
   service.go                      idempotent planning/materialization workflow
   repository.go                   PostgreSQL job/task persistence
   attempt_repository.go           task claiming and attempt transitions
+  execution_repository.go         reconstruct active attempts and list results
   handler.go                      HTTP transport
   *_test.go                       unit and PostgreSQL integration coverage
 internal/workload/
   contract.go                     Mill CLI argument builder and parser
+internal/coordinator/
+  coordinator.go                  observe attempts and replenish free slots
+internal/kubernetes/
+  executor.go                     native Jobs, identity checks, and path mounts
 migrations/
   000001_create_jobs.sql          initial job schema
   000002_create_tasks.sql         first task schema
@@ -342,6 +352,7 @@ migrations/
 scripts/
   setup                           repeatable local kind environment setup
   demo-word-count-k8s              run one kind task and verify its output
+  demo-word-count-batch            submit a full batch, observe, copy, and merge
 README.md                         architecture and development guide
 AGENTS.md                         contribution and agent conventions
 .dockerignore                     files excluded from Docker build context
@@ -368,11 +379,23 @@ be reconciled rather than treated as an exactly-once request:
 5. Atomically finish the attempt, task, and, when appropriate, job.
 6. Reconcile attempts left between these steps after a process or API failure.
 
-The repository implements the durable transitions in steps 1, 2, 4, and 5.
-External execution and reconciliation remain planned. PostgreSQL row locks make
-claims concurrency-safe, enforce each job's captured parallelism, and allow at
-most one active attempt per task. Running multiple coordinators is deferred
-until ownership and recovery behavior are explicitly designed.
+These steps are wired together for the local Kubernetes prototype. PostgreSQL
+row locks enforce each job's captured parallelism and at most one active
+attempt per task. A dedicated PostgreSQL session advisory lock admits one
+coordinator per database. Loss of that connection stops the process.
+
+The coordinator polls once per second, reconstructing active attempts from the
+database before claiming more tasks. Job names derive from attempt IDs, so an
+uncertain create response or a restart can rediscover the same resource. Mill
+records the Kubernetes UID and checks identity on later observations. Only
+terminal `Complete`/`Failed` Job conditions release an execution slot. A
+missing running Job or changed UID is reported as an error and retains its
+slot for investigation. Do not delete active Jobs or change storage/cluster
+configuration while recovering attempts.
+
+This is basic local reconciliation, not full fault tolerance. Automatic
+retries, recovery of `preparing` jobs, coordinator failover during network
+partitions, and deleted-resource recovery remain future work.
 
 ### Retries and outputs
 
@@ -408,7 +431,7 @@ their assigned input and output namespace.
 | Durable metadata | PostgreSQL 18.x through pgx v5 |
 | Dataset and output storage | Local files now; Amazon S3 planned |
 | Workload packaging | OCI images, commonly built with Docker |
-| Distributed execution | Native Kubernetes Jobs/Pods, planned |
+| Distributed execution | Native Kubernetes Jobs/Pods through the official Go client |
 | Local Kubernetes | kind, with versions pinned by `scripts/setup` |
 | Cloud demonstration | AWS, likely Amazon EKS |
 | Infrastructure as Code | Terraform when cloud deployment needs it |
@@ -442,8 +465,8 @@ The cluster can be removed explicitly when it is no longer needed:
 kind delete cluster --name mill
 ```
 
-The control plane does not submit Kubernetes work yet. This setup establishes a
-repeatable environment for the next execution-adapter milestone.
+The setup command prepares the cluster. Execution is enabled separately with
+`MILL_EXECUTOR=kubernetes`; the batch demonstration below configures it.
 
 ## Local quick start
 
@@ -575,12 +598,12 @@ The fixed configuration turns the first 60 parsed paragraphs into 12
 deterministic, variable-size JSONL records at
 `/tmp/mill-word-count/walden-economy.jsonl`. Submit that one file to Mill; do
 not split it into shard files. With `MILL_PARALLELISM=3`, the planner creates 12
-logical byte-range tasks. The future Kubernetes adapter will execute at most
+logical byte-range tasks. The Kubernetes adapter executes at most
 three attempts concurrently, allowing shorter work to free capacity for the
 next pending task.
 
-The mapper and local result merger are independently testable now, but the
-control plane does not launch or aggregate them yet. See
+The mapper and local result merger are independently testable. The control
+plane launches mapper tasks; the example script merges their outputs. See
 [`examples/word-count/README.md`](examples/word-count/README.md) for the token
 rules and the boundary between demo input preparation and Mill's internal
 partitioning.
@@ -595,7 +618,54 @@ The script stages the input inside the kind node, mounts it read-only, runs
 the first record's byte range, and copies the output back for comparison with
 a local run. It prints the saved result and rendered manifest paths. Each run
 retains its Job and files for inspection. This manual smoke test does not use
-the PostgreSQL task lifecycle; automated dispatch remains planned.
+the PostgreSQL task lifecycle.
+
+For the complete batch through Mill's HTTP API and PostgreSQL coordinator:
+
+```bash
+./scripts/demo-word-count-batch
+```
+
+This starts private, temporary PostgreSQL 18 and Mill processes, submits the
+12-record input, and processes 12 tasks with parallelism three. The script
+merges all successful task outputs and verifies the result against a local
+full-input count. It prints the output path and stops its processes on exit;
+database files, Kubernetes Jobs, and results remain available for inspection.
+Go, Docker, kind, kubectl, PostgreSQL 18 tools (`initdb`, `pg_ctl`, `psql`),
+`curl`, and `jq` must be on PATH. Set `MILL_DEMO_PORT` if port 18080 is occupied.
+
+`MILL_PARALLELISM=2 ./scripts/demo-word-count-batch` uses two active attempts.
+The existing heuristic then groups the same 12 records into six tasks of two
+records each. Record count and task count need not be identical.
+
+### Enabling the local coordinator
+
+The batch script sets these variables in addition to the normal database,
+HTTP address, output root, and parallelism configuration:
+
+| Variable | Purpose |
+| --- | --- |
+| `MILL_EXECUTOR=kubernetes` | Enable execution; unset keeps the API-only mode. |
+| `MILL_KUBE_CONTEXT` | Explicit kubeconfig context, such as `kind-mill`. |
+| `MILL_KUBE_NAMESPACE` | Namespace for Mill Jobs, such as `default`. |
+| `MILL_KUBE_NODE` | Node holding staged data, such as `mill-control-plane`. |
+| `MILL_LOCAL_ROOT` | Absolute local directory containing `input/` and `output/`. |
+| `MILL_NODE_ROOT` | Corresponding absolute directory inside that node. |
+
+Input URIs must be below `MILL_LOCAL_ROOT/input`; the configured output root
+must be at or below `MILL_LOCAL_ROOT/output`. Stage identical input bytes under
+`MILL_NODE_ROOT/input` before submission and keep them immutable. The node's
+output directory must be writable by UID/GID 65532. Pods mount these directories
+as `/data` (read-only) and `/output` (writable). This is node-local storage, not
+a multi-node shared filesystem.
+
+The adapter requires preloaded images (`imagePullPolicy: Never`), disables
+native retries, and sets a five-minute attempt deadline. CPU/memory requests
+and limits are small fixed prototype defaults. Successful workloads must
+publish their assigned output before exiting zero. `GET /jobs/{id}` includes
+ordered `results` with task IDs, attempt IDs, shard indices, and output URIs
+after the whole job completes. The demo copies node outputs back to those
+local paths; generic storage verification and aggregation remain planned.
 
 Run hermetic tests:
 
@@ -622,18 +692,17 @@ MILL_TEST_DATABASE_URL='postgresql:///mill_test' go test -race ./...
 2. Mill validates and identifies the input, chooses a task count from its
    configured parallelism, and plans record-aligned logical ranges.
 3. Mill persists the job and atomically creates one pending task per range.
-4. A coordinator claims a task and durably creates an attempt before asking a
-   local Docker adapter, or later Kubernetes, to run it.
+4. A coordinator claims a task and durably creates an attempt before asking
+   Kubernetes to run it.
 5. A workload container receives task identity, its input range, and a derived
    attempt output location through a small CLI contract.
 6. Mill reconciles Kubernetes observations into durable attempt and task state.
-7. Successful output is recorded before completion; failed work may create a
-   new attempt according to retry policy.
+7. A successful workload exits only after publishing its output; Mill records
+   completion. A terminal execution failure fails its task and job.
 8. Job status aggregates the finalized task set and exposes output locations.
 
-Steps 1–3 and the durable claim/transition part of step 4 are implemented. The
-CLI shape used by step 5 and a standalone reference workload are implemented,
-but no coordinator or execution adapter wires them together yet.
+These steps are implemented for the staged local kind demonstration. Task
+retries, generic output verification, and cloud storage remain planned.
 
 ## Development milestones
 
@@ -653,12 +722,13 @@ Define the smallest stable CLI interface for job/task identity, input byte
 ranges, and output location. Build one demonstration image and exercise it
 locally before involving Kubernetes. **Implemented:** the CLI protocol,
 reference executable, minimal image, and constrained manual Docker execution
-are tested. Control-plane execution belongs to the next integration slice.
+are tested.
 
 ### Milestone 3 — Kubernetes execution
 
-Evaluate Indexed Jobs, integrate the smallest suitable native primitive,
-enforce configured parallelism, and reconcile Pod outcomes. **Planned.**
+**Implemented for the local demo:** one native Job per attempt, configured
+parallelism, restart rediscovery, terminal outcome tracking, and output URI
+listing. Staging uses one kind node; multi-node storage remains future work.
 
 ### Milestone 4 — Reliable execution
 
@@ -678,7 +748,7 @@ the project being evaluated. **Planned.**
 
 ## Current status
 
-Mill has completed Milestone 2. Implemented behavior includes:
+Mill has a working local Milestone 3 demonstration. Implemented behavior includes:
 
 - one Go HTTP process with liveness and PostgreSQL-backed readiness;
 - `POST /jobs` and `GET /jobs/{id}`;
@@ -695,18 +765,22 @@ Mill has completed Milestone 2. Implemented behavior includes:
 - a deterministic Walden word-count input generator and local partial-result
   merger;
 - a repeatable one-task kind smoke test that compares Pod and local outputs;
-  and
+- an optional in-process coordinator and Kubernetes adapter;
+- durable attempt rediscovery, stable Kubernetes identities, and a single
+  coordinator ownership lock;
+- a batch demo that submits, executes, and merges all tasks, with final output
+  verified against a local count; and
 - an idempotent local kind and kubectl setup command.
 
-The control plane still does not launch the executable. Image inspection, task
-execution coordination, result publication, automatic recovery, S3, a Docker
-execution adapter, Kubernetes, and retries are not implemented. Until retries
-exist, one failed attempt immediately fails its task and job.
+Generic image inspection, storage-level output verification/aggregation, S3,
+full failure recovery, and task retries are not implemented. Until retries
+exist, one failed attempt immediately fails its task and job. Already active
+tasks are still observed to completion, while pending tasks stop dispatching.
 
 ## Local and cloud development philosophy
 
 Development starts locally so each domain and persistence decision can be
 learned and tested in isolation. Manual Docker runs validate the container
-contract; the next control-plane layer is a small Kubernetes execution adapter,
-followed by AWS. A cloud environment should be reproducible and disposable
+contract; local kind runs exercise task coordination before adding recovery
+policies and AWS. A cloud environment should be reproducible and disposable
 rather than the default development setup.

@@ -32,8 +32,8 @@ This grouping is demonstration input preparation, not Mill partitioning. The
 user submits the one generated JSONL file. Mill then scans its record
 boundaries and creates logical tasks that refer to byte ranges in that same
 file; it does not create 12 physical shard files. With server parallelism 3,
-the current planning heuristic creates 12 tasks, and a future execution adapter
-will keep at most three active at once.
+the current planning heuristic creates 12 tasks, and the execution adapter
+keeps at most three attempts active at once.
 
 The mapper extracts lowercase ASCII alphanumeric tokens. A single ASCII hyphen
 is retained only when it joins alphanumeric token segments, so `well-known` is
@@ -46,8 +46,8 @@ separators. Each task produces sorted JSONL records of the form:
 
 `cmd/mill-word-count-merge` is a local demonstration reducer. It combines any
 number of partial count files without placing word-count-specific behavior in
-Mill's control plane. Automated Kubernetes execution and final result
-aggregation are not implemented yet.
+Mill's control plane. The batch demo runs mapper tasks through Mill and invokes
+this merger locally after all tasks succeed.
 
 ## Run one task in kind
 
@@ -107,5 +107,47 @@ disk space until their artifacts are removed.
 
 This smoke test uses demonstration IDs and a record boundary chosen by the
 script. It does not submit a Mill job, claim PostgreSQL tasks, or update their
-state. The next implementation step connects that execution behavior to Mill's
-coordinator so all 12 tasks can run with parallelism three.
+state. For the coordinator-driven execution, use the full-batch script below.
+
+## Run the whole batch through Mill
+
+```bash
+./scripts/demo-word-count-batch
+```
+
+This requires Go, Docker, kind, kubectl, PostgreSQL 18 tools (`initdb`, `pg_ctl`,
+`psql`), `curl`, and `jq` on PATH. It creates a private PostgreSQL instance that
+listens only on a Unix socket in the fresh run directory. No existing database
+is modified. Mill starts on `127.0.0.1:18080`; choose another port with
+`MILL_DEMO_PORT` if necessary.
+
+The script stages the full input on the kind node, submits it through
+`POST /jobs`, and displays progress from `GET /jobs/{id}`. Mill creates 12
+logical tasks and executes at most three attempts concurrently. Each attempt
+gets its own Kubernetes Job and output file. A completed task frees a slot
+independently of the others.
+
+After completion, job status lists the 12 successful output URIs. The script
+copies the results back, combines them into `counts.jsonl`, and checks that
+they match a local count over the entire input. It prints the fresh output
+directory, final result, and Kubernetes inspection/cleanup commands. Mill and
+the private PostgreSQL server stop when the script exits; all files and
+Kubernetes resources remain for inspection. `server.log` records claims,
+dispatches, completions, and failures; `status.json` contains final API status.
+This is a correctness demonstration, not a throughput benchmark: the input is
+small and Pod startup dominates execution time.
+
+For two active attempts instead:
+
+```bash
+MILL_PARALLELISM=2 ./scripts/demo-word-count-batch
+```
+
+With this configuration the current planner produces six tasks, each covering
+two of the 12 records. The result still covers the entire input. The demo uses
+the task count returned by Mill rather than choosing its own shards.
+
+The coordinator uses one Job per attempt and preserves durable state across
+process restarts. Native retries are disabled. Automatic Mill retries and
+generic result aggregation remain future work; this script performs only the
+word-count-specific merge.

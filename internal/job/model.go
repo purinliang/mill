@@ -60,8 +60,16 @@ type Job struct {
 	Output      Output     `json:"output"`
 	Parallelism int        `json:"parallelism"`
 	Progress    Progress   `json:"progress"`
+	Results     []Result   `json:"results,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+type Result struct {
+	TaskID     string `json:"task_id"`
+	ShardIndex int    `json:"shard_index"`
+	AttemptID  string `json:"attempt_id"`
+	URI        string `json:"uri"`
 }
 
 type Attempt struct {

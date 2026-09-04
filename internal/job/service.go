@@ -76,5 +76,12 @@ func (s *Service) Create(ctx context.Context, idempotencyKey string, submission 
 }
 
 func (s *Service) Get(ctx context.Context, id string) (Job, error) {
-	return s.repository.Get(ctx, id)
+	value, err := s.repository.Get(ctx, id)
+	if err != nil {
+		return Job{}, err
+	}
+	if value.State == StateCompleted {
+		value.Results, err = s.repository.CompletedResults(ctx, id)
+	}
+	return value, err
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -43,6 +44,8 @@ func main() {
 }
 
 func run(ctx context.Context, address, databaseURL, outputRootURI, parallelismValue string) error {
+	ctx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
 	if address == "" {
 		address = defaultHTTPAddress
 	}
@@ -72,6 +75,13 @@ func run(ctx context.Context, address, databaseURL, outputRootURI, parallelismVa
 		return err
 	}
 	jobHandler := job.NewHandler(jobService, log.Default())
+	executionLoop, err := configureExecution(ctx, databaseURL, jobRepository)
+	if err != nil {
+		return err
+	}
+	if executionLoop != nil {
+		defer executionLoop.close()
+	}
 
 	server := &http.Server{
 		Addr:              address,
@@ -79,31 +89,52 @@ func run(ctx context.Context, address, databaseURL, outputRootURI, parallelismVa
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return fmt.Errorf("listen HTTP: %w", err)
+	}
 	serveErrors := make(chan error, 1)
 	go func() {
-		serveErrors <- server.ListenAndServe()
+		serveErrors <- server.Serve(listener)
 	}()
+	executionErrors := make(chan error, 1)
+	if executionLoop != nil {
+		executionDone := make(chan struct{})
+		go func() {
+			defer close(executionDone)
+			executionErrors <- executionLoop.run(ctx)
+		}()
+		defer func() {
+			cancelRun()
+			<-executionDone
+		}()
+	}
+	defer server.Close()
 
-	log.Printf("Mill HTTP server listening on %s", address)
+	log.Printf("Mill HTTP server listening on %s", listener.Addr())
 
 	select {
+	case err := <-executionErrors:
+		if ctx.Err() == nil {
+			return fmt.Errorf("execution coordinator stopped: %w", err)
+		}
 	case err := <-serveErrors:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
 		return fmt.Errorf("serve HTTP: %w", err)
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancel()
-
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			return fmt.Errorf("shut down HTTP server: %w", err)
-		}
-		if err := <-serveErrors; err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return fmt.Errorf("serve HTTP: %w", err)
-		}
-		return nil
 	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("shut down HTTP server: %w", err)
+	}
+	if err := <-serveErrors; err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("serve HTTP: %w", err)
+	}
+	return nil
 }
 
 func parseParallelism(value string) (int, error) {

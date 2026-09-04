@@ -11,13 +11,15 @@ HTTP process, PostgreSQL connection/readiness behavior, create/get API, local
 JSONL logical sharding, and durable job/task materialization are implemented.
 CLI argument serialization, local JSONL-copy and word-count reference workloads,
 their minimal non-root Docker images, and a deterministic word-count input
-generator are also implemented. The control plane does not launch them.
-Concurrency-safe task claiming and durable attempt state transitions are
-implemented in PostgreSQL, but no coordinator calls them yet. Workload image
-inspection, external execution coordination, result aggregation, automatic
-recovery, retries, S3, and Kubernetes execution are not implemented.
-`scripts/setup` provides a repeatable local kind environment; it does not imply
-that Mill integrates with Kubernetes yet. Add implementation only in small,
+generator are also implemented. An optional coordinator now launches native
+Kubernetes Jobs through the official Go client, using PostgreSQL task claims
+and attempt transitions. The local adapter uses staged input/output paths on
+one kind node, and successful job status includes attempt output URIs.
+`scripts/demo-word-count-batch` exercises the HTTP API, PostgreSQL, concurrent
+Pods, and example-specific result merging. Workload image inspection, generic
+output verification/aggregation, full fault recovery, retries, and S3 remain
+planned. `scripts/setup` provides a repeatable local kind environment.
+Add implementation only in small,
 explicitly requested increments. Do not add more Dockerfiles, Kubernetes
 manifests, CI workflows, Terraform, or unrelated infrastructure unless a later
 task requires them.
@@ -25,7 +27,7 @@ task requires them.
 `scripts/demo-word-count-k8s` runs one manual word-count Job with staged
 node-local input and verifies its output against a local run. It uses
 `examples/word-count/job.yaml.template`; it does not claim or transition
-PostgreSQL tasks. Keep this demonstration distinct from the planned
+PostgreSQL tasks. Keep this demonstration distinct from the
 control-plane Kubernetes adapter.
 
 Do not describe planned behavior as implemented. Update the status in
@@ -66,6 +68,14 @@ operational and maintenance cost.
 - Persist a `starting` attempt and mark its task active in one transaction
   before calling an external runtime. Permit at most one active attempt per
   task and retain terminal attempts as execution history.
+- Reconstruct active attempts from PostgreSQL on each coordinator tick. Use a
+  deterministic Kubernetes Job name per attempt and verify its labels and UID.
+  Treat API errors as ambiguous observations; do not fail/retry a task merely
+  because a request timed out. Only terminal Job conditions release slots.
+- Keep one coordinator per database using the dedicated advisory-lock
+  connection. Preserve the same cluster and storage configuration on restart.
+  Missing running Jobs and identity mismatches require investigation; never
+  silently recreate them.
 - Do not implement a custom cluster scheduler when Kubernetes provides a
   suitable primitive. Initially map one Mill attempt to one Kubernetes Job so
   its arguments, output, and retry history remain independently observable.
@@ -118,6 +128,10 @@ job, task, shard, attempt, or state-transition semantics.
 - Keep local JSONL partition planning in `internal/job/partition.go` while it is
   part of the cohesive job-creation workflow. Logical shard boundaries must be
   contiguous, non-empty, and aligned to complete JSONL records.
+- Keep backend-independent task observation/claim logic in
+  `internal/coordinator`, Kubernetes types and API calls in
+  `internal/kubernetes`, and their lifecycle/configuration in
+  `cmd/mill/execution.go`. Word-count aggregation stays in the example.
 - Keep the language-neutral CLI protocol and its Go serialization/parser in
   `internal/workload`. Workload executable entrypoints belong under `cmd`,
   while demonstration-specific computation, inputs, generators, and
