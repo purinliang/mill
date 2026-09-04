@@ -44,7 +44,7 @@ separators. Each task produces sorted JSONL records of the form:
 {"word":"well-known","count":2}
 ```
 
-`cmd/mill-word-count-merge` is a local demonstration reducer. It combines any
+`examples/word-count/cmd/merge` is a local demonstration reducer. It combines any
 number of partial count files without placing word-count-specific behavior in
 Mill's control plane. The batch demo runs mapper tasks through Mill and invokes
 this merger locally after all tasks succeed.
@@ -55,7 +55,7 @@ With Go, Docker, kind, kubectl, and the existing `mill` cluster ready, run from
 the repository root:
 
 ```bash
-./scripts/demo-word-count-k8s
+./scripts/demo-word-count-single-task
 ```
 
 The script generates a fresh input, builds and loads `mill/word-count:dev`,

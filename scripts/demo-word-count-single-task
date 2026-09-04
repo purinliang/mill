@@ -44,13 +44,13 @@ go run ./examples/word-count/generate --output "${run_directory}/input.jsonl"
 end_byte="$(head -n 1 "${run_directory}/input.jsonl" | wc -c)"
 end_byte="${end_byte//[[:space:]]/}"
 printf 'Assigned input range: [0, %s) (first JSONL record)\n' "${end_byte}"
-go run ./cmd/mill-word-count \
+go run ./examples/word-count/cmd/word-count \
 	--job-id "${run_name}" --task-id task-0 --shard-index 0 \
 	--input-uri "file://${run_directory}/input.jsonl" \
 	--input-start-byte 0 --input-end-byte "${end_byte}" \
 	--output-uri "file://${run_directory}/local-result.jsonl" --
 
-docker build --file cmd/mill-word-count/Dockerfile --tag mill/word-count:dev .
+docker build --file examples/word-count/cmd/word-count/Dockerfile --tag mill/word-count:dev .
 kind load docker-image mill/word-count:dev --name mill
 
 # hostPath refers to the node filesystem. Stage a snapshot there without

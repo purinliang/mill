@@ -8,9 +8,9 @@ ENV CGO_ENABLED=0 GOTOOLCHAIN=local
 COPY go.mod go.sum ./
 COPY internal/workload/ ./internal/workload/
 COPY examples/word-count/wordcount.go ./examples/word-count/wordcount.go
-COPY cmd/mill-word-count/ ./cmd/mill-word-count/
+COPY examples/word-count/cmd/word-count/ ./examples/word-count/cmd/word-count/
 
-RUN go build -trimpath -ldflags="-s -w" -o /out/mill-word-count ./cmd/mill-word-count
+RUN go build -trimpath -ldflags="-s -w" -o /out/mill-word-count ./examples/word-count/cmd/word-count
 
 FROM scratch
 

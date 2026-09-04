@@ -24,7 +24,7 @@ explicitly requested increments. Do not add more Dockerfiles, Kubernetes
 manifests, CI workflows, Terraform, or unrelated infrastructure unless a later
 task requires them.
 
-`scripts/demo-word-count-k8s` runs one manual word-count Job with staged
+`scripts/demo-word-count-single-task` runs one manual word-count Job with staged
 node-local input and verifies its output against a local run. It uses
 `examples/word-count/job.yaml.template`; it does not claim or transition
 PostgreSQL tasks. Keep this demonstration distinct from the
@@ -133,9 +133,10 @@ job, task, shard, attempt, or state-transition semantics.
   `internal/kubernetes`, and their lifecycle/configuration in
   `cmd/mill/execution.go`. Word-count aggregation stays in the example.
 - Keep the language-neutral CLI protocol and its Go serialization/parser in
-  `internal/workload`. Workload executable entrypoints belong under `cmd`,
-  while demonstration-specific computation, inputs, generators, and
-  documentation belong together under `examples/<name>`. All must remain
+  `internal/workload`. Reserve top-level `cmd` for Mill's own executables.
+  Example executable entrypoints belong under `examples/<name>/cmd/<command>`,
+  alongside demonstration-specific computation, inputs, generators, and
+  documentation under `examples/<name>`. All must remain
   separate from control-plane behavior. Introduce a top-level `workloads`
   package only if Mill later owns reusable workload implementations beyond
   examples.

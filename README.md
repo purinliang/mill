@@ -253,8 +253,8 @@ it belong unchanged to the executable. A user argument may therefore have the
 same spelling as a Mill flag without ambiguity. No equivalent environment
 variables are defined in this contract.
 
-`cmd/mill-jsonl-copy` is the first reference workload. It supports local
-`file://` URIs, copies exactly the assigned range to its output atomically, and
+`examples/jsonl-copy/cmd/jsonl-copy` is the first reference workload. It supports
+local `file://` URIs, copies exactly the assigned range to its output atomically, and
 performs no business computation. Its Docker image contains a statically linked
 binary in a scratch filesystem and runs as non-root UID/GID `65532`. It proves
 the protocol and can also run through the Kubernetes adapter when its image is
@@ -312,15 +312,15 @@ cmd/mill/
   execution.go                    optional coordinator loop and ownership lock
   main_test.go                    process and health unit tests
   main_integration_test.go        PostgreSQL readiness integration test
-cmd/mill-jsonl-copy/
+examples/jsonl-copy/cmd/jsonl-copy/
   main.go                         local reference workload for one byte range
   Dockerfile                      multi-stage non-root reference image
-cmd/mill-word-count/
-  main.go                         word-count mapper for one assigned range
-  Dockerfile                      multi-stage non-root mapper image
-cmd/mill-word-count-merge/
-  main.go                         local demonstration result merger
 examples/word-count/
+  cmd/word-count/
+    main.go                       word-count mapper for one assigned range
+    Dockerfile                    multi-stage non-root mapper image
+  cmd/merge/
+    main.go                       local demonstration result merger
   wordcount.go                    tokenization, counting, and merge behavior
   wordcount_test.go               workload behavior tests
   walden-economy.txt              committed plain-text Chapter 1 source
@@ -351,7 +351,7 @@ migrations/
   000004_create_attempts.sql      durable execution attempts
 scripts/
   setup                           repeatable local kind environment setup
-  demo-word-count-k8s              run one kind task and verify its output
+  demo-word-count-single-task      run one kind task and verify its output
   demo-word-count-batch            submit a full batch, observe, copy, and merge
 README.md                         architecture and development guide
 AGENTS.md                         contribution and agent conventions
@@ -539,7 +539,7 @@ The reference workload can be invoked manually against the first 12-byte JSONL
 record. This exercises the contract but does not change job or task state:
 
 ```bash
-go run ./cmd/mill-jsonl-copy \
+go run ./examples/jsonl-copy/cmd/jsonl-copy \
   --job-id 0198b7c9-1d24-7000-8000-000000000001 \
   --task-id 0198b7c9-1d24-7000-8000-000000000002 \
   --shard-index 0 \
@@ -554,7 +554,7 @@ Build the same workload as an OCI image:
 
 ```bash
 docker build \
-  --file cmd/mill-jsonl-copy/Dockerfile \
+  --file examples/jsonl-copy/cmd/jsonl-copy/Dockerfile \
   --tag mill/jsonl-copy:dev \
   .
 ```
@@ -611,7 +611,7 @@ partitioning.
 With the local kind cluster ready, run one word-count task in a Pod:
 
 ```bash
-./scripts/demo-word-count-k8s
+./scripts/demo-word-count-single-task
 ```
 
 The script stages the input inside the kind node, mounts it read-only, runs
