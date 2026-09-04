@@ -6,16 +6,17 @@ scope.
 
 ## Current project state
 
-Mill is in Milestone 2: container workload contract. Milestone 1's HTTP
-process, PostgreSQL connection/readiness behavior, create/get API, local JSONL
-logical sharding, and durable job/task materialization are implemented. CLI
-argument serialization and a local JSONL copy reference workload are also
-implemented. The control plane does not launch it. Workload image inspection,
-task execution, attempts, results, automatic recovery, retries, S3, Docker
-integration, and Kubernetes are not implemented. Add implementation only in
-small, explicitly requested increments. Do not add Dockerfiles, Kubernetes
-manifests, CI workflows, Terraform, or unrelated infrastructure unless a later
-task requires them.
+Mill has completed Milestone 2's container workload contract. Milestone 1's
+HTTP process, PostgreSQL connection/readiness behavior, create/get API, local
+JSONL logical sharding, and durable job/task materialization are implemented.
+CLI argument serialization, a local JSONL copy reference workload, and its
+minimal non-root Docker image are also implemented. The control plane does not
+launch it. Workload image inspection, task execution coordination, attempts,
+results, automatic recovery, retries, S3, a Docker execution adapter, and
+Kubernetes are not implemented. Add implementation only in small, explicitly
+requested increments. Do not add more Dockerfiles, Kubernetes manifests, CI
+workflows, Terraform, or unrelated infrastructure unless a later task requires
+them.
 
 Do not describe planned behavior as implemented. Update the status in
 `README.md` whenever a milestone materially changes the repository's actual
@@ -104,6 +105,9 @@ job, task, shard, attempt, or state-transition semantics.
 - Keep the language-neutral CLI protocol and its Go serialization/parser in
   `internal/workload`. Reference workloads belong under `cmd` and must remain
   separate from control-plane behavior.
+- Keep a reference workload's Dockerfile beside its command. Prefer a
+  multi-stage build and a minimal non-root runtime image; do not place build
+  tools in the final workload image.
 - Keep interfaces at the consumer boundary and add them only for an existing
   substitute. For example, the job HTTP handler owns the small store interface
   used by its tests; the concrete PostgreSQL repository does not need an

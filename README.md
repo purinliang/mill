@@ -6,8 +6,9 @@ executable image and one input; Mill plans logical shards, stores durable job
 and task state in PostgreSQL, and will later ask Kubernetes to run copies of the
 image in parallel. Large cloud inputs and outputs will live in Amazon S3.
 
-Mill is in active development. It is not production-ready, and it currently
-does not execute containers.
+Mill is in active development and is not production-ready. Its reference
+workload can be built and run manually with Docker, but the control plane does
+not execute containers yet.
 
 ## Motivation
 
@@ -173,7 +174,7 @@ The current request shape keeps execution policy out of the user-facing job:
 ```json
 {
   "executable": {
-    "image": "mill/example:dev",
+    "image": "mill/jsonl-copy:dev",
     "args": ["--mode", "fast"]
   },
   "input": {
@@ -239,8 +240,9 @@ variables are defined in this contract.
 
 `cmd/mill-jsonl-copy` is the first reference workload. It supports local
 `file://` URIs, copies exactly the assigned range to its output atomically, and
-performs no business computation. It proves the protocol; the control plane
-does not launch it yet.
+performs no business computation. Its Docker image contains a statically linked
+binary in a scratch filesystem and runs as non-root UID/GID `65532`. It proves
+the protocol; the control plane does not launch it yet.
 
 ## Module view
 
@@ -256,7 +258,7 @@ boundaries, not microservices.
 | JSONL partition planner | Implemented locally | Validate local input, calculate identity, and create logical record-aligned byte ranges. S3 access remains planned. |
 | PostgreSQL repository | Partially implemented | Persist idempotent jobs and atomically materialize logical tasks. Attempts and results remain planned. |
 | Workload CLI contract | Implemented locally | Serialize and parse task identity, logical input range, output URI, and separated user arguments. |
-| JSONL copy workload | Implemented locally | Demonstrate that one process reads and atomically writes exactly one assigned local range. |
+| JSONL copy workload | Implemented locally and in Docker | Demonstrate that one process/container reads and atomically writes exactly one assigned local range. |
 | Coordinator | Planned | Reconcile durable tasks and attempts with an execution backend. |
 | Kubernetes adapter | Planned | Create and observe native Kubernetes work without taking over scheduling. |
 | Object-storage adapter | Planned | Read S3 inputs and expose result metadata after local behavior is understood. |
@@ -294,6 +296,7 @@ cmd/mill/
   main_integration_test.go        PostgreSQL readiness integration test
 cmd/mill-jsonl-copy/
   main.go                         local reference workload for one byte range
+  Dockerfile                      multi-stage non-root reference image
 internal/job/
   model.go                        API and domain data types
   validation.go                   submission, identifier, and URI rules
@@ -310,6 +313,7 @@ migrations/
   000003_refactor_job_input.sql   executable/input names and byte-range tasks
 README.md                         architecture and development guide
 AGENTS.md                         contribution and agent conventions
+.dockerignore                     files excluded from Docker build context
 go.mod, go.sum                    Go module and dependency definitions
 ```
 
@@ -425,7 +429,7 @@ curl --include --request POST http://localhost:8080/jobs \
   --header 'Idempotency-Key: demo-job-001' \
   --data '{
     "executable": {
-      "image": "mill/example:dev",
+      "image": "mill/jsonl-copy:dev",
       "args": []
     },
     "input": {
@@ -457,6 +461,41 @@ go run ./cmd/mill-jsonl-copy \
   --output-uri file:///tmp/mill-output/manual-task-0.jsonl \
   --
 ```
+
+Build the same workload as an OCI image:
+
+```bash
+docker build \
+  --file cmd/mill-jsonl-copy/Dockerfile \
+  --tag mill/jsonl-copy:dev \
+  .
+```
+
+Run it with a read-only input mount and a separate writable output mount. The
+host UID/GID override lets the non-root process write a host-owned result:
+
+```bash
+mkdir -p /tmp/mill-output/container-demo
+docker run --rm \
+  --read-only \
+  --network none \
+  --user "$(id -u):$(id -g)" \
+  --mount type=bind,source=/tmp/mill-demo/records.jsonl,target=/data/records.jsonl,readonly \
+  --mount type=bind,source=/tmp/mill-output/container-demo,target=/data/output \
+  mill/jsonl-copy:dev \
+  --job-id 0198b7c9-1d24-7000-8000-000000000001 \
+  --task-id 0198b7c9-1d24-7000-8000-000000000002 \
+  --shard-index 0 \
+  --input-uri file:///data/records.jsonl \
+  --input-start-byte 0 \
+  --input-end-byte 12 \
+  --output-uri file:///data/output/task-0.jsonl \
+  --
+```
+
+The `file://` URIs refer to paths inside the container. The bind mounts are the
+adapter between host storage and that container-visible namespace. S3-backed
+execution will not need this path translation.
 
 Run hermetic tests:
 
@@ -511,9 +550,9 @@ sharding, durable task materialization, and persisted progress. **Implemented.**
 
 Define the smallest stable CLI interface for job/task identity, input byte
 ranges, and output location. Build one demonstration image and exercise it
-locally before involving Kubernetes. **In progress:** the CLI protocol and a
-local reference executable are implemented; container packaging and control-
-plane execution are not.
+locally before involving Kubernetes. **Implemented:** the CLI protocol,
+reference executable, minimal image, and constrained manual Docker execution
+are tested. Control-plane execution belongs to the next integration slice.
 
 ### Milestone 3 — Kubernetes execution
 
@@ -538,7 +577,7 @@ the project being evaluated. **Planned.**
 
 ## Current status
 
-Mill is in Milestone 2. Implemented behavior includes:
+Mill has completed Milestone 2. Implemented behavior includes:
 
 - one Go HTTP process with liveness and PostgreSQL-backed readiness;
 - `POST /jobs` and `GET /jobs/{id}`;
@@ -548,11 +587,12 @@ Mill is in Milestone 2. Implemented behavior includes:
 - atomic PostgreSQL job/task materialization; and
 - persisted task-state progress after restart;
 - a typed workload CLI argument contract; and
-- a local JSONL copy executable that processes one assigned range.
+- a local JSONL copy executable and non-root OCI image that process one assigned
+  range.
 
 The control plane still does not launch the executable. Image inspection, task
-execution, attempts, results, automatic recovery, S3, Docker integration,
-Kubernetes, and retries are not implemented.
+execution coordination, attempts, results, automatic recovery, S3, a Docker
+execution adapter, Kubernetes, and retries are not implemented.
 
 ## Local and cloud development philosophy
 
