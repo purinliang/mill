@@ -76,6 +76,7 @@ Attempt
   executor              execution backend
   state                 starting/running/completed/failed
   external ID           Kubernetes Job UID after creation
+  lease                 owner, fencing token, and expiry
   lifecycle             timestamps and optional failure
 ```
 
@@ -192,9 +193,19 @@ execution did not occur. Stable Job names and recorded UIDs allow the
 coordinator to rediscover the same execution after its process restarts. Mill
 does not silently launch a replacement for a missing running Job.
 
-The current process holds one PostgreSQL advisory lock, allowing one coordinator
-per database. This is sufficient for the current restart test but prevents
-active coordinator replicas; planned durable leases replace this restriction.
+Each process uses a random executor instance identity. A newly created attempt
+receives a 15-second lease, owner, and UUID fencing token in the same transaction
+that marks its task running. Every coordinator tick renews leases it owns and
+may atomically take over unowned or expired attempts using `FOR UPDATE SKIP
+LOCKED`. A takeover creates a new token but preserves the attempt ID and
+deterministic Kubernetes Job name. All attempt state mutations require the
+current unexpired token, so a stale process cannot finish work after ownership
+has moved. Exact terminal-transition replays with the same token remain
+idempotent.
+
+This database ownership mechanism is implemented and the process-level restart
+demo exercises expiry and takeover. A packaged multi-replica deployment and
+simultaneous-process fault demonstration remain planned.
 
 ## Planned service boundary
 
@@ -216,12 +227,13 @@ observation and never accesses Mill tables directly. A separate planner service
 is unjustified while planning is a bounded streaming operation inside the Job
 workflow.
 
-The internal gRPC API will express domain commands rather than database CRUD:
-claim or renew an attempt lease, list work owned by an executor, record external
-identity, and complete or fail an attempt. Mutations must include an attempt
-identity, lease token, and expected state/version so unknown RPC outcomes can be
-retried safely. Lease expiry transfers observation ownership; it does not create
-a new attempt.
+The internal gRPC API will expose the implemented lease domain operations rather
+than database CRUD: claim or renew an attempt lease, list work owned by an
+executor, record external identity, and complete or fail an attempt. Mutations
+must include an attempt identity and lease token; an explicit expected version
+may be added where the existing state guard is insufficient for safely retrying
+an unknown RPC outcome. Lease expiry transfers observation ownership; it does
+not create a new attempt.
 
 ## Planned workload resource classes
 

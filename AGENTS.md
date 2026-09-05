@@ -17,9 +17,11 @@ The object-storage adapter supports `file://` and `s3://`. S3-backed attempts
 perform ranged reads and publish unique outputs without hostPath mounts or node
 pinning. `scripts/demo-word-count-batch` exercises the complete node-local
 control plane; its failure and restart modes test retry exhaustion and process
-recovery. `scripts/demo-word-count-s3` proves the shared-storage path against a
-disposable S3-compatible service and exact local baseline. `scripts/setup`
-provides a repeatable local kind environment.
+recovery. Per-attempt PostgreSQL leases now provide renewable ownership,
+expired-owner takeover, and fencing tokens for all state mutations.
+`scripts/demo-word-count-s3` proves the shared-storage path against a disposable
+S3-compatible service and exact local baseline. `scripts/setup` provides a
+repeatable local kind environment.
 
 Workload image inspection, generic output verification/aggregation, and wider
 fault recovery remain planned. Separate Job and executor services, gRPC,
@@ -90,12 +92,12 @@ operational and maintenance cost.
   deterministic Kubernetes Job name per attempt and verify its labels and UID.
   Treat API errors as ambiguous observations; do not fail/retry a task merely
   because a request timed out. Only terminal Job conditions release slots.
-- Keep one coordinator per database using the dedicated advisory-lock
-  connection. Preserve the same cluster and storage configuration on restart.
-  Missing running Jobs and identity mismatches require investigation; never
-  silently recreate them. This is the implemented single-coordinator rule;
-  replace it with durable leases only in the planned replicated-executor
-  milestone.
+- Give every coordinator process a unique instance identity. Acquire and renew
+  durable per-attempt leases in PostgreSQL, replace the fencing token on
+  takeover, and require the current token for every state mutation. Lease expiry
+  transfers observation ownership of the same attempt; it does not authorize a
+  new attempt. Missing running Jobs and identity mismatches require
+  investigation; never silently recreate them.
 - Preserve `scripts/demo-word-count-batch --restart-coordinator` as a real
   process-boundary recovery test. It must use SIGKILL only on the child Mill PID,
   keep PostgreSQL and Kubernetes alive, compare stable attempt IDs and Job UIDs,
@@ -117,10 +119,10 @@ operational and maintenance cost.
   create a separate planner service without measured independent scaling need.
   Do not split other packages into services merely to increase Pod count.
 - When the service-boundary milestone begins, make the Job service the sole
-  owner of Mill metadata tables. Executor replicas communicate through a
-  versioned Protobuf/gRPC domain API with deadlines, durable lease tokens,
-  expected versions, and idempotent mutations. Do not use gRPC as a durable
-  queue or change the workload CLI contract to gRPC.
+  owner of Mill metadata tables. Executor replicas must access the implemented
+  lease operations through a versioned Protobuf/gRPC domain API with deadlines,
+  fencing tokens, state guards, and idempotent mutations. Do not use gRPC as a
+  durable queue or change the workload CLI contract to gRPC.
 - Availability claims must identify their failure domain. Two laptops may
   demonstrate individual Pod/process and controlled primary/standby failure;
   do not describe that as whole-node or network-partition tolerance. Quorum-safe
@@ -225,6 +227,9 @@ job, task, shard, attempt, or state-transition semantics.
 - Add Kubernetes end-to-end tests only when Kubernetes execution is introduced.
 - Cover retries, duplicate reconciliation, partial failure, and restart recovery
   during the reliability milestone.
+- Test lease contention, renewal, expiry takeover, and stale-token rejection
+  against PostgreSQL. Preserve the process SIGKILL demonstration as an
+  end-to-end check of stable attempt and Kubernetes identities.
 - Keep tests hermetic where practical, and document any required external
   service or cluster.
 

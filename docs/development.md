@@ -126,8 +126,11 @@ Exercise coordinator process recovery while PostgreSQL and Kubernetes continue:
 ./scripts/demo-word-count-batch --restart-coordinator
 ```
 
-The script records attempt history, failure logs, and identity snapshots in its
-printed temporary directory. Kubernetes Jobs remain until explicitly removed.
+The replacement process waits for the 15-second attempt leases to expire, takes
+over with new fencing tokens, and observes the same attempt IDs and Kubernetes
+Job UIDs. The script records attempt history, failure logs, and identity
+snapshots in its printed temporary directory. Kubernetes Jobs remain until
+explicitly removed.
 
 ### Full S3-compatible batch
 
@@ -254,8 +257,8 @@ internal/job/
   validation.go                   submission and URI normalization
   partition.go                    streaming JSONL logical-shard planner
   repository.go                   PostgreSQL job/task persistence
-  attempt_repository.go           claims, transitions, and retry policy
-  execution_repository.go         active recovery and successful results
+  attempt_repository.go           claims, fenced transitions, and retry policy
+  execution_repository.go         lease renewal/takeover and successful results
   handler.go                      HTTP transport
 internal/coordinator/
   coordinator.go                  observe active attempts and fill free slots
@@ -265,7 +268,7 @@ internal/objectstore/
   store.go                        file and S3-compatible object access
 internal/workload/
   contract.go                     language-neutral CLI protocol implementation
-migrations/                       ordered PostgreSQL schema history
+migrations/                       ordered PostgreSQL schema and lease history
 scripts/
   setup                           pinned local kind/kubectl preparation
   demo-word-count-single-task     one manual Kubernetes task

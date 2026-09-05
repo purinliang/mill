@@ -43,9 +43,11 @@ Mill (one Go process today)
 
 The HTTP API and coordinator are still deployed together. The coordinator
 persists an attempt before creating its deterministic Kubernetes Job, then
-reconciles Kubernetes observations back into PostgreSQL. For S3-backed jobs,
-Pods need no hostPath volume or fixed-node selector and can use shared object
-storage from any eligible node.
+reconciles Kubernetes observations back into PostgreSQL. Durable per-attempt
+leases fence stale coordinators and allow another process to take over an
+expired lease while preserving the attempt and Kubernetes Job identity. For
+S3-backed jobs, Pods need no hostPath volume or fixed-node selector and can use
+shared object storage from any eligible node.
 
 The planned service architecture separates a replicated Job service from
 replicated executor workers. The Job service will retain the planner and sole
@@ -119,6 +121,7 @@ Implemented:
 - concurrency-safe task claims and attempt state transitions;
 - one native Kubernetes Job per attempt through the official Go client;
 - bounded retries with durable five-second delay and separate attempt outputs;
+- durable attempt leases, renewal, expiry takeover, and stale-owner fencing;
 - deterministic Kubernetes identity and coordinator restart reconciliation;
 - trusted workload CLI contract and non-root example images;
 - local, container, single-task, full-batch, retry, restart, and S3-backed
@@ -128,7 +131,7 @@ Implemented:
 Not implemented:
 
 - separate Job and executor services or gRPC;
-- executor ownership leases across active replicas;
+- a packaged multi-replica deployment and concurrent-process failure demo;
 - named workload resource classes;
 - replicated PostgreSQL or multi-node K3s deployment;
 - network-partition or physical-node failure tests;
@@ -161,8 +164,10 @@ parallelism, and expose successful output URIs.
 ### 4 — Reliable execution — in progress
 
 Bound retries, preserve attempt history, delay retry eligibility durably, and
-recover the same Kubernetes identities after coordinator process loss. Wider
-dispatch crash windows, resource deletion, and network ambiguity remain.
+recover the same Kubernetes identities after coordinator process loss. Use
+durable leases to renew or transfer attempt ownership and reject stale state
+changes. Wider dispatch crash windows, resource deletion, concurrent-process
+demonstration, and network ambiguity remain.
 
 ### 5 — Shared object storage — implemented locally
 
@@ -174,7 +179,8 @@ node pinning. Real AWS S3 remains untested.
 
 Split the current process into a replicated Job service and replicated executor
 workers. Keep planning inside the Job service, make it the sole metadata owner,
-and introduce versioned Protobuf/gRPC attempt leases. Add optional named
+and expose the existing lease operations through a versioned Protobuf/gRPC
+domain API. Add optional named
 `small`, `medium`, and `large` workload classes; persist their resolved
 resources so retries remain stable.
 
