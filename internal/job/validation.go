@@ -19,6 +19,12 @@ func (e *ValidationError) Error() string {
 	return fmt.Sprintf("%s %s", e.Field, e.Problem)
 }
 
+// InvalidArgument lets transport adapters classify validation failures without
+// depending on the job package's concrete error type.
+func (e *ValidationError) InvalidArgument() bool {
+	return true
+}
+
 func normalizeSubmission(submission Submission) (Submission, error) {
 	if submission.Executable.Image == "" || submission.Executable.Image != strings.TrimSpace(submission.Executable.Image) {
 		return Submission{}, &ValidationError{Field: "executable.image", Problem: "must be non-empty and have no surrounding whitespace"}
