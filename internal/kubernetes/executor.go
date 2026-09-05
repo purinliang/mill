@@ -19,7 +19,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/purinliang/mill/internal/coordinator"
-	"github.com/purinliang/mill/internal/job"
+	"github.com/purinliang/mill/internal/execution"
 	"github.com/purinliang/mill/internal/workload"
 )
 
@@ -88,10 +88,10 @@ func (c Config) validate() error {
 // Reconcile recovers the create/record crash window by a stable Job name.
 // Running attempts never recreate missing resources: that could rerun work
 // while a deleted Job's Pods are still terminating.
-func (e *Executor) Reconcile(ctx context.Context, claimed job.ClaimedAttempt) (coordinator.Observation, error) {
+func (e *Executor) Reconcile(ctx context.Context, claimed execution.ClaimedAttempt) (coordinator.Observation, error) {
 	name := "mill-" + claimed.Attempt.ID
 	external, err := e.jobs.Get(ctx, name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) && claimed.Attempt.State == job.AttemptStateStarting {
+	if apierrors.IsNotFound(err) && claimed.Attempt.State == execution.AttemptStateStarting {
 		manifest, buildErr := e.manifest(claimed)
 		if buildErr != nil {
 			return coordinator.Observation{Failure: buildErr.Error()}, nil
@@ -131,7 +131,7 @@ func (e *Executor) Reconcile(ctx context.Context, claimed job.ClaimedAttempt) (c
 	return observed, nil
 }
 
-func (e *Executor) manifest(claimed job.ClaimedAttempt) (*batchv1.Job, error) {
+func (e *Executor) manifest(claimed execution.ClaimedAttempt) (*batchv1.Job, error) {
 	inputURI, inputLocal, err := e.workloadURI(claimed.InputURI, "input")
 	if err != nil {
 		return nil, err

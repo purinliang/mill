@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/purinliang/mill/internal/job"
+	"github.com/purinliang/mill/internal/execution"
 	"github.com/purinliang/mill/internal/workload"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -17,9 +17,9 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-func testClaim() job.ClaimedAttempt {
-	return job.ClaimedAttempt{Attempt: job.Attempt{ID: "attempt-1", JobID: "job-1", TaskID: "task-1", State: job.AttemptStateStarting},
-		Executable: job.Executable{Image: "mill/word-count:dev", Args: []string{"--user-arg"}}, ShardIndex: 2,
+func testClaim() execution.ClaimedAttempt {
+	return execution.ClaimedAttempt{Attempt: execution.Attempt{ID: "attempt-1", JobID: "job-1", TaskID: "task-1", State: execution.AttemptStateStarting},
+		Executable: execution.Executable{Image: "mill/word-count:dev", Args: []string{"--user-arg"}}, ShardIndex: 2,
 		InputURI: "file:///local/input/records.jsonl", InputStartByte: 100, InputEndByte: 200,
 		OutputURI: "file:///local/output/job-1/tasks/2/attempts/attempt-1/result.jsonl"}
 }
@@ -140,7 +140,7 @@ func TestRecoverLostCreateResponseAndObserveTerminalCondition(t *testing.T) {
 	if err != nil || observed.ExternalID != "uid-1" || creates != 1 {
 		t.Fatalf("recovery=%+v err=%v creates=%d", observed, err, creates)
 	}
-	claim.Attempt.State = job.AttemptStateRunning
+	claim.Attempt.State = execution.AttemptStateRunning
 	claim.Attempt.ExternalID = "uid-1"
 	// An early success signal must not free the slot while Pods terminate.
 	stored.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobSuccessCriteriaMet, Status: corev1.ConditionTrue}}

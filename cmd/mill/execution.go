@@ -11,12 +11,38 @@ import (
 	"time"
 
 	"github.com/purinliang/mill/internal/coordinator"
+	"github.com/purinliang/mill/internal/execution"
 	"github.com/purinliang/mill/internal/job"
 	"github.com/purinliang/mill/internal/kubernetes"
 )
 
 type executionLoop struct {
 	coordinator *coordinator.Coordinator
+}
+
+type repositoryExecutionStore struct {
+	repository    *job.Repository
+	leaseDuration time.Duration
+}
+
+func (s repositoryExecutionStore) LeaseActiveAttempts(ctx context.Context, executor, leaseOwner string) ([]execution.ClaimedAttempt, error) {
+	return s.repository.LeaseActiveAttempts(ctx, executor, leaseOwner, s.leaseDuration)
+}
+
+func (s repositoryExecutionStore) ClaimNextAttempt(ctx context.Context, executor, leaseOwner string) (execution.ClaimedAttempt, error) {
+	return s.repository.ClaimNextAttempt(ctx, executor, leaseOwner, s.leaseDuration)
+}
+
+func (s repositoryExecutionStore) MarkAttemptRunning(ctx context.Context, id, leaseToken, externalID string) (execution.Attempt, error) {
+	return s.repository.MarkAttemptRunning(ctx, id, leaseToken, externalID)
+}
+
+func (s repositoryExecutionStore) CompleteAttempt(ctx context.Context, id, leaseToken string) (execution.Attempt, error) {
+	return s.repository.CompleteAttempt(ctx, id, leaseToken)
+}
+
+func (s repositoryExecutionStore) FailAttempt(ctx context.Context, id, leaseToken, failureMessage string) (execution.Attempt, error) {
+	return s.repository.FailAttempt(ctx, id, leaseToken, failureMessage)
 }
 
 const attemptLeaseDuration = 15 * time.Second
@@ -44,8 +70,8 @@ func configureExecution(repository *job.Repository) (*executionLoop, error) {
 	}
 	log.Printf("Kubernetes executor instance=%s lease_duration=%s", leaseOwner, attemptLeaseDuration)
 	return &executionLoop{coordinator: &coordinator.Coordinator{
-		Store: repository, Executor: executor, Logger: log.Default(),
-		LeaseOwner: leaseOwner, LeaseDuration: attemptLeaseDuration,
+		Store:    repositoryExecutionStore{repository: repository, leaseDuration: attemptLeaseDuration},
+		Executor: executor, Logger: log.Default(), LeaseOwner: leaseOwner,
 	}}, nil
 }
 

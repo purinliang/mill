@@ -10,13 +10,15 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/purinliang/mill/internal/execution"
 )
 
 var (
-	ErrNoTaskAvailable          = errors.New("no task is available for execution")
-	ErrAttemptNotFound          = errors.New("attempt not found")
-	ErrAttemptLeaseLost         = errors.New("attempt lease is not active")
-	ErrInvalidAttemptTransition = errors.New("invalid attempt state transition")
+	ErrNoTaskAvailable          = execution.ErrNoTaskAvailable
+	ErrAttemptNotFound          = execution.ErrAttemptNotFound
+	ErrAttemptLeaseLost         = execution.ErrAttemptLeaseLost
+	ErrInvalidAttemptTransition = execution.ErrInvalidAttemptTransition
 )
 
 // Fixed prototype policy: three total attempts, not three extra retries.

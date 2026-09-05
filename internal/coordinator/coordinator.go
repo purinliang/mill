@@ -6,20 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"time"
 
-	"github.com/purinliang/mill/internal/job"
+	"github.com/purinliang/mill/internal/execution"
 )
 
 const ExecutorName = "kubernetes"
-
-type Store interface {
-	LeaseActiveAttempts(context.Context, string, string, time.Duration) ([]job.ClaimedAttempt, error)
-	ClaimNextAttempt(context.Context, string, string, time.Duration) (job.ClaimedAttempt, error)
-	MarkAttemptRunning(context.Context, string, string, string) (job.Attempt, error)
-	CompleteAttempt(context.Context, string, string) (job.Attempt, error)
-	FailAttempt(context.Context, string, string, string) (job.Attempt, error)
-}
 
 type Observation struct {
 	ExternalID string
@@ -28,22 +19,21 @@ type Observation struct {
 }
 
 type Executor interface {
-	Reconcile(context.Context, job.ClaimedAttempt) (Observation, error)
+	Reconcile(context.Context, execution.ClaimedAttempt) (Observation, error)
 }
 
 type Coordinator struct {
-	Store         Store
-	Executor      Executor
-	Logger        *log.Logger
-	LeaseOwner    string
-	LeaseDuration time.Duration
+	Store      execution.Store
+	Executor   Executor
+	Logger     *log.Logger
+	LeaseOwner string
 }
 
 // Tick observes every active attempt before filling newly available slots.
 // An API error is ambiguous: retain durable intent and retry observation on
 // the next tick, instead of declaring failure and potentially duplicating work.
 func (c *Coordinator) Tick(ctx context.Context) error {
-	active, err := c.Store.LeaseActiveAttempts(ctx, ExecutorName, c.LeaseOwner, c.LeaseDuration)
+	active, err := c.Store.LeaseActiveAttempts(ctx, ExecutorName, c.LeaseOwner)
 	if err != nil {
 		return err
 	}
@@ -58,8 +48,8 @@ func (c *Coordinator) Tick(ctx context.Context) error {
 	}
 	// Bound each tick so a backlog across many jobs cannot starve observation.
 	for range 100 {
-		attempt, err := c.Store.ClaimNextAttempt(ctx, ExecutorName, c.LeaseOwner, c.LeaseDuration)
-		if errors.Is(err, job.ErrNoTaskAvailable) {
+		attempt, err := c.Store.ClaimNextAttempt(ctx, ExecutorName, c.LeaseOwner)
+		if errors.Is(err, execution.ErrNoTaskAvailable) {
 			return nil
 		}
 		if err != nil {
@@ -73,14 +63,14 @@ func (c *Coordinator) Tick(ctx context.Context) error {
 	return nil
 }
 
-func (c *Coordinator) reconcile(ctx context.Context, claimed job.ClaimedAttempt) error {
+func (c *Coordinator) reconcile(ctx context.Context, claimed execution.ClaimedAttempt) error {
 	observed, err := c.Executor.Reconcile(ctx, claimed)
 	if err != nil {
 		return fmt.Errorf("reconcile attempt %s: %w", claimed.Attempt.ID, err)
 	}
 	id := claimed.Attempt.ID
 	leaseToken := claimed.Attempt.LeaseToken
-	if observed.ExternalID != "" && claimed.Attempt.State == job.AttemptStateStarting {
+	if observed.ExternalID != "" && claimed.Attempt.State == execution.AttemptStateStarting {
 		if _, err := c.Store.MarkAttemptRunning(ctx, id, leaseToken, observed.ExternalID); err != nil {
 			return err
 		}

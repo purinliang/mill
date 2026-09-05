@@ -1,10 +1,12 @@
 package job
 
-import "time"
+import (
+	"time"
+
+	"github.com/purinliang/mill/internal/execution"
+)
 
 type State string
-
-type AttemptState string
 
 const (
 	StatePreparing State = "preparing"
@@ -13,17 +15,16 @@ const (
 	StateFailed    State = "failed"
 )
 
+type AttemptState = execution.AttemptState
+
 const (
-	AttemptStateStarting  AttemptState = "starting"
-	AttemptStateRunning   AttemptState = "running"
-	AttemptStateCompleted AttemptState = "completed"
-	AttemptStateFailed    AttemptState = "failed"
+	AttemptStateStarting  = execution.AttemptStateStarting
+	AttemptStateRunning   = execution.AttemptStateRunning
+	AttemptStateCompleted = execution.AttemptStateCompleted
+	AttemptStateFailed    = execution.AttemptStateFailed
 )
 
-type Executable struct {
-	Image string   `json:"image"`
-	Args  []string `json:"args"`
-}
+type Executable = execution.Executable
 
 type InputSpec struct {
 	URI string `json:"uri"`
@@ -72,30 +73,6 @@ type Result struct {
 	URI        string `json:"uri"`
 }
 
-type Attempt struct {
-	ID             string
-	JobID          string
-	TaskID         string
-	Number         int
-	Executor       string
-	State          AttemptState
-	ExternalID     string
-	FailureMessage string
-	CreatedAt      time.Time
-	StartedAt      *time.Time
-	FinishedAt     *time.Time
-	UpdatedAt      time.Time
-	LeaseOwner     string
-	LeaseToken     string
-	LeaseExpiresAt *time.Time
-}
+type Attempt = execution.Attempt
 
-type ClaimedAttempt struct {
-	Attempt        Attempt
-	Executable     Executable
-	ShardIndex     int
-	InputURI       string
-	InputStartByte int64
-	InputEndByte   int64
-	OutputURI      string
-}
+type ClaimedAttempt = execution.ClaimedAttempt
