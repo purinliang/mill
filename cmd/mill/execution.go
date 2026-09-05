@@ -30,6 +30,8 @@ func configureExecution(ctx context.Context, databaseURL string, repository *job
 	executor, err := kubernetes.New(kubernetes.Config{
 		Context: os.Getenv("MILL_KUBE_CONTEXT"), Namespace: os.Getenv("MILL_KUBE_NAMESPACE"),
 		Node: os.Getenv("MILL_KUBE_NODE"), LocalRoot: os.Getenv("MILL_LOCAL_ROOT"), NodeRoot: os.Getenv("MILL_NODE_ROOT"),
+		S3Region: os.Getenv("MILL_WORKLOAD_S3_REGION"), S3Endpoint: os.Getenv("MILL_WORKLOAD_S3_ENDPOINT"),
+		S3CredentialsSecret: os.Getenv("MILL_WORKLOAD_S3_CREDENTIALS_SECRET"),
 	})
 	if err != nil {
 		return nil, err

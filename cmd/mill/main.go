@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/purinliang/mill/internal/job"
+	"github.com/purinliang/mill/internal/objectstore"
 )
 
 const (
@@ -70,7 +71,13 @@ func run(ctx context.Context, address, databaseURL, outputRootURI, parallelismVa
 	if err != nil {
 		return err
 	}
-	jobService, err := job.NewService(jobRepository, job.JSONLPartitioner{}, parallelism)
+	objects, err := objectstore.New(ctx, objectstore.Config{
+		Region: os.Getenv("AWS_REGION"), Endpoint: os.Getenv("MILL_S3_ENDPOINT"),
+	})
+	if err != nil {
+		return err
+	}
+	jobService, err := job.NewService(jobRepository, job.NewJSONLPartitioner(objects), parallelism)
 	if err != nil {
 		return err
 	}

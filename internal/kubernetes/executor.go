@@ -1,4 +1,4 @@
-// Package kubernetes executes Mill attempts as native Jobs on a configured node.
+// Package kubernetes executes Mill attempts as native Jobs.
 package kubernetes
 
 import (
@@ -24,11 +24,14 @@ import (
 )
 
 type Config struct {
-	Context   string
-	Namespace string
-	Node      string
-	LocalRoot string
-	NodeRoot  string
+	Context             string
+	Namespace           string
+	Node                string
+	LocalRoot           string
+	NodeRoot            string
+	S3Region            string
+	S3Endpoint          string
+	S3CredentialsSecret string
 }
 
 type Executor struct {
@@ -56,13 +59,28 @@ func New(config Config) (*Executor, error) {
 }
 
 func (c Config) validate() error {
-	if c.Context == "" || c.Namespace == "" || c.Node == "" {
-		return errors.New("Kubernetes context, namespace, and node must be explicit")
+	if c.Context == "" || c.Namespace == "" {
+		return errors.New("Kubernetes context and namespace must be explicit")
+	}
+	localFields := 0
+	for _, value := range []string{c.Node, c.LocalRoot, c.NodeRoot} {
+		if value != "" {
+			localFields++
+		}
+	}
+	if localFields != 0 && localFields != 3 {
+		return errors.New("Kubernetes node and local/node roots must be configured together")
 	}
 	for _, root := range []string{c.LocalRoot, c.NodeRoot} {
+		if root == "" {
+			continue
+		}
 		if !filepath.IsAbs(root) || filepath.Clean(root) == "/" || filepath.Clean(root) != root {
 			return errors.New("Kubernetes local/node roots must be clean absolute directories other than /")
 		}
+	}
+	if c.S3Endpoint != "" && c.S3Region == "" {
+		return errors.New("Kubernetes workload S3 region is required with a custom endpoint")
 	}
 	return nil
 }
@@ -114,20 +132,20 @@ func (e *Executor) Reconcile(ctx context.Context, claimed job.ClaimedAttempt) (c
 }
 
 func (e *Executor) manifest(claimed job.ClaimedAttempt) (*batchv1.Job, error) {
-	input, err := e.relativeURI(claimed.InputURI, "input")
+	inputURI, inputLocal, err := e.workloadURI(claimed.InputURI, "input")
 	if err != nil {
 		return nil, err
 	}
-	output, err := e.relativeURI(claimed.OutputURI, "output")
+	outputURI, outputLocal, err := e.workloadURI(claimed.OutputURI, "output")
 	if err != nil {
 		return nil, err
 	}
 	args, err := (workload.Invocation{
 		JobID: claimed.Attempt.JobID, TaskID: claimed.Attempt.TaskID,
 		ShardIndex:     claimed.ShardIndex,
-		InputURI:       (&url.URL{Scheme: "file", Path: filepath.Join("/data", input)}).String(),
+		InputURI:       inputURI,
 		InputStartByte: claimed.InputStartByte, InputEndByte: claimed.InputEndByte,
-		OutputURI:      (&url.URL{Scheme: "file", Path: filepath.Join("/output", output)}).String(),
+		OutputURI:      outputURI,
 		ExecutableArgs: claimed.Executable.Args,
 	}).CommandArgs()
 	if err != nil {
@@ -141,35 +159,81 @@ func (e *Executor) manifest(claimed job.ClaimedAttempt) (*batchv1.Job, error) {
 	deadline, user := int64(300), int64(65532)
 	yes, no := true, false
 	directory := corev1.HostPathDirectory
+	container := corev1.Container{
+		Name: "workload", Image: claimed.Executable.Image, ImagePullPolicy: corev1.PullNever, Args: args,
+		SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &no, ReadOnlyRootFilesystem: &yes,
+			Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("32Mi")},
+			Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("128Mi")}},
+	}
+	pod := corev1.PodSpec{
+		RestartPolicy:                corev1.RestartPolicyNever,
+		AutomountServiceAccountToken: &no,
+		SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &yes, RunAsUser: &user, RunAsGroup: &user,
+			SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
+	}
+	if inputLocal || outputLocal {
+		pod.NodeSelector = map[string]string{"kubernetes.io/hostname": e.config.Node}
+	}
+	if inputLocal {
+		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "input", MountPath: "/data", ReadOnly: true})
+		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: "input", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: filepath.Join(e.config.NodeRoot, "input"), Type: &directory}}})
+	}
+	if outputLocal {
+		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "output", MountPath: "/output"})
+		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: "output", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: filepath.Join(e.config.NodeRoot, "output"), Type: &directory}}})
+	}
+	if !inputLocal || !outputLocal {
+		container.Env = append(container.Env, corev1.EnvVar{Name: "AWS_REGION", Value: e.config.S3Region})
+		if e.config.S3Endpoint != "" {
+			container.Env = append(container.Env, corev1.EnvVar{Name: "MILL_S3_ENDPOINT", Value: e.config.S3Endpoint})
+		}
+		if e.config.S3CredentialsSecret != "" {
+			container.EnvFrom = append(container.EnvFrom, corev1.EnvFromSource{SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: e.config.S3CredentialsSecret},
+			}})
+		}
+	}
+	pod.Containers = []corev1.Container{container}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: "mill-" + claimed.Attempt.ID, Namespace: e.config.Namespace, Labels: labels},
 		Spec: batchv1.JobSpec{
 			Parallelism: &one, Completions: &one, BackoffLimit: &zero, ActiveDeadlineSeconds: &deadline,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
-				Spec: corev1.PodSpec{
-					RestartPolicy:                corev1.RestartPolicyNever,
-					AutomountServiceAccountToken: &no,
-					NodeSelector:                 map[string]string{"kubernetes.io/hostname": e.config.Node},
-					SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &yes, RunAsUser: &user, RunAsGroup: &user,
-						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
-					Containers: []corev1.Container{{
-						Name: "workload", Image: claimed.Executable.Image, ImagePullPolicy: corev1.PullNever, Args: args,
-						SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &no, ReadOnlyRootFilesystem: &yes,
-							Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
-						Resources: corev1.ResourceRequirements{
-							Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("32Mi")},
-							Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("128Mi")}},
-						VolumeMounts: []corev1.VolumeMount{{Name: "input", MountPath: "/data", ReadOnly: true}, {Name: "output", MountPath: "/output"}},
-					}},
-					Volumes: []corev1.Volume{
-						{Name: "input", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: filepath.Join(e.config.NodeRoot, "input"), Type: &directory}}},
-						{Name: "output", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: filepath.Join(e.config.NodeRoot, "output"), Type: &directory}}},
-					},
-				},
+				Spec:       pod,
 			},
 		},
 	}, nil
+}
+
+func (e *Executor) workloadURI(raw, directory string) (string, bool, error) {
+	u, err := url.ParseRequestURI(raw)
+	if err != nil {
+		return "", false, fmt.Errorf("parse %s URI: %w", directory, err)
+	}
+	if u.Scheme == "s3" {
+		if e.config.S3Region == "" {
+			return "", false, fmt.Errorf("%s uses S3 but Kubernetes workload S3 region is not configured", directory)
+		}
+		if u.Host == "" || strings.TrimPrefix(u.Path, "/") == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return "", false, fmt.Errorf("%s must use an absolute S3 object URI", directory)
+		}
+		return raw, false, nil
+	}
+	if e.config.Node == "" {
+		return "", false, fmt.Errorf("%s uses a local file but Kubernetes local storage is not configured", directory)
+	}
+	relative, err := e.relativeURI(raw, directory)
+	if err != nil {
+		return "", false, err
+	}
+	mountRoot := "/data"
+	if directory == "output" {
+		mountRoot = "/output"
+	}
+	return (&url.URL{Scheme: "file", Path: filepath.Join(mountRoot, relative)}).String(), true, nil
 }
 
 func (e *Executor) relativeURI(raw, directory string) (string, error) {

@@ -32,6 +32,16 @@ func TestDeriveAttemptOutputURI(t *testing.T) {
 	}
 }
 
+func TestDeriveS3AttemptOutputURI(t *testing.T) {
+	got, err := deriveAttemptOutputURI("s3://mill-output/jobs/job-1/", 7, "attempt-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "s3://mill-output/jobs/job-1/tasks/7/attempts/attempt-2/result.jsonl" {
+		t.Fatalf("output URI = %q", got)
+	}
+}
+
 func TestInvalidAttemptTransitionWrapsSentinel(t *testing.T) {
 	err := invalidAttemptTransition(AttemptStateCompleted, AttemptStateRunning)
 	if !errors.Is(err, ErrInvalidAttemptTransition) {

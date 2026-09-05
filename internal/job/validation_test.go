@@ -44,10 +44,10 @@ func TestNormalizeSubmissionRejectsInvalidFields(t *testing.T) {
 			},
 		},
 		{
-			name: "s3 input",
+			name: "unsupported input scheme",
 			submission: Submission{
 				Executable: Executable{Image: "mill/example:dev"},
-				Input:      InputSpec{URI: "s3://bucket/records.jsonl"},
+				Input:      InputSpec{URI: "https://example.com/records.jsonl"},
 			},
 		},
 		{
@@ -97,6 +97,21 @@ func TestNormalizeOutputRootAndDeriveOutputURI(t *testing.T) {
 	if outputURI != want {
 		t.Fatalf("output URI = %q, want %q", outputURI, want)
 	}
+
+	s3Root, err := normalizeOutputRootURI("s3://mill-results/prefix/")
+	if err != nil {
+		t.Fatalf("normalize S3 output root: %v", err)
+	}
+	if s3Root != "s3://mill-results/prefix" {
+		t.Fatalf("S3 root = %q", s3Root)
+	}
+	s3Output, err := deriveOutputRootURI(s3Root, "0198b7c9-1d24-7000-8000-000000000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s3Output != "s3://mill-results/prefix/jobs/0198b7c9-1d24-7000-8000-000000000001/" {
+		t.Fatalf("S3 output = %q", s3Output)
+	}
 }
 
 func TestNormalizeOutputRootRejectsUnsafeLocations(t *testing.T) {
@@ -104,7 +119,7 @@ func TestNormalizeOutputRootRejectsUnsafeLocations(t *testing.T) {
 		"file:///",
 		"file://server/output",
 		"relative/output",
-		"s3://bucket/output",
+		"https://example.com/output",
 		"file:///output?mode=test",
 	} {
 		t.Run(uri, func(t *testing.T) {

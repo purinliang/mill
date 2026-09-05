@@ -153,6 +153,28 @@ per task with a five-second delay between observed failure and retry eligibility
 Generic result aggregation remains future work; this script performs only the
 word-count-specific merge.
 
+## Run the whole batch through shared object storage
+
+```bash
+./scripts/demo-word-count-s3
+```
+
+This variation starts a temporary S3-compatible SeaweedFS container, uploads
+the same generated input as one `s3://` object, and configures both Mill and the
+workload Pods with endpoints they can reach. Mill plans 12 logical ranges by
+streaming the object, and every mapper performs an S3 byte-range read and writes
+its unique attempt result back to S3.
+
+Unlike the node-local batch, the generated Kubernetes Jobs contain neither
+hostPath volumes nor a fixed-node selector. The script checks that property,
+downloads only the 12 successful output URIs, merges them, and compares the
+result byte-for-byte with a local full-input run. The local S3 server is a
+compatibility fixture rather than an availability or performance claim.
+
+Temporary S3 credentials and the storage container are removed on exit. The
+printed run directory retains inputs, downloaded outputs, logs, final status,
+and storage data. Completed Kubernetes Jobs remain for inspection.
+
 ## Crash and restart the coordinator
 
 Run the process-boundary recovery demonstration with:

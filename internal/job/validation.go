@@ -57,11 +57,11 @@ func validateIdempotencyKey(key string) error {
 }
 
 func normalizeOutputRootURI(raw string) (string, error) {
-	return normalizeLocalFileURI(raw)
+	return normalizeObjectURI(raw, false)
 }
 
 func normalizeInputURI(raw string) (string, error) {
-	normalized, err := normalizeLocalFileURI(raw)
+	normalized, err := normalizeObjectURI(raw, true)
 	if err != nil {
 		return "", err
 	}
@@ -71,32 +71,50 @@ func normalizeInputURI(raw string) (string, error) {
 	return normalized, nil
 }
 
-func normalizeLocalFileURI(raw string) (string, error) {
+func normalizeObjectURI(raw string, requireObject bool) (string, error) {
 	if raw == "" || raw != strings.TrimSpace(raw) {
 		return "", fmt.Errorf("must be non-empty and have no surrounding whitespace")
 	}
-	if !strings.HasPrefix(raw, "file://") {
-		return "", fmt.Errorf("must be an absolute file:// URI")
-	}
-
 	parsed, err := url.ParseRequestURI(raw)
 	if err != nil {
 		return "", fmt.Errorf("must be a valid URI")
 	}
-	if parsed.Scheme != "file" || parsed.Host != "" || parsed.User != nil || parsed.Opaque != "" || !path.IsAbs(parsed.Path) {
-		return "", fmt.Errorf("must be an absolute local file:// URI")
-	}
 	if parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", fmt.Errorf("must not contain a query or fragment")
 	}
-
-	cleanPath := path.Clean(parsed.Path)
-	if cleanPath == "/" {
-		return "", fmt.Errorf("must not refer to the filesystem root")
+	if parsed.User != nil || parsed.Opaque != "" {
+		return "", fmt.Errorf("must be an absolute file:// or s3:// URI")
 	}
-	parsed.Path = cleanPath
-	parsed.RawPath = ""
-	return parsed.String(), nil
+	switch parsed.Scheme {
+	case "file":
+		if parsed.Host != "" || !path.IsAbs(parsed.Path) {
+			return "", fmt.Errorf("must be an absolute local file:// URI")
+		}
+		cleanPath := path.Clean(parsed.Path)
+		if cleanPath == "/" {
+			return "", fmt.Errorf("must not refer to the filesystem root")
+		}
+		parsed.Path = cleanPath
+		parsed.RawPath = ""
+		return parsed.String(), nil
+	case "s3":
+		if parsed.Host == "" || parsed.Port() != "" || strings.Contains(parsed.Host, ":") {
+			return "", fmt.Errorf("must contain one S3 bucket name")
+		}
+		key := strings.TrimPrefix(parsed.Path, "/")
+		if requireObject && key == "" {
+			return "", fmt.Errorf("must contain an S3 object key")
+		}
+		if key != "" {
+			parsed.Path = "/" + path.Clean(key)
+		} else {
+			parsed.Path = ""
+		}
+		parsed.RawPath = ""
+		return strings.TrimSuffix(parsed.String(), "/"), nil
+	default:
+		return "", fmt.Errorf("scheme must be file or s3")
+	}
 }
 
 func deriveOutputRootURI(outputRootURI, id string) (string, error) {

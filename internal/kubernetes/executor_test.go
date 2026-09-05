@@ -54,6 +54,41 @@ func TestManifestPreservesRangeAndSeparatesMounts(t *testing.T) {
 	}
 }
 
+func TestS3ManifestUsesSharedStorageWithoutNodePinOrVolumes(t *testing.T) {
+	config := Config{
+		Context: "kind-mill", Namespace: "default", S3Region: "us-east-1",
+		S3Endpoint: "http://172.18.0.8:9000", S3CredentialsSecret: "mill-s3-demo",
+	}
+	claim := testClaim()
+	claim.InputURI = "s3://mill-input/records.jsonl"
+	claim.OutputURI = "s3://mill-output/jobs/job-1/tasks/2/result.jsonl"
+	m, err := (&Executor{config: config}).manifest(claim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := m.Spec.Template.Spec
+	invocation, err := workload.ParseArgs(pod.Containers[0].Args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if invocation.InputURI != claim.InputURI || invocation.OutputURI != claim.OutputURI {
+		t.Fatalf("invocation = %+v", invocation)
+	}
+	if len(pod.NodeSelector) != 0 || len(pod.Volumes) != 0 || len(pod.Containers[0].VolumeMounts) != 0 {
+		t.Fatalf("S3 pod retained local placement: %+v", pod)
+	}
+	if len(pod.Containers[0].EnvFrom) != 1 || pod.Containers[0].EnvFrom[0].SecretRef.Name != "mill-s3-demo" {
+		t.Fatalf("credential source = %+v", pod.Containers[0].EnvFrom)
+	}
+	environment := map[string]string{}
+	for _, variable := range pod.Containers[0].Env {
+		environment[variable.Name] = variable.Value
+	}
+	if environment["AWS_REGION"] != "us-east-1" || environment["MILL_S3_ENDPOINT"] != "http://172.18.0.8:9000" {
+		t.Fatalf("environment = %+v", environment)
+	}
+}
+
 func TestRejectPathsOutsideConfiguredRoots(t *testing.T) {
 	e := Executor{config: testConfig()}
 	for _, uri := range []string{"s3://bucket/file", "file:///local/input/../../etc/passwd", "file:///local/inputs/file", "file:///local/input"} {
