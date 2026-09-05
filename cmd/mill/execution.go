@@ -42,6 +42,7 @@ func configureExecution(repository *job.Repository) (*executionLoop, error) {
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("Kubernetes executor instance=%s lease_duration=%s", leaseOwner, attemptLeaseDuration)
 	return &executionLoop{coordinator: &coordinator.Coordinator{
 		Store: repository, Executor: executor, Logger: log.Default(),
 		LeaseOwner: leaseOwner, LeaseDuration: attemptLeaseDuration,
