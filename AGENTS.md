@@ -19,6 +19,9 @@ pinning. `scripts/demo-word-count-batch` exercises the complete node-local
 control plane; its failure and restart modes test retry exhaustion and process
 recovery. Per-attempt PostgreSQL leases now provide renewable ownership,
 expired-owner takeover, and fencing tokens for all state mutations.
+The batch demo's `--replica-failover` mode runs two Mill processes concurrently,
+rejects premature lease stealing, kills the primary, and verifies fenced
+takeover of the same attempts and Kubernetes Jobs.
 `scripts/demo-word-count-s3` proves the shared-storage path against a disposable
 S3-compatible service and exact local baseline. `scripts/setup` provides a
 repeatable local kind environment.
@@ -102,6 +105,10 @@ operational and maintenance cost.
   process-boundary recovery test. It must use SIGKILL only on the child Mill PID,
   keep PostgreSQL and Kubernetes alive, compare stable attempt IDs and Job UIDs,
   reject duplicate attempts, and still verify the complete workload output.
+- Preserve `scripts/demo-word-count-batch --replica-failover` as the
+  simultaneous-process lease test. Both processes must overlap before SIGKILL;
+  the standby must not steal live leases, and takeover must change fencing
+  tokens without changing attempt IDs, external UIDs, or Kubernetes Jobs.
 - Do not implement a custom cluster scheduler when Kubernetes provides a
   suitable primitive. Initially map one Mill attempt to one Kubernetes Job so
   its arguments, output, and retry history remain independently observable.

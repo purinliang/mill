@@ -132,6 +132,20 @@ Job UIDs. The script records attempt history, failure logs, and identity
 snapshots in its printed temporary directory. Kubernetes Jobs remain until
 explicitly removed.
 
+Exercise two live coordinators and survivor takeover:
+
+```bash
+./scripts/demo-word-count-batch --replica-failover
+```
+
+The script first lets one process own three delayed attempts, then starts a
+second process on another loopback HTTP port. It proves that the second process
+cannot change the unexpired leases or create duplicate Jobs, kills the primary
+with SIGKILL, and verifies that the survivor receives new fencing tokens for
+the same attempt IDs and Kubernetes UIDs. The remaining shards complete through
+the survivor. Set `MILL_DEMO_SECONDARY_PORT` when the default primary port plus
+one is unavailable.
+
 ### Full S3-compatible batch
 
 ```bash

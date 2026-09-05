@@ -214,6 +214,25 @@ while Kubernetes remains healthy. It does not prove recovery from PostgreSQL
 loss, Kubernetes API partitions, node failure, deleted active Jobs, or every
 possible instruction-level crash window.
 
+## Run two coordinators and kill one
+
+Run the concurrent-process failover demonstration with:
+
+```bash
+./scripts/demo-word-count-batch --replica-failover
+```
+
+The script starts the primary, waits for three delayed attempts, and then starts
+a second Mill process against the same PostgreSQL database and Kubernetes
+cluster. Before failure, it verifies that both processes are healthy while the
+second process cannot steal unexpired leases or create duplicate Jobs. It kills
+the primary and accepts takeover only when the survivor replaces every fencing
+token while preserving the original task IDs, attempt IDs, external UIDs, and
+Kubernetes Jobs. The final 12 outputs must still match the local baseline.
+
+This proves process-level coordination and failover on one machine. It is not a
+multi-node Kubernetes, PostgreSQL failover, or network-partition test.
+
 ## Inject a failure and observe retries
 
 Start with the recoverable case:

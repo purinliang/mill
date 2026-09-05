@@ -87,6 +87,12 @@ Run the complete batch demonstration with node-local files:
 ./scripts/demo-word-count-batch
 ```
 
+Run two Mill processes and kill the active coordinator:
+
+```bash
+./scripts/demo-word-count-batch --replica-failover
+```
+
 Run the shared-storage demonstration:
 
 ```bash
@@ -124,14 +130,14 @@ Implemented:
 - durable attempt leases, renewal, expiry takeover, and stale-owner fencing;
 - deterministic Kubernetes identity and coordinator restart reconciliation;
 - trusted workload CLI contract and non-root example images;
-- local, container, single-task, full-batch, retry, restart, and S3-backed
-  word-count demonstrations; and
+- local, container, single-task, full-batch, retry, restart, replica-failover,
+  and S3-backed word-count demonstrations; and
 - exact result verification against a local baseline.
 
 Not implemented:
 
 - separate Job and executor services or gRPC;
-- a packaged multi-replica deployment and concurrent-process failure demo;
+- a packaged Kubernetes multi-replica deployment;
 - named workload resource classes;
 - replicated PostgreSQL or multi-node K3s deployment;
 - network-partition or physical-node failure tests;
@@ -166,8 +172,8 @@ parallelism, and expose successful output URIs.
 Bound retries, preserve attempt history, delay retry eligibility durably, and
 recover the same Kubernetes identities after coordinator process loss. Use
 durable leases to renew or transfer attempt ownership and reject stale state
-changes. Wider dispatch crash windows, resource deletion, concurrent-process
-demonstration, and network ambiguity remain.
+changes. Wider dispatch crash windows, resource deletion, long API stalls, and
+network ambiguity remain.
 
 ### 5 — Shared object storage — implemented locally
 

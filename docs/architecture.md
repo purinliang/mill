@@ -203,9 +203,10 @@ current unexpired token, so a stale process cannot finish work after ownership
 has moved. Exact terminal-transition replays with the same token remain
 idempotent.
 
-This database ownership mechanism is implemented and the process-level restart
-demo exercises expiry and takeover. A packaged multi-replica deployment and
-simultaneous-process fault demonstration remain planned.
+This database ownership mechanism is implemented. The process-level restart
+demo and the simultaneous two-process failover demo exercise expiry, takeover,
+and stable external identity. A packaged Kubernetes multi-replica deployment
+remains planned.
 
 ## Planned service boundary
 
