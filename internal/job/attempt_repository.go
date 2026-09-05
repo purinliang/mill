@@ -15,6 +15,7 @@ import (
 var (
 	ErrNoTaskAvailable          = errors.New("no task is available for execution")
 	ErrAttemptNotFound          = errors.New("attempt not found")
+	ErrAttemptLeaseLost         = errors.New("attempt lease is not active")
 	ErrInvalidAttemptTransition = errors.New("invalid attempt state transition")
 )
 
@@ -35,13 +36,20 @@ const attemptSelectByID = `
 		a.created_at,
 		a.started_at,
 		a.finished_at,
-		a.updated_at
+		a.updated_at,
+		a.lease_owner,
+		a.lease_token::text,
+		a.lease_expires_at
 	FROM public.attempts AS a
 	JOIN public.tasks AS t ON t.id = a.task_id
 	WHERE a.id = $1::uuid`
 
-func (r *Repository) ClaimNextAttempt(ctx context.Context, executor string) (ClaimedAttempt, error) {
+func (r *Repository) ClaimNextAttempt(ctx context.Context, executor, leaseOwner string, leaseDuration time.Duration) (ClaimedAttempt, error) {
 	if err := validateExecutor(executor); err != nil {
+		return ClaimedAttempt{}, err
+	}
+	leaseSeconds, err := validateLease(leaseOwner, leaseDuration)
+	if err != nil {
 		return ClaimedAttempt{}, err
 	}
 
@@ -125,12 +133,16 @@ func (r *Repository) ClaimNextAttempt(ctx context.Context, executor string) (Cla
 	}
 
 	err = tx.QueryRow(ctx, `
-		INSERT INTO public.attempts (task_id, attempt_number, executor)
-		SELECT $1::uuid, COALESCE(max(attempt_number), 0) + 1, $2
+		INSERT INTO public.attempts (
+			task_id, attempt_number, executor,
+			lease_owner, lease_token, lease_expires_at
+		)
+		SELECT $1::uuid, COALESCE(max(attempt_number), 0) + 1, $2,
+			$3, uuidv7(), clock_timestamp() + $4 * interval '1 second'
 		FROM public.attempts
 		WHERE task_id = $1::uuid
 		RETURNING id::text
-	`, claimed.Attempt.TaskID, executor).Scan(&claimed.Attempt.ID)
+	`, claimed.Attempt.TaskID, executor, leaseOwner, leaseSeconds).Scan(&claimed.Attempt.ID)
 	if err != nil {
 		return ClaimedAttempt{}, fmt.Errorf("create task attempt: %w", err)
 	}
@@ -181,9 +193,12 @@ func (r *Repository) GetAttempt(ctx context.Context, id string) (Attempt, error)
 	return attempt, nil
 }
 
-func (r *Repository) MarkAttemptRunning(ctx context.Context, id, externalID string) (Attempt, error) {
+func (r *Repository) MarkAttemptRunning(ctx context.Context, id, leaseToken, externalID string) (Attempt, error) {
 	if !validJobID(id) {
 		return Attempt{}, &ValidationError{Field: "attempt ID", Problem: "must be a UUID"}
+	}
+	if !validJobID(leaseToken) {
+		return Attempt{}, &ValidationError{Field: "lease token", Problem: "must be a UUID"}
 	}
 	if externalID == "" || externalID != strings.TrimSpace(externalID) || len(externalID) > 255 {
 		return Attempt{}, &ValidationError{Field: "external execution ID", Problem: "must be 1 to 255 bytes with no surrounding whitespace"}
@@ -195,7 +210,7 @@ func (r *Repository) MarkAttemptRunning(ctx context.Context, id, externalID stri
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	attempt, err := lockAttempt(ctx, tx, id)
+	attempt, leaseActive, err := lockAttemptForLease(ctx, tx, id, leaseToken)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Attempt{}, ErrAttemptNotFound
 	}
@@ -207,6 +222,9 @@ func (r *Repository) MarkAttemptRunning(ctx context.Context, id, externalID stri
 			return Attempt{}, fmt.Errorf("commit running attempt replay: %w", err)
 		}
 		return attempt, nil
+	}
+	if !leaseActive {
+		return Attempt{}, ErrAttemptLeaseLost
 	}
 	if attempt.State != AttemptStateStarting {
 		return Attempt{}, invalidAttemptTransition(attempt.State, AttemptStateRunning)
@@ -229,20 +247,23 @@ func (r *Repository) MarkAttemptRunning(ctx context.Context, id, externalID stri
 	return attempt, nil
 }
 
-func (r *Repository) CompleteAttempt(ctx context.Context, id string) (Attempt, error) {
-	return r.finishAttempt(ctx, id, AttemptStateCompleted, "")
+func (r *Repository) CompleteAttempt(ctx context.Context, id, leaseToken string) (Attempt, error) {
+	return r.finishAttempt(ctx, id, leaseToken, AttemptStateCompleted, "")
 }
 
-func (r *Repository) FailAttempt(ctx context.Context, id, failureMessage string) (Attempt, error) {
+func (r *Repository) FailAttempt(ctx context.Context, id, leaseToken, failureMessage string) (Attempt, error) {
 	if failureMessage == "" || strings.TrimSpace(failureMessage) == "" || len(failureMessage) > 4096 {
 		return Attempt{}, &ValidationError{Field: "failure message", Problem: "must be 1 to 4096 bytes and not blank"}
 	}
-	return r.finishAttempt(ctx, id, AttemptStateFailed, failureMessage)
+	return r.finishAttempt(ctx, id, leaseToken, AttemptStateFailed, failureMessage)
 }
 
-func (r *Repository) finishAttempt(ctx context.Context, id string, target AttemptState, failureMessage string) (Attempt, error) {
+func (r *Repository) finishAttempt(ctx context.Context, id, leaseToken string, target AttemptState, failureMessage string) (Attempt, error) {
 	if !validJobID(id) {
 		return Attempt{}, &ValidationError{Field: "attempt ID", Problem: "must be a UUID"}
+	}
+	if !validJobID(leaseToken) {
+		return Attempt{}, &ValidationError{Field: "lease token", Problem: "must be a UUID"}
 	}
 
 	tx, err := r.database.Begin(ctx)
@@ -251,7 +272,7 @@ func (r *Repository) finishAttempt(ctx context.Context, id string, target Attemp
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	attempt, err := lockAttempt(ctx, tx, id)
+	attempt, leaseActive, err := lockAttemptForLease(ctx, tx, id, leaseToken)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Attempt{}, ErrAttemptNotFound
 	}
@@ -263,6 +284,9 @@ func (r *Repository) finishAttempt(ctx context.Context, id string, target Attemp
 			return Attempt{}, fmt.Errorf("commit finished attempt replay: %w", err)
 		}
 		return attempt, nil
+	}
+	if !leaseActive {
+		return Attempt{}, ErrAttemptLeaseLost
 	}
 	if target == AttemptStateCompleted && attempt.State != AttemptStateRunning {
 		return Attempt{}, invalidAttemptTransition(attempt.State, target)
@@ -345,9 +369,28 @@ func lockAttempt(ctx context.Context, tx pgx.Tx, id string) (Attempt, error) {
 	return scanAttempt(tx.QueryRow(ctx, attemptSelectByID+" FOR UPDATE OF a", id))
 }
 
+func lockAttemptForLease(ctx context.Context, tx pgx.Tx, id, leaseToken string) (Attempt, bool, error) {
+	attempt, err := lockAttempt(ctx, tx, id)
+	if err != nil {
+		return Attempt{}, false, err
+	}
+	if attempt.LeaseToken != leaseToken {
+		return Attempt{}, false, ErrAttemptLeaseLost
+	}
+	var active bool
+	if err := tx.QueryRow(ctx, `
+		SELECT lease_expires_at > clock_timestamp()
+		FROM public.attempts
+		WHERE id = $1::uuid
+	`, id).Scan(&active); err != nil {
+		return Attempt{}, false, err
+	}
+	return attempt, active, nil
+}
+
 func scanAttempt(row pgx.Row) (Attempt, error) {
 	var attempt Attempt
-	var externalID, failureMessage *string
+	var externalID, failureMessage, leaseOwner, leaseToken *string
 	if err := row.Scan(
 		&attempt.ID,
 		&attempt.JobID,
@@ -361,6 +404,9 @@ func scanAttempt(row pgx.Row) (Attempt, error) {
 		&attempt.StartedAt,
 		&attempt.FinishedAt,
 		&attempt.UpdatedAt,
+		&leaseOwner,
+		&leaseToken,
+		&attempt.LeaseExpiresAt,
 	); err != nil {
 		return Attempt{}, err
 	}
@@ -370,9 +416,16 @@ func scanAttempt(row pgx.Row) (Attempt, error) {
 	if failureMessage != nil {
 		attempt.FailureMessage = *failureMessage
 	}
+	if leaseOwner != nil {
+		attempt.LeaseOwner = *leaseOwner
+	}
+	if leaseToken != nil {
+		attempt.LeaseToken = *leaseToken
+	}
 	attempt.CreatedAt = attempt.CreatedAt.UTC()
 	attempt.StartedAt = utcTime(attempt.StartedAt)
 	attempt.FinishedAt = utcTime(attempt.FinishedAt)
+	attempt.LeaseExpiresAt = utcTime(attempt.LeaseExpiresAt)
 	attempt.UpdatedAt = attempt.UpdatedAt.UTC()
 	return attempt, nil
 }
@@ -390,6 +443,16 @@ func validateExecutor(executor string) error {
 		return &ValidationError{Field: "executor", Problem: "must be 1 to 63 bytes with no surrounding whitespace"}
 	}
 	return nil
+}
+
+func validateLease(owner string, duration time.Duration) (int64, error) {
+	if owner == "" || owner != strings.TrimSpace(owner) || len(owner) > 255 {
+		return 0, &ValidationError{Field: "lease owner", Problem: "must be 1 to 255 bytes with no surrounding whitespace"}
+	}
+	if duration < time.Second || duration > 5*time.Minute || duration%time.Second != 0 {
+		return 0, &ValidationError{Field: "lease duration", Problem: "must be a whole number of seconds between 1 second and 5 minutes"}
+	}
+	return int64(duration / time.Second), nil
 }
 
 func deriveAttemptOutputURI(outputRootURI string, shardIndex int, attemptID string) (string, error) {

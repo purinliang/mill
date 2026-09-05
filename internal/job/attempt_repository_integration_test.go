@@ -6,12 +6,16 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
+
+const testLeaseOwner = "test-executor"
+const testLeaseDuration = 30 * time.Second
 
 func TestAttemptSuccessfulLifecycle(t *testing.T) {
 	repository, job := createAttemptTestJob(t, "integration:attempt-success", 1, 1)
 
-	claimed, err := repository.ClaimNextAttempt(context.Background(), "docker")
+	claimed, err := repository.ClaimNextAttempt(context.Background(), "docker", testLeaseOwner, testLeaseDuration)
 	if err != nil {
 		t.Fatalf("claim attempt: %v", err)
 	}
@@ -36,35 +40,35 @@ func TestAttemptSuccessfulLifecycle(t *testing.T) {
 	if progress.Progress != (Progress{Total: 1, Running: 1}) {
 		t.Errorf("claimed progress = %+v, want one running task", progress.Progress)
 	}
-	if _, err := repository.ClaimNextAttempt(context.Background(), "docker"); !errors.Is(err, ErrNoTaskAvailable) {
+	if _, err := repository.ClaimNextAttempt(context.Background(), "docker", testLeaseOwner, testLeaseDuration); !errors.Is(err, ErrNoTaskAvailable) {
 		t.Fatalf("second claim error = %v, want %v", err, ErrNoTaskAvailable)
 	}
 
-	running, err := repository.MarkAttemptRunning(context.Background(), claimed.Attempt.ID, "container-001")
+	running, err := repository.MarkAttemptRunning(context.Background(), claimed.Attempt.ID, claimed.Attempt.LeaseToken, "container-001")
 	if err != nil {
 		t.Fatalf("mark attempt running: %v", err)
 	}
 	if running.State != AttemptStateRunning || running.ExternalID != "container-001" || running.StartedAt == nil || running.FinishedAt != nil {
 		t.Errorf("running attempt = %+v", running)
 	}
-	if _, err := repository.MarkAttemptRunning(context.Background(), running.ID, "container-001"); err != nil {
+	if _, err := repository.MarkAttemptRunning(context.Background(), running.ID, running.LeaseToken, "container-001"); err != nil {
 		t.Fatalf("replay running transition: %v", err)
 	}
-	if _, err := repository.MarkAttemptRunning(context.Background(), running.ID, "different-container"); !errors.Is(err, ErrInvalidAttemptTransition) {
+	if _, err := repository.MarkAttemptRunning(context.Background(), running.ID, running.LeaseToken, "different-container"); !errors.Is(err, ErrInvalidAttemptTransition) {
 		t.Fatalf("changed external ID error = %v, want %v", err, ErrInvalidAttemptTransition)
 	}
 
-	completed, err := repository.CompleteAttempt(context.Background(), running.ID)
+	completed, err := repository.CompleteAttempt(context.Background(), running.ID, running.LeaseToken)
 	if err != nil {
 		t.Fatalf("complete attempt: %v", err)
 	}
 	if completed.State != AttemptStateCompleted || completed.StartedAt == nil || completed.FinishedAt == nil {
 		t.Errorf("completed attempt = %+v", completed)
 	}
-	if _, err := repository.CompleteAttempt(context.Background(), completed.ID); err != nil {
+	if _, err := repository.CompleteAttempt(context.Background(), completed.ID, completed.LeaseToken); err != nil {
 		t.Fatalf("replay completed transition: %v", err)
 	}
-	if _, err := repository.FailAttempt(context.Background(), completed.ID, "too late"); !errors.Is(err, ErrInvalidAttemptTransition) {
+	if _, err := repository.FailAttempt(context.Background(), completed.ID, completed.LeaseToken, "too late"); !errors.Is(err, ErrInvalidAttemptTransition) {
 		t.Fatalf("completed-to-failed error = %v, want %v", err, ErrInvalidAttemptTransition)
 	}
 
@@ -76,12 +80,12 @@ func TestAttemptSuccessfulLifecycle(t *testing.T) {
 
 func TestAttemptCanFailBeforeExternalExecutionStarts(t *testing.T) {
 	repository, job := createAttemptTestJob(t, "integration:attempt-start-failure", 1, 1)
-	claimed, err := repository.ClaimNextAttempt(context.Background(), "docker")
+	claimed, err := repository.ClaimNextAttempt(context.Background(), "docker", testLeaseOwner, testLeaseDuration)
 	if err != nil {
 		t.Fatalf("claim attempt: %v", err)
 	}
 
-	failed, err := repository.FailAttempt(context.Background(), claimed.Attempt.ID, "Docker create failed")
+	failed, err := repository.FailAttempt(context.Background(), claimed.Attempt.ID, claimed.Attempt.LeaseToken, "Docker create failed")
 	if err != nil {
 		t.Fatalf("fail starting attempt: %v", err)
 	}
@@ -96,7 +100,7 @@ func TestAttemptCanFailBeforeExternalExecutionStarts(t *testing.T) {
 	if failedJob.State != StateRunning || failedJob.Progress != (Progress{Total: 1, Pending: 1}) {
 		t.Errorf("job after attempt failure = state %q progress %+v, want running with pending retry", failedJob.State, failedJob.Progress)
 	}
-	if _, err := repository.MarkAttemptRunning(context.Background(), failed.ID, "container-001"); !errors.Is(err, ErrInvalidAttemptTransition) {
+	if _, err := repository.MarkAttemptRunning(context.Background(), failed.ID, failed.LeaseToken, "container-001"); !errors.Is(err, ErrInvalidAttemptTransition) {
 		t.Fatalf("failed-to-running error = %v, want %v", err, ErrInvalidAttemptTransition)
 	}
 }
@@ -104,28 +108,28 @@ func TestAttemptCanFailBeforeExternalExecutionStarts(t *testing.T) {
 func TestAttemptClaimsRespectJobParallelism(t *testing.T) {
 	repository, _ := createAttemptTestJob(t, "integration:attempt-parallelism", 5, 2)
 
-	first, err := repository.ClaimNextAttempt(context.Background(), "docker")
+	first, err := repository.ClaimNextAttempt(context.Background(), "docker", testLeaseOwner, testLeaseDuration)
 	if err != nil {
 		t.Fatalf("claim first attempt: %v", err)
 	}
-	second, err := repository.ClaimNextAttempt(context.Background(), "docker")
+	second, err := repository.ClaimNextAttempt(context.Background(), "docker", testLeaseOwner, testLeaseDuration)
 	if err != nil {
 		t.Fatalf("claim second attempt: %v", err)
 	}
 	if first.ShardIndex != 0 || second.ShardIndex != 1 {
 		t.Errorf("claimed shard indexes = %d, %d, want 0, 1", first.ShardIndex, second.ShardIndex)
 	}
-	if _, err := repository.ClaimNextAttempt(context.Background(), "docker"); !errors.Is(err, ErrNoTaskAvailable) {
+	if _, err := repository.ClaimNextAttempt(context.Background(), "docker", testLeaseOwner, testLeaseDuration); !errors.Is(err, ErrNoTaskAvailable) {
 		t.Fatalf("claim beyond parallelism error = %v, want %v", err, ErrNoTaskAvailable)
 	}
 
-	if _, err := repository.MarkAttemptRunning(context.Background(), first.Attempt.ID, "container-001"); err != nil {
+	if _, err := repository.MarkAttemptRunning(context.Background(), first.Attempt.ID, first.Attempt.LeaseToken, "container-001"); err != nil {
 		t.Fatalf("mark first attempt running: %v", err)
 	}
-	if _, err := repository.CompleteAttempt(context.Background(), first.Attempt.ID); err != nil {
+	if _, err := repository.CompleteAttempt(context.Background(), first.Attempt.ID, first.Attempt.LeaseToken); err != nil {
 		t.Fatalf("complete first attempt: %v", err)
 	}
-	third, err := repository.ClaimNextAttempt(context.Background(), "docker")
+	third, err := repository.ClaimNextAttempt(context.Background(), "docker", testLeaseOwner, testLeaseDuration)
 	if err != nil {
 		t.Fatalf("claim after capacity is released: %v", err)
 	}
@@ -136,18 +140,18 @@ func TestAttemptClaimsRespectJobParallelism(t *testing.T) {
 
 func TestConcurrentAttemptCompletionFinalizesJob(t *testing.T) {
 	repository, job := createAttemptTestJob(t, "integration:attempt-concurrent-completion", 2, 2)
-	first, err := repository.ClaimNextAttempt(context.Background(), "docker")
+	first, err := repository.ClaimNextAttempt(context.Background(), "docker", testLeaseOwner, testLeaseDuration)
 	if err != nil {
 		t.Fatalf("claim first attempt: %v", err)
 	}
-	second, err := repository.ClaimNextAttempt(context.Background(), "docker")
+	second, err := repository.ClaimNextAttempt(context.Background(), "docker", testLeaseOwner, testLeaseDuration)
 	if err != nil {
 		t.Fatalf("claim second attempt: %v", err)
 	}
-	if _, err := repository.MarkAttemptRunning(context.Background(), first.Attempt.ID, "container-001"); err != nil {
+	if _, err := repository.MarkAttemptRunning(context.Background(), first.Attempt.ID, first.Attempt.LeaseToken, "container-001"); err != nil {
 		t.Fatalf("mark first attempt running: %v", err)
 	}
-	if _, err := repository.MarkAttemptRunning(context.Background(), second.Attempt.ID, "container-002"); err != nil {
+	if _, err := repository.MarkAttemptRunning(context.Background(), second.Attempt.ID, second.Attempt.LeaseToken, "container-002"); err != nil {
 		t.Fatalf("mark second attempt running: %v", err)
 	}
 
@@ -159,7 +163,11 @@ func TestConcurrentAttemptCompletionFinalizesJob(t *testing.T) {
 		go func() {
 			defer completed.Done()
 			<-start
-			_, err := repository.CompleteAttempt(context.Background(), attemptID)
+			leaseToken := first.Attempt.LeaseToken
+			if attemptID == second.Attempt.ID {
+				leaseToken = second.Attempt.LeaseToken
+			}
+			_, err := repository.CompleteAttempt(context.Background(), attemptID, leaseToken)
 			errorsByAttempt <- err
 		}()
 	}

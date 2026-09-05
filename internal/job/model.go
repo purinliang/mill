@@ -85,6 +85,9 @@ type Attempt struct {
 	StartedAt      *time.Time
 	FinishedAt     *time.Time
 	UpdatedAt      time.Time
+	LeaseOwner     string
+	LeaseToken     string
+	LeaseExpiresAt *time.Time
 }
 
 type ClaimedAttempt struct {

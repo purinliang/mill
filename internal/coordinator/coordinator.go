@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/purinliang/mill/internal/job"
 )
@@ -13,11 +14,11 @@ import (
 const ExecutorName = "kubernetes"
 
 type Store interface {
-	ActiveAttempts(context.Context, string) ([]job.ClaimedAttempt, error)
-	ClaimNextAttempt(context.Context, string) (job.ClaimedAttempt, error)
-	MarkAttemptRunning(context.Context, string, string) (job.Attempt, error)
-	CompleteAttempt(context.Context, string) (job.Attempt, error)
-	FailAttempt(context.Context, string, string) (job.Attempt, error)
+	LeaseActiveAttempts(context.Context, string, string, time.Duration) ([]job.ClaimedAttempt, error)
+	ClaimNextAttempt(context.Context, string, string, time.Duration) (job.ClaimedAttempt, error)
+	MarkAttemptRunning(context.Context, string, string, string) (job.Attempt, error)
+	CompleteAttempt(context.Context, string, string) (job.Attempt, error)
+	FailAttempt(context.Context, string, string, string) (job.Attempt, error)
 }
 
 type Observation struct {
@@ -31,16 +32,18 @@ type Executor interface {
 }
 
 type Coordinator struct {
-	Store    Store
-	Executor Executor
-	Logger   *log.Logger
+	Store         Store
+	Executor      Executor
+	Logger        *log.Logger
+	LeaseOwner    string
+	LeaseDuration time.Duration
 }
 
 // Tick observes every active attempt before filling newly available slots.
 // An API error is ambiguous: retain durable intent and retry observation on
 // the next tick, instead of declaring failure and potentially duplicating work.
 func (c *Coordinator) Tick(ctx context.Context) error {
-	active, err := c.Store.ActiveAttempts(ctx, ExecutorName)
+	active, err := c.Store.LeaseActiveAttempts(ctx, ExecutorName, c.LeaseOwner, c.LeaseDuration)
 	if err != nil {
 		return err
 	}
@@ -55,7 +58,7 @@ func (c *Coordinator) Tick(ctx context.Context) error {
 	}
 	// Bound each tick so a backlog across many jobs cannot starve observation.
 	for range 100 {
-		attempt, err := c.Store.ClaimNextAttempt(ctx, ExecutorName)
+		attempt, err := c.Store.ClaimNextAttempt(ctx, ExecutorName, c.LeaseOwner, c.LeaseDuration)
 		if errors.Is(err, job.ErrNoTaskAvailable) {
 			return nil
 		}
@@ -76,21 +79,22 @@ func (c *Coordinator) reconcile(ctx context.Context, claimed job.ClaimedAttempt)
 		return fmt.Errorf("reconcile attempt %s: %w", claimed.Attempt.ID, err)
 	}
 	id := claimed.Attempt.ID
+	leaseToken := claimed.Attempt.LeaseToken
 	if observed.ExternalID != "" && claimed.Attempt.State == job.AttemptStateStarting {
-		if _, err := c.Store.MarkAttemptRunning(ctx, id, observed.ExternalID); err != nil {
+		if _, err := c.Store.MarkAttemptRunning(ctx, id, leaseToken, observed.ExternalID); err != nil {
 			return err
 		}
 		c.Logger.Printf("dispatched job=%s shard=%d attempt=%s external=%s", claimed.Attempt.JobID, claimed.ShardIndex, id, observed.ExternalID)
 	}
 	if observed.Failure != "" {
-		_, err = c.Store.FailAttempt(ctx, id, observed.Failure)
+		_, err = c.Store.FailAttempt(ctx, id, leaseToken, observed.Failure)
 		if err == nil {
 			c.Logger.Printf("attempt_failed job=%s shard=%d attempt=%s number=%d reason=%s", claimed.Attempt.JobID, claimed.ShardIndex, id, claimed.Attempt.Number, observed.Failure)
 		}
 		return err
 	}
 	if observed.Completed {
-		_, err = c.Store.CompleteAttempt(ctx, id)
+		_, err = c.Store.CompleteAttempt(ctx, id, leaseToken)
 		if err == nil {
 			c.Logger.Printf("completed job=%s shard=%d attempt=%s", claimed.Attempt.JobID, claimed.ShardIndex, id)
 		}

@@ -13,10 +13,10 @@ func TestRetryKeepsHistoryDelayAndSuccessfulOutput(t *testing.T) {
 	r, created := createAttemptTestJob(t, "integration:retry-success", 1, 1)
 	ctx := context.Background()
 	first := claimRetryTestAttempt(t, r)
-	if _, err := r.MarkAttemptRunning(ctx, first.Attempt.ID, "first-uid"); err != nil {
+	if _, err := r.MarkAttemptRunning(ctx, first.Attempt.ID, first.Attempt.LeaseToken, "first-uid"); err != nil {
 		t.Fatal(err)
 	}
-	failed, err := r.FailAttempt(ctx, first.Attempt.ID, "injected exit 1")
+	failed, err := r.FailAttempt(ctx, first.Attempt.ID, first.Attempt.LeaseToken, "injected exit 1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,10 +31,10 @@ func TestRetryKeepsHistoryDelayAndSuccessfulOutput(t *testing.T) {
 	if status.State != StateRunning || status.Progress != (Progress{Total: 1, Pending: 1}) {
 		t.Fatalf("retrying task counted as terminal failure: %+v", status)
 	}
-	if _, err := r.ClaimNextAttempt(ctx, "kubernetes"); !errors.Is(err, ErrNoTaskAvailable) {
+	if _, err := r.ClaimNextAttempt(ctx, "kubernetes", testLeaseOwner, testLeaseDuration); !errors.Is(err, ErrNoTaskAvailable) {
 		t.Fatalf("claimed before delay elapsed: %v", err)
 	}
-	if _, err := r.FailAttempt(ctx, first.Attempt.ID, "duplicate observation"); err != nil {
+	if _, err := r.FailAttempt(ctx, first.Attempt.ID, first.Attempt.LeaseToken, "duplicate observation"); err != nil {
 		t.Fatal(err)
 	}
 	var replayAvailable time.Time
@@ -54,21 +54,21 @@ func TestRetryKeepsHistoryDelayAndSuccessfulOutput(t *testing.T) {
 	if second.Attempt.Number != 2 || second.Attempt.TaskID != first.Attempt.TaskID || second.OutputURI == first.OutputURI || second.Attempt.ID == first.Attempt.ID {
 		t.Fatalf("retry did not preserve task and replace attempt/output: %+v", second)
 	}
-	active, err := restarted.ActiveAttempts(ctx, "kubernetes")
+	active, err := restarted.LeaseActiveAttempts(ctx, "kubernetes", testLeaseOwner, testLeaseDuration)
 	if err != nil || len(active) != 1 || active[0].Attempt.Number != 2 {
 		t.Fatalf("reconstructed retry=%+v err=%v", active, err)
 	}
 	// A stale failure must not move the new running attempt back to pending.
-	if _, err := r.FailAttempt(ctx, first.Attempt.ID, "stale observation"); err != nil {
+	if _, err := r.FailAttempt(ctx, first.Attempt.ID, first.Attempt.LeaseToken, "stale observation"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.ClaimNextAttempt(ctx, "kubernetes"); !errors.Is(err, ErrNoTaskAvailable) {
+	if _, err := r.ClaimNextAttempt(ctx, "kubernetes", testLeaseOwner, testLeaseDuration); !errors.Is(err, ErrNoTaskAvailable) {
 		t.Fatalf("duplicate retry claim: %v", err)
 	}
-	if _, err := restarted.MarkAttemptRunning(ctx, second.Attempt.ID, "second-uid"); err != nil {
+	if _, err := restarted.MarkAttemptRunning(ctx, second.Attempt.ID, second.Attempt.LeaseToken, "second-uid"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := restarted.CompleteAttempt(ctx, second.Attempt.ID); err != nil {
+	if _, err := restarted.CompleteAttempt(ctx, second.Attempt.ID, second.Attempt.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
 	status = getAttemptTestJob(t, r, created.ID)
@@ -95,16 +95,16 @@ func TestRetryLimitFailsJobAndDrainsActiveWork(t *testing.T) {
 		if current.Attempt.Number != number || current.Attempt.TaskID != first.Attempt.TaskID {
 			t.Fatalf("wrong retry: %+v", current)
 		}
-		if _, err := r.MarkAttemptRunning(ctx, current.Attempt.ID, fmt.Sprintf("uid-%d", number)); err != nil {
+		if _, err := r.MarkAttemptRunning(ctx, current.Attempt.ID, current.Attempt.LeaseToken, fmt.Sprintf("uid-%d", number)); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := r.FailAttempt(ctx, current.Attempt.ID, "permanent failure"); err != nil {
+		if _, err := r.FailAttempt(ctx, current.Attempt.ID, current.Attempt.LeaseToken, "permanent failure"); err != nil {
 			t.Fatal(err)
 		}
 		if number < MaxTaskAttempts {
 			makeRetryAvailable(t, r, first.Attempt.TaskID)
 			current = claimRetryTestAttempt(t, r)
-			if _, err := r.ClaimNextAttempt(ctx, "kubernetes"); !errors.Is(err, ErrNoTaskAvailable) {
+			if _, err := r.ClaimNextAttempt(ctx, "kubernetes", testLeaseOwner, testLeaseDuration); !errors.Is(err, ErrNoTaskAvailable) {
 				t.Fatalf("retry exceeded parallelism: %v", err)
 			}
 		}
@@ -113,15 +113,15 @@ func TestRetryLimitFailsJobAndDrainsActiveWork(t *testing.T) {
 	if status.State != StateFailed || status.Progress != (Progress{Total: 3, Failed: 1, Running: 1, Pending: 1}) {
 		t.Fatalf("exhausted job=%+v", status)
 	}
-	if _, err := r.ClaimNextAttempt(ctx, "kubernetes"); !errors.Is(err, ErrNoTaskAvailable) {
+	if _, err := r.ClaimNextAttempt(ctx, "kubernetes", testLeaseOwner, testLeaseDuration); !errors.Is(err, ErrNoTaskAvailable) {
 		t.Fatalf("failed job dispatched work: %v", err)
 	}
-	active, err := r.ActiveAttempts(ctx, "kubernetes")
+	active, err := r.LeaseActiveAttempts(ctx, "kubernetes", testLeaseOwner, testLeaseDuration)
 	if err != nil || len(active) != 1 || active[0].Attempt.ID != sibling.Attempt.ID {
 		t.Fatalf("lost active sibling: %+v %v", active, err)
 	}
 	// Even a first attempt must not queue a retry after another task fails the job.
-	if _, err := r.FailAttempt(ctx, sibling.Attempt.ID, "sibling failed too"); err != nil {
+	if _, err := r.FailAttempt(ctx, sibling.Attempt.ID, sibling.Attempt.LeaseToken, "sibling failed too"); err != nil {
 		t.Fatal(err)
 	}
 	status = getAttemptTestJob(t, r, created.ID)
@@ -138,7 +138,7 @@ func TestWaitingRetryAllowsOtherTasksAndConcurrentClaimsStayUnique(t *testing.T)
 	r, _ := createAttemptTestJob(t, "integration:retry-capacity", 2, 1)
 	ctx := context.Background()
 	first := claimRetryTestAttempt(t, r)
-	if _, err := r.FailAttempt(ctx, first.Attempt.ID, "failure"); err != nil {
+	if _, err := r.FailAttempt(ctx, first.Attempt.ID, first.Attempt.LeaseToken, "failure"); err != nil {
 		t.Fatal(err)
 	}
 	next := claimRetryTestAttempt(t, r)
@@ -146,20 +146,20 @@ func TestWaitingRetryAllowsOtherTasksAndConcurrentClaimsStayUnique(t *testing.T)
 		t.Fatal("waiting retry blocked an untouched task")
 	}
 	makeRetryAvailable(t, r, first.Attempt.TaskID)
-	if _, err := r.ClaimNextAttempt(ctx, "kubernetes"); !errors.Is(err, ErrNoTaskAvailable) {
+	if _, err := r.ClaimNextAttempt(ctx, "kubernetes", testLeaseOwner, testLeaseDuration); !errors.Is(err, ErrNoTaskAvailable) {
 		t.Fatalf("due retry ignored occupied slot: %v", err)
 	}
-	if _, err := r.MarkAttemptRunning(ctx, next.Attempt.ID, "uid"); err != nil {
+	if _, err := r.MarkAttemptRunning(ctx, next.Attempt.ID, next.Attempt.LeaseToken, "uid"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.CompleteAttempt(ctx, next.Attempt.ID); err != nil {
+	if _, err := r.CompleteAttempt(ctx, next.Attempt.ID, next.Attempt.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
 	results := make(chan error, 2)
 	for range 2 {
 		wg.Go(func() {
-			_, err := r.ClaimNextAttempt(ctx, "kubernetes")
+			_, err := r.ClaimNextAttempt(ctx, "kubernetes", testLeaseOwner, testLeaseDuration)
 			results <- err
 		})
 	}
@@ -180,7 +180,7 @@ func TestWaitingRetryAllowsOtherTasksAndConcurrentClaimsStayUnique(t *testing.T)
 
 func claimRetryTestAttempt(t *testing.T, r *Repository) ClaimedAttempt {
 	t.Helper()
-	a, err := r.ClaimNextAttempt(context.Background(), "kubernetes")
+	a, err := r.ClaimNextAttempt(context.Background(), "kubernetes", testLeaseOwner, testLeaseDuration)
 	if err != nil {
 		t.Fatal(err)
 	}

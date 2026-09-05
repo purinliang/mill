@@ -82,12 +82,9 @@ func run(ctx context.Context, address, databaseURL, outputRootURI, parallelismVa
 		return err
 	}
 	jobHandler := job.NewHandler(jobService, log.Default())
-	executionLoop, err := configureExecution(ctx, databaseURL, jobRepository)
+	executionLoop, err := configureExecution(jobRepository)
 	if err != nil {
 		return err
-	}
-	if executionLoop != nil {
-		defer executionLoop.close()
 	}
 
 	server := &http.Server{

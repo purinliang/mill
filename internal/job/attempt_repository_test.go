@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateExecutor(t *testing.T) {
@@ -14,6 +15,27 @@ func TestValidateExecutor(t *testing.T) {
 	}
 	if err := validateExecutor("docker"); err != nil {
 		t.Fatalf("validate Docker executor: %v", err)
+	}
+}
+
+func TestValidateLease(t *testing.T) {
+	for _, test := range []struct {
+		owner    string
+		duration time.Duration
+	}{
+		{"", 15 * time.Second},
+		{" executor", 15 * time.Second},
+		{strings.Repeat("x", 256), 15 * time.Second},
+		{"executor", 0},
+		{"executor", 1500 * time.Millisecond},
+		{"executor", 6 * time.Minute},
+	} {
+		if _, err := validateLease(test.owner, test.duration); err == nil {
+			t.Errorf("validateLease(%q, %s) succeeded", test.owner, test.duration)
+		}
+	}
+	if seconds, err := validateLease("executor", 15*time.Second); err != nil || seconds != 15 {
+		t.Fatalf("valid lease = %d, %v", seconds, err)
 	}
 }
 
