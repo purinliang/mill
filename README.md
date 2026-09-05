@@ -49,12 +49,13 @@ expired lease while preserving the attempt and Kubernetes Job identity. For
 S3-backed jobs, Pods need no hostPath volume or fixed-node selector and can use
 shared object storage from any eligible node.
 
-The planned service architecture separates a replicated Job service from
-replicated executor workers. The Job service will retain the planner and sole
-ownership of metadata tables; executors will claim and report leased attempts
-through an internal Protobuf/gRPC API. This is planned, not implemented. See
-[Architecture](docs/architecture.md) for the domain model, correctness rules,
-resource-class proposal, and availability design.
+The next service architecture separates a replicated Job service from
+replicated executor workers. The backend-independent execution contract and a
+versioned Protobuf/gRPC client/server adapter are implemented and tested over
+an in-memory connection. Runtime deployment is still one process using a
+direct repository adapter: no separate services or network listener exist yet.
+See [Architecture](docs/architecture.md) for the domain model, correctness
+rules, resource-class proposal, and availability design.
 
 ## V1 scope
 
@@ -128,6 +129,8 @@ Implemented:
 - one native Kubernetes Job per attempt through the official Go client;
 - bounded retries with durable five-second delay and separate attempt outputs;
 - durable attempt leases, renewal, expiry takeover, and stale-owner fencing;
+- backend-independent execution types and store contract;
+- versioned execution Protobuf schema and tested gRPC client/server adapters;
 - deterministic Kubernetes identity and coordinator restart reconciliation;
 - trusted workload CLI contract and non-root example images;
 - local, container, single-task, full-batch, retry, restart, replica-failover,
@@ -136,7 +139,8 @@ Implemented:
 
 Not implemented:
 
-- separate Job and executor services or gRPC;
+- separately runnable Job and executor services, RPC listener configuration,
+  and service authentication;
 - a packaged Kubernetes multi-replica deployment;
 - named workload resource classes;
 - replicated PostgreSQL or multi-node K3s deployment;
@@ -181,14 +185,14 @@ Read and plan JSONL through S3-compatible storage, use HTTP byte-range requests
 inside workload Pods, and publish unique attempt outputs without hostPath or
 node pinning. Real AWS S3 remains untested.
 
-### 6 — Service boundary and resource classes — planned
+### 6 — Service boundary and resource classes — in progress
 
-Split the current process into a replicated Job service and replicated executor
-workers. Keep planning inside the Job service, make it the sole metadata owner,
-and expose the existing lease operations through a versioned Protobuf/gRPC
-domain API. Add optional named
-`small`, `medium`, and `large` workload classes; persist their resolved
-resources so retries remain stable.
+The pure execution domain contract and versioned Protobuf/gRPC adapters are
+implemented. Next, split the current process into separately runnable Job and
+executor services: keep planning and the lease-policy backend inside the Job
+service, and make executor workers use the RPC client rather than PostgreSQL.
+Then add optional named `small`, `medium`, and `large` workload classes and
+persist their resolved resources so retries remain stable.
 
 ### 7 — Two-laptop replica availability — planned
 

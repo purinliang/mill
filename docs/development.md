@@ -247,12 +247,32 @@ Tests requiring PostgreSQL skip when `MILL_TEST_DATABASE_URL` is absent.
 Kubernetes demonstrations are explicit scripts rather than part of the normal
 unit suite.
 
+## Protobuf generation
+
+Generated Go bindings are committed, so ordinary builds and tests do not need
+`protoc`. When the execution schema changes, install the matching generators
+and regenerate from the repository root:
+
+```bash
+go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
+PATH="$(go env GOPATH)/bin:$PATH" protoc -I api/proto \
+  --go_out=. --go_opt=module=github.com/purinliang/mill \
+  --go-grpc_out=. --go-grpc_opt=module=github.com/purinliang/mill \
+  api/proto/mill/execution/v1/execution.proto
+```
+
+The checked-in files record the generator and compiler versions in their
+headers. Review both the schema and generated diff together.
+
 ## Repository structure
 
 ```text
 cmd/mill/
   main.go                         process composition and HTTP lifecycle
-  execution.go                    coordinator lifecycle and ownership lock
+  execution.go                    coordinator lifecycle and direct store adapter
+api/proto/mill/execution/v1/
+  execution.proto                 versioned internal lease/state RPC schema
 docs/
   architecture.md                 domain, correctness, and availability design
   development.md                  local setup, demos, tests, and structure
@@ -267,13 +287,21 @@ examples/word-count/
   record-config.json              deterministic grouping configuration
   job.yaml.template               manual single-task manifest template
 internal/job/
-  model.go                        job/task/attempt API and domain types
+  model.go                        public job/submission model
   validation.go                   submission and URI normalization
   partition.go                    streaming JSONL logical-shard planner
   repository.go                   PostgreSQL job/task persistence
   attempt_repository.go           claims, fenced transitions, and retry policy
   execution_repository.go         lease renewal/takeover and successful results
   handler.go                      HTTP transport
+internal/execution/
+  model.go                        executor-facing attempt and executable model
+  store.go                        durable executor store contract
+internal/executionrpc/
+  client.go                       deadline-bound execution Store client
+  server.go                       Job-side backend and gRPC status mapping
+  convert.go                      domain/Protobuf conversion
+  v1/                             generated versioned Go bindings
 internal/coordinator/
   coordinator.go                  observe active attempts and fill free slots
 internal/kubernetes/

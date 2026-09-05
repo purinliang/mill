@@ -13,8 +13,9 @@ container lifecycle. Mill does not implement a cluster scheduler, database
 election, or arbitrary workload aggregation.
 
 The current deployment is one Go process containing the HTTP API, job service,
-streaming planner, and optional coordinator. These are logical boundaries, not
-yet separate services.
+streaming planner, and optional coordinator. The execution domain and gRPC
+adapter now establish a tested code boundary, but they are not yet separately
+deployed services.
 
 ```text
 User
@@ -208,7 +209,7 @@ demo and the simultaneous two-process failover demo exercise expiry, takeover,
 and stable external identity. A packaged Kubernetes multi-replica deployment
 remains planned.
 
-## Planned service boundary
+## Service boundary
 
 The approved next distributed-service shape has only two long-lived Mill
 services:
@@ -228,13 +229,35 @@ observation and never accesses Mill tables directly. A separate planner service
 is unjustified while planning is a bounded streaming operation inside the Job
 workflow.
 
-The internal gRPC API will expose the implemented lease domain operations rather
-than database CRUD: claim or renew an attempt lease, list work owned by an
-executor, record external identity, and complete or fail an attempt. Mutations
-must include an attempt identity and lease token; an explicit expected version
-may be added where the existing state guard is insufficient for safely retrying
-an unknown RPC outcome. Lease expiry transfers observation ownership; it does
-not create a new attempt.
+`internal/execution` now owns the backend-independent attempt model and the
+store contract consumed by the coordinator and Kubernetes adapter. HTTP
+submission, JSONL planning, and PostgreSQL implementation remain in
+`internal/job`; file count was not by itself a reason to split them.
+
+The versioned gRPC API is defined in
+`api/proto/mill/execution/v1/execution.proto`. It exposes the implemented lease
+domain operations rather than database CRUD:
+
+- lease active attempts owned by an executor replica;
+- claim the next eligible attempt;
+- record a Kubernetes external identity;
+- complete an attempt; and
+- fail an attempt with a bounded reason.
+
+The Job-side adapter owns the 15-second lease policy; it is deliberately absent
+from executor requests. Every mutation carries an attempt ID and fencing token.
+The client applies a per-call deadline, maps concurrency and state failures back
+to domain errors, and treats other transport failures as ambiguous. A `bufconn`
+test proves schema conversion, server-owned lease policy, and error mapping
+without opening a network port.
+
+The current `cmd/mill` process still connects the coordinator directly to the
+PostgreSQL repository through a small adapter. Separate Job and executor
+entrypoints, a real gRPC listener, transport credentials, authorization, and a
+multi-Pod deployment are still planned. Lease expiry transfers observation
+ownership; it does not create a new attempt. An explicit expected version may
+be added only if the existing fencing and state guards prove insufficient for
+safely retrying an unknown RPC outcome.
 
 ## Planned workload resource classes
 

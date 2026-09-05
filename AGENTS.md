@@ -26,11 +26,18 @@ takeover of the same attempts and Kubernetes Jobs.
 S3-compatible service and exact local baseline. `scripts/setup` provides a
 repeatable local kind environment.
 
+The backend-independent execution model and store contract have been extracted
+from `internal/job`. A versioned Protobuf schema and gRPC client/server adapters
+now carry the implemented lease operations with server-owned lease duration,
+fencing tokens, deadlines, and domain error mapping. They are tested over an
+in-memory transport. The current process still uses a direct repository adapter;
+separate Job/executor entrypoints and a network listener are not implemented.
+
 Workload image inspection, generic output verification/aggregation, and wider
-fault recovery remain planned. Separate Job and executor services, gRPC,
-resource classes, PostgreSQL replication, and multi-node availability are
-documented future milestones, not current behavior. Add implementation only in
-small, explicitly requested increments. Do not add more Dockerfiles,
+fault recovery remain planned. Separate runtime services, resource classes,
+PostgreSQL replication, and multi-node availability are documented future
+milestones, not current behavior. Add implementation only in small, explicitly
+requested increments. Do not add more Dockerfiles,
 Kubernetes manifests, CI workflows, Terraform, or unrelated infrastructure
 unless a later task requires them.
 
@@ -121,11 +128,11 @@ operational and maintenance cost.
   reconciliation errors or ambiguous execution state.
 - Prefer deterministic tests where practical. Add fault and recovery tests as
   distributed behavior is introduced.
-- The approved future deployment boundary is one replicated Job service and
+- The approved deployment boundary is one replicated Job service and
   replicated executor workers. Keep planning inside the Job service and do not
   create a separate planner service without measured independent scaling need.
   Do not split other packages into services merely to increase Pod count.
-- When the service-boundary milestone begins, make the Job service the sole
+- As the service-boundary milestone proceeds, make the Job service the sole
   owner of Mill metadata tables. Executor replicas must access the implemented
   lease operations through a versioned Protobuf/gRPC domain API with deadlines,
   fencing tokens, state guards, and idempotent mutations. Do not use gRPC as a
@@ -183,6 +190,14 @@ job, task, shard, attempt, or state-transition semantics.
   `internal/coordinator`, Kubernetes types and API calls in
   `internal/kubernetes`, and their lifecycle/configuration in
   `cmd/mill/execution.go`. Word-count aggregation stays in the example.
+- Keep executor-facing attempt types, sentinel domain failures, and the
+  transport-independent store contract in `internal/execution`. Coordinator
+  and Kubernetes packages must not import `internal/job`.
+- Keep the versioned schema under `api/proto/mill/execution/v1` and transport
+  adapters in `internal/executionrpc`. Lease duration is Job-service policy,
+  never an executor request field. Commit generated bindings with schema
+  changes and do not hand-edit them. The RPC client package must not pull in
+  `internal/job` or PostgreSQL transitively.
 - Keep the language-neutral CLI protocol and its Go serialization/parser in
   `internal/workload`. Reserve top-level `cmd` for Mill's own executables.
   Example executable entrypoints belong under `examples/<name>/cmd/<command>`,
