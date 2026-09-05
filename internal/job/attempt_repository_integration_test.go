@@ -93,8 +93,8 @@ func TestAttemptCanFailBeforeExternalExecutionStarts(t *testing.T) {
 	}
 
 	failedJob := getAttemptTestJob(t, repository, job.ID)
-	if failedJob.State != StateFailed || failedJob.Progress != (Progress{Total: 1, Failed: 1}) {
-		t.Errorf("failed job = state %q progress %+v, want failed", failedJob.State, failedJob.Progress)
+	if failedJob.State != StateRunning || failedJob.Progress != (Progress{Total: 1, Pending: 1}) {
+		t.Errorf("job after attempt failure = state %q progress %+v, want running with pending retry", failedJob.State, failedJob.Progress)
 	}
 	if _, err := repository.MarkAttemptRunning(context.Background(), failed.ID, "container-001"); !errors.Is(err, ErrInvalidAttemptTransition) {
 		t.Fatalf("failed-to-running error = %v, want %v", err, ErrInvalidAttemptTransition)

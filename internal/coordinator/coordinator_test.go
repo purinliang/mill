@@ -134,7 +134,9 @@ func TestAmbiguousDispatchKeepsAttemptForRestart(t *testing.T) {
 	}
 }
 
-func TestFailureStopsClaimsButObservesOtherActiveTasks(t *testing.T) {
+func TestExhaustedFailureStopsClaimsButObservesOtherActiveTasks(t *testing.T) {
+	// This fake models the store deciding the retry budget is exhausted. The
+	// coordinator follows durable store decisions rather than owning a budget.
 	store := &memoryStore{limit: 2, total: 4}
 	c := &Coordinator{Store: store, Logger: log.New(io.Discard, "", 0)}
 	c.Executor = executorFunc(func(context.Context, job.ClaimedAttempt) (Observation, error) {

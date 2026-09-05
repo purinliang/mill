@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestActiveAttemptsCanResumeFailedJobAndListSuccessfulOutputs(t *testing.T) {
+func TestActiveAttemptsSurviveSiblingFailureAndListSuccessfulOutputs(t *testing.T) {
 	repository, created := createAttemptTestJob(t, "integration:execution-recovery", 2, 2)
 	ctx := context.Background()
 	first, err := repository.ClaimNextAttempt(ctx, "kubernetes")

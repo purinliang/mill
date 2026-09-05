@@ -101,8 +101,8 @@ contract.
 - **Task**: the durable obligation to process one logical shard for one job. The
   pair `(job_id, shard_index)` is unique, so `job-1/shard-0` and
   `job-2/shard-0` are different tasks.
-- **Attempt**: one durable execution generation of a task. A future retry will
-  create a new attempt instead of erasing failure history.
+- **Attempt**: one durable execution generation of a task. A retry
+  creates a new attempt instead of erasing failure history.
 - **Executable/container**: the trusted OCI image and user arguments. The local
   adapter requires the image to be loaded into kind before submission.
 - **Result**: output from a successful attempt. Output bytes belong in object
@@ -128,6 +128,7 @@ Task
   shard index           stable zero-based position within the job
   input range           [start byte, end byte)
   state                 pending/running/completed/failed
+  available_at          earliest time a pending task may be claimed
 
 Attempt
   id                    UUIDv7
@@ -321,6 +322,9 @@ examples/word-count/
     Dockerfile                    multi-stage non-root mapper image
   cmd/merge/
     main.go                       local demonstration result merger
+  cmd/fault-injection/
+    main.go                       test-only fail-once/always mapper wrapper
+    Dockerfile                    wrapper plus unchanged word-count executable
   wordcount.go                    tokenization, counting, and merge behavior
   wordcount_test.go               workload behavior tests
   walden-economy.txt              committed plain-text Chapter 1 source
@@ -334,7 +338,7 @@ internal/job/
   partition.go                    local JSONL logical-shard planner
   service.go                      idempotent planning/materialization workflow
   repository.go                   PostgreSQL job/task persistence
-  attempt_repository.go           task claiming and attempt transitions
+  attempt_repository.go           task claiming, attempt transitions, retry policy
   execution_repository.go         reconstruct active attempts and list results
   handler.go                      HTTP transport
   *_test.go                       unit and PostgreSQL integration coverage
@@ -349,6 +353,7 @@ migrations/
   000002_create_tasks.sql         first task schema
   000003_refactor_job_input.sql   executable/input names and byte-range tasks
   000004_create_attempts.sql      durable execution attempts
+  000005_add_task_retry_time.sql  durable retry eligibility timestamp
 scripts/
   setup                           repeatable local kind environment setup
   demo-word-count-single-task      run one kind task and verify its output
@@ -393,27 +398,49 @@ missing running Job or changed UID is reported as an error and retains its
 slot for investigation. Do not delete active Jobs or change storage/cluster
 configuration while recovering attempts.
 
-This is basic local reconciliation, not full fault tolerance. Automatic
-retries, recovery of `preparing` jobs, coordinator failover during network
+This is basic local reconciliation, not full fault tolerance. Recovery of
+`preparing` jobs, coordinator failover during network
 partitions, and deleted-resource recovery remain future work.
 
 ### Retries and outputs
 
-Execution will be at least once, so a workload must tolerate duplicate
+Execution can repeat, so a workload must tolerate duplicate
 execution. Each attempt writes to its own output location and should publish
-completion only after its output is complete. A future retry will create a new
-attempt while retaining terminal attempt history. Until retry policy is added,
-a failed attempt immediately fails its task and job.
+completion only after its output is complete. A retry creates a new attempt,
+Kubernetes Job, and output path while retaining terminal attempt history.
+
+The fixed prototype policy is **three total attempts per task**, with a
+**five-second delay** after each observed terminal failure. These are server
+constants, not submission options. Failed attempts stay `failed`; a task with
+remaining attempts returns to `pending`, and its job stays `running`.
+`tasks.available_at` persists the earliest next claim time in PostgreSQL.
+Waiting retries count as pending progress, consume no running slot, and survive
+process restart without an in-memory timer. A due retry still obeys parallelism.
 
 ```text
-pending --> running --> completed
-               |
-               v
-             failed --> pending (future retry creates a new attempt)
+Task:    pending --> running --> completed
+            ^          |
+            |          +--> failed       (attempt limit reached)
+            +----------+                 (retry available after delay)
+
+Attempt: starting --> running --> completed / failed (terminal)
 ```
 
-Kubernetes-native retries and Mill retries must be configured together so they
-do not multiply unexpectedly.
+When a task exhausts the limit, Mill fails the task and job and stops claiming
+pending work for that job. Already active attempts continue to be observed;
+they cannot schedule more retries after the job fails. A repeated failure
+observation does not reset the delay or affect a newer attempt. Only successful
+attempt outputs appear in completed job results; partial failed outputs remain
+on disk for inspection, not aggregation. This is not exactly-once execution or
+protection against duplicate external side effects.
+
+Kubernetes-native retries remain disabled (`backoffLimit: 0`,
+`restartPolicy: Never`); Mill owns the retry budget. API timeouts and missing
+running Jobs remain ambiguous observations, not terminal execution failures.
+All definitive failures currently receive the same bounded policy, including
+non-retryable configuration errors. Failure classification, configurable or
+exponential backoff, automatic cleanup, and a public attempt-history API are
+deliberately deferred. Attempt history is inspectable in PostgreSQL and logs.
 
 ### Credential boundary
 
@@ -471,7 +498,7 @@ The setup command prepares the cluster. Execution is enabled separately with
 ## Local quick start
 
 The current slice requires Go 1.27 and PostgreSQL 18. Apply all numbered
-migrations to a local development database:
+migrations to a fresh local development database:
 
 ```bash
 createdb mill
@@ -480,8 +507,15 @@ psql "$MILL_DATABASE_URL" -v ON_ERROR_STOP=1 \
   -f migrations/000001_create_jobs.sql \
   -f migrations/000002_create_tasks.sql \
   -f migrations/000003_refactor_job_input.sql \
-  -f migrations/000004_create_attempts.sql
+  -f migrations/000004_create_attempts.sql \
+  -f migrations/000005_add_task_retry_time.sql
 ```
+
+For an existing database already at migration 000004, apply **only**
+`migrations/000005_add_task_retry_time.sql` once before starting the updated
+coordinator. Earlier migrations are not re-runnable. Existing terminal jobs
+remain terminal; the retry change does not resurrect failed work. The demo
+script applies all migrations automatically to its fresh private database.
 
 Create an input containing 100 independent JSON records:
 
@@ -638,6 +672,22 @@ Go, Docker, kind, kubectl, PostgreSQL 18 tools (`initdb`, `pg_ctl`, `psql`),
 The existing heuristic then groups the same 12 records into six tasks of two
 records each. Record count and task count need not be identical.
 
+To exercise automatic retries using a test-only wrapper around word-count:
+
+```bash
+./scripts/demo-word-count-batch --failure once
+./scripts/demo-word-count-batch --failure always
+```
+
+Both target shard 0 deterministically. `once` fails its first attempt, then
+verifies a successful retry and exact final counts despite a deliberately
+incorrect failed-attempt output. `always` verifies the job fails after exactly
+three attempts without publishing a successful job result. Each run saves
+`attempts.json`, failed Pod logs, and final `status.json` in its printed run
+directory. See [the example guide](examples/word-count/README.md#inject-a-failure-and-observe-retries)
+for the wrapper's marker behavior. The normal mapper and workload CLI contract
+are unchanged.
+
 ### Enabling the local coordinator
 
 The batch script sets these variables in addition to the normal database,
@@ -681,7 +731,8 @@ psql 'postgresql:///mill_test' -v ON_ERROR_STOP=1 \
   -f migrations/000001_create_jobs.sql \
   -f migrations/000002_create_tasks.sql \
   -f migrations/000003_refactor_job_input.sql \
-  -f migrations/000004_create_attempts.sql
+  -f migrations/000004_create_attempts.sql \
+  -f migrations/000005_add_task_retry_time.sql
 MILL_TEST_DATABASE_URL='postgresql:///mill_test' go test -race ./...
 ```
 
@@ -698,11 +749,12 @@ MILL_TEST_DATABASE_URL='postgresql:///mill_test' go test -race ./...
    attempt output location through a small CLI contract.
 6. Mill reconciles Kubernetes observations into durable attempt and task state.
 7. A successful workload exits only after publishing its output; Mill records
-   completion. A terminal execution failure fails its task and job.
+   completion. A terminal execution failure queues a delayed retry; exhausting
+   the three-attempt limit fails the task and job.
 8. Job status aggregates the finalized task set and exposes output locations.
 
-These steps are implemented for the staged local kind demonstration. Task
-retries, generic output verification, and cloud storage remain planned.
+These steps are implemented for the staged local kind demonstration. Generic
+output verification and cloud storage remain planned.
 
 ## Development milestones
 
@@ -732,8 +784,10 @@ listing. Staging uses one kind node; multi-node storage remains future work.
 
 ### Milestone 4 — Reliable execution
 
-Add retries, backoff, attempt history, stale-observation protection, cleanup,
-and fault/recovery tests for dispatch crash windows. **Planned.**
+**In progress:** bounded retries, durable fixed-delay backoff, retained attempt
+history, idempotent failure transitions, and deterministic transient/permanent
+failure demonstrations are implemented. Broader crash-window tests, runtime
+deletion recovery, and cleanup remain planned.
 
 ### Milestone 5 — AWS deployment
 
@@ -748,7 +802,8 @@ the project being evaluated. **Planned.**
 
 ## Current status
 
-Mill has a working local Milestone 3 demonstration. Implemented behavior includes:
+Mill has a working local Milestone 3 demonstration and the first Milestone 4
+retry slice. Implemented behavior includes:
 
 - one Go HTTP process with liveness and PostgreSQL-backed readiness;
 - `POST /jobs` and `GET /jobs/{id}`;
@@ -759,6 +814,8 @@ Mill has a working local Milestone 3 demonstration. Implemented behavior include
 - persisted task-state progress after restart;
 - concurrency-safe task claims that enforce each job's parallelism;
 - durable attempt lifecycle transitions and atomic task/job completion;
+- bounded task retries with durable delay, fresh attempt outputs, and
+  deterministic failure injection demos;
 - a typed workload CLI argument contract;
 - local JSONL-copy and word-count executables with non-root OCI images that
   process one assigned range;
@@ -773,9 +830,11 @@ Mill has a working local Milestone 3 demonstration. Implemented behavior include
 - an idempotent local kind and kubectl setup command.
 
 Generic image inspection, storage-level output verification/aggregation, S3,
-full failure recovery, and task retries are not implemented. Until retries
-exist, one failed attempt immediately fails its task and job. Already active
-tasks are still observed to completion, while pending tasks stop dispatching.
+and full failure recovery are not implemented. Exhausting a task's retry budget
+fails its job. Already active tasks are still observed to completion, while
+pending tasks stop dispatching. Coordinator stop/restart during a live failed
+Pod, network partition failover, and deleted-resource recovery still need
+dedicated end-to-end tests.
 
 ## Local and cloud development philosophy
 

@@ -148,6 +148,77 @@ two of the 12 records. The result still covers the entire input. The demo uses
 the task count returned by Mill rather than choosing its own shards.
 
 The coordinator uses one Job per attempt and preserves durable state across
-process restarts. Native retries are disabled. Automatic Mill retries and
-generic result aggregation remain future work; this script performs only the
+process restarts. Native retries are disabled; Mill owns a three-attempt budget
+per task with a five-second delay between observed failure and retry eligibility.
+Generic result aggregation remains future work; this script performs only the
 word-count-specific merge.
+
+## Inject a failure and observe retries
+
+Start with the recoverable case:
+
+```bash
+./scripts/demo-word-count-batch --failure once
+```
+
+The script builds `mill/word-count-fault:dev`, a separate image containing the
+normal mapper and `cmd/fault-injection` wrapper. The wrapper receives `once` as
+an executable argument after Mill's `--` separator. **Only shard 0** fails on
+its first invocation; other shards immediately delegate to the normal mapper.
+No randomness is involved, so repeating the demo exercises the same failure.
+
+The wrapper uses an atomic directory creation at
+`/output/.mill-faults/<job-id>/<task-id>` to remember the first invocation across
+replacement Pods. On its first invocation it leaves a deliberately incorrect
+partial result at the assigned attempt output URI and exits 1. The next
+invocation sees the marker and runs word-count normally with unchanged Mill
+arguments and no test-only arguments. The marker is specific to this local
+shared-filesystem test: **Mill does not read it or use it to decide retries**.
+Fresh demo jobs have distinct IDs and cannot inherit a previous job's marker.
+
+Mill observes the failed Kubernetes Job, retains attempt 1 as `failed`, and
+returns its task to `pending` with a durable five-second delay. Another pending
+task can use the freed slot. When eligible and capacity is available, the same
+task gets attempt 2 with a new Kubernetes Job and output URI. A failed attempt
+does not count as a failed task while retries remain.
+
+With the default parallelism 3, the expected history is:
+
+| Shard | Attempt 1 | Attempt 2 | Final task state |
+| --- | --- | --- | --- |
+| 0 | failed | completed | completed |
+| 1–11 | completed | not needed | completed |
+
+There are 12 logical tasks, 13 attempts, and at most three active attempts.
+The script merges only the 12 successful output URIs listed by Mill and checks
+the exact full-input result. This also proves the failed attempt's deliberately
+wrong partial result was excluded.
+
+Then check exhaustion:
+
+```bash
+./scripts/demo-word-count-batch --failure always
+```
+
+Here shard 0 exits 1 on every invocation. Mill stops after three total attempts
+(two retries) and marks the task and job failed. Pending tasks stop dispatching;
+already active attempts are still observed until terminal. The demo expects
+this failure and prints `PASS` only when the limit and absence of successful
+job results are verified. Other tasks may already have produced valid outputs,
+but the script does not publish a merged result for a failed job.
+
+Both modes check persisted retry delays and observed parallelism, verify failed
+Pod logs contain the injected error, and save `attempts.json` alongside
+`status.json`, `server.log`, and `failure-<attempt-id>.log`. The printed attempt
+table distinguishes attempt state from final task state. The private database
+stops at exit, so these snapshots remain readable without restarting it.
+
+To inspect the recoverable case after the script prints its run directory:
+
+```bash
+jq '.[] | select(.shard_index == 0)' /tmp/mill-batch.<run>/attempts.json
+```
+
+Replace `<run>` with the actual suffix. The demo retains Kubernetes resources,
+node files, and local files as before. These cases test terminal workload
+failure, not coordinator crashes, network partitions, or deleted running Jobs.

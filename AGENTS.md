@@ -16,9 +16,12 @@ Kubernetes Jobs through the official Go client, using PostgreSQL task claims
 and attempt transitions. The local adapter uses staged input/output paths on
 one kind node, and successful job status includes attempt output URIs.
 `scripts/demo-word-count-batch` exercises the HTTP API, PostgreSQL, concurrent
-Pods, and example-specific result merging. Workload image inspection, generic
-output verification/aggregation, full fault recovery, retries, and S3 remain
-planned. `scripts/setup` provides a repeatable local kind environment.
+Pods, and example-specific result merging. Mill now retries terminal task
+failures up to three total attempts with a durable five-second delay. The batch
+demo's `--failure once|always` modes exercise recovery and retry exhaustion with
+a test-only workload wrapper. Workload image inspection, generic output
+verification/aggregation, full fault recovery, and S3 remain planned.
+`scripts/setup` provides a repeatable local kind environment.
 Add implementation only in small,
 explicitly requested increments. Do not add more Dockerfiles, Kubernetes
 manifests, CI workflows, Terraform, or unrelated infrastructure unless a later
@@ -68,6 +71,16 @@ operational and maintenance cost.
 - Persist a `starting` attempt and mark its task active in one transaction
   before calling an external runtime. Permit at most one active attempt per
   task and retain terminal attempts as execution history.
+- Keep retry decisions and the next eligible claim time durable and atomic with
+  the failed attempt transition. A failed attempt remains failed; only its task
+  returns to pending while budget remains. Delayed retries consume no active
+  slot and must obey job parallelism when claimed. Never retry pending work for
+  a terminal job, or let a stale attempt observation alter a newer attempt.
+- Keep the initial retry policy fixed at three total attempts and five seconds
+  between observed failure and eligibility. Changes to policy affect running
+  jobs too; introduce persisted per-job configuration before configurable policy.
+  Keep Kubernetes retries disabled while Mill owns the budget. Do not treat
+  timeouts or missing running Jobs as safe evidence to launch replacements.
 - Reconstruct active attempts from PostgreSQL on each coordinator tick. Use a
   deterministic Kubernetes Job name per attempt and verify its labels and UID.
   Treat API errors as ambiguous observations; do not fail/retry a task merely
@@ -140,6 +153,10 @@ job, task, shard, attempt, or state-transition semantics.
   separate from control-plane behavior. Introduce a top-level `workloads`
   package only if Mill later owns reusable workload implementations beyond
   examples.
+- Keep failure injection in test/demo wrappers, not production execution policy
+  or word-count computation. Prefer deterministic cases first. The example's
+  shared fail-once marker is a test fixture, not Mill's retry state. Aggregate
+  only successful attempt outputs returned by Mill; never glob all attempts.
 - Keep a reference workload's Dockerfile beside its command. Prefer a
   multi-stage build and a minimal non-root runtime image; do not place build
   tools in the final workload image.

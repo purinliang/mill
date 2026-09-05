@@ -18,6 +18,10 @@ var (
 	ErrInvalidAttemptTransition = errors.New("invalid attempt state transition")
 )
 
+// Fixed prototype policy: three total attempts, not three extra retries.
+const MaxTaskAttempts = 3
+const TaskRetryDelay = 5 * time.Second
+
 const attemptSelectByID = `
 	SELECT
 		a.id::text,
@@ -57,6 +61,7 @@ func (r *Repository) ClaimNextAttempt(ctx context.Context, executor string) (Cla
 				FROM public.tasks AS pending
 				WHERE pending.job_id = j.id
 					AND pending.state = 'pending'
+					AND pending.available_at <= now()
 					AND pending.input_start_byte IS NOT NULL
 					AND pending.input_end_byte IS NOT NULL
 			)
@@ -93,6 +98,7 @@ func (r *Repository) ClaimNextAttempt(ctx context.Context, executor string) (Cla
 		JOIN public.jobs AS j ON j.id = t.job_id
 		WHERE t.job_id = $1::uuid
 			AND t.state = 'pending'
+			AND t.available_at <= now()
 			AND t.input_start_byte IS NOT NULL
 			AND t.input_end_byte IS NOT NULL
 		ORDER BY t.shard_index
@@ -264,10 +270,10 @@ func (r *Repository) finishAttempt(ctx context.Context, id string, target Attemp
 	if target == AttemptStateFailed && attempt.State != AttemptStateStarting && attempt.State != AttemptStateRunning {
 		return Attempt{}, invalidAttemptTransition(attempt.State, target)
 	}
-	var lockedJobID string
+	var jobState State
 	if err := tx.QueryRow(ctx, `
-		SELECT id::text FROM public.jobs WHERE id = $1::uuid FOR UPDATE
-	`, attempt.JobID).Scan(&lockedJobID); err != nil {
+		SELECT state FROM public.jobs WHERE id = $1::uuid FOR UPDATE
+	`, attempt.JobID).Scan(&jobState); err != nil {
 		return Attempt{}, fmt.Errorf("lock job while finishing attempt: %w", err)
 	}
 
@@ -278,19 +284,27 @@ func (r *Repository) finishAttempt(ctx context.Context, id string, target Attemp
 	`, id, target, failureMessage); err != nil {
 		return Attempt{}, fmt.Errorf("mark attempt %s: %w", target, err)
 	}
+	taskState := string(target)
+	if target == AttemptStateFailed && jobState == StateRunning && attempt.Number < MaxTaskAttempts {
+		taskState = "pending"
+	}
+	// The failed attempt stays terminal. Only its logical task returns to pending;
+	// the timestamp and state commit together, so restart cannot lose the delay.
 	command, err := tx.Exec(ctx, `
 		UPDATE public.tasks
-		SET state = $2, updated_at = now()
+		SET state = $2, updated_at = now(),
+			available_at = CASE WHEN $2 = 'pending'
+				THEN now() + $3 * interval '1 second' ELSE available_at END
 		WHERE id = $1::uuid AND state = 'running'
-	`, attempt.TaskID, target)
+	`, attempt.TaskID, taskState, int64(TaskRetryDelay/time.Second))
 	if err != nil {
-		return Attempt{}, fmt.Errorf("mark task %s: %w", target, err)
+		return Attempt{}, fmt.Errorf("mark task %s: %w", taskState, err)
 	}
 	if command.RowsAffected() != 1 {
-		return Attempt{}, fmt.Errorf("mark task %s: running task was not updated", target)
+		return Attempt{}, fmt.Errorf("mark task %s: running task was not updated", taskState)
 	}
 
-	if target == AttemptStateFailed {
+	if taskState == "failed" {
 		if _, err := tx.Exec(ctx, `
 			UPDATE public.jobs SET state = 'failed', updated_at = now() WHERE id = $1::uuid
 		`, attempt.JobID); err != nil {

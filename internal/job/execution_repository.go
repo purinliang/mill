@@ -9,7 +9,7 @@ import (
 // still needs to be observed even when another task has failed the job.
 func (r *Repository) ActiveAttempts(ctx context.Context, executor string) ([]ClaimedAttempt, error) {
 	rows, err := r.database.Query(ctx, `
-		SELECT a.id::text, t.job_id::text, a.task_id::text, a.state,
+		SELECT a.id::text, t.job_id::text, a.task_id::text, a.attempt_number, a.state,
 			COALESCE(a.external_id, ''), t.shard_index, t.input_start_byte,
 			t.input_end_byte, j.executable_image_ref, j.executable_args,
 			j.input_uri, j.output_root_uri
@@ -26,7 +26,7 @@ func (r *Repository) ActiveAttempts(ctx context.Context, executor string) ([]Cla
 	for rows.Next() {
 		var a ClaimedAttempt
 		if err := rows.Scan(&a.Attempt.ID, &a.Attempt.JobID, &a.Attempt.TaskID,
-			&a.Attempt.State, &a.Attempt.ExternalID, &a.ShardIndex,
+			&a.Attempt.Number, &a.Attempt.State, &a.Attempt.ExternalID, &a.ShardIndex,
 			&a.InputStartByte, &a.InputEndByte, &a.Executable.Image,
 			&a.Executable.Args, &a.InputURI, &a.OutputURI); err != nil {
 			return nil, fmt.Errorf("read active attempt: %w", err)

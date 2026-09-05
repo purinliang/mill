@@ -2,7 +2,12 @@
 
 set -euo pipefail
 
-[[ $# -eq 0 ]] || { printf 'Usage: %s\n' "$0" >&2; exit 1; }
+failure_mode=none
+if [[ $# -eq 2 && "$1" == --failure && ( "$2" == once || "$2" == always ) ]]; then
+	failure_mode="$2"
+elif [[ $# -ne 0 ]]; then
+	printf 'Usage: %s [--failure once|always]\n' "$0" >&2; exit 1
+fi
 cd "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 for required in go docker kind kubectl initdb pg_ctl psql curl jq mktemp wc tr tar cmp basename grep; do
 	command -v "${required}" >/dev/null || { printf 'Missing command: %s\n' "${required}" >&2; exit 1; }
@@ -45,8 +50,14 @@ printf 'Local files: %s\nNode files: %s\n' "${run_directory}" "${node_directory}
 mkdir "${run_directory}/input" "${run_directory}/output" "${run_directory}/socket"
 go run ./examples/word-count/generate --output "${run_directory}/input/records.jsonl"
 go build -o "${run_directory}/mill" ./cmd/mill
-docker build --file examples/word-count/cmd/word-count/Dockerfile --tag mill/word-count:dev .
-kind load docker-image mill/word-count:dev --name mill
+image=mill/word-count:dev
+dockerfile=examples/word-count/cmd/word-count/Dockerfile
+if [[ "${failure_mode}" != none ]]; then
+	image=mill/word-count-fault:dev
+	dockerfile=examples/word-count/cmd/fault-injection/Dockerfile
+fi
+docker build --file "${dockerfile}" --tag "${image}" .
+kind load docker-image "${image}" --name mill
 
 docker exec mill-control-plane mkdir -p /var/local
 docker exec mill-control-plane mkdir "${node_directory}"
@@ -81,15 +92,15 @@ for _ in {1..60}; do
 done
 [[ "${ready}" == true ]] || { printf 'Mill did not become ready\n' >&2; exit 1; }
 
-jq -n --arg uri "file://${run_directory}/input/records.jsonl" \
-	'{executable:{image:"mill/word-count:dev",args:[]},input:{uri:$uri}}' > "${run_directory}/submission.json"
+jq -n --arg uri "file://${run_directory}/input/records.jsonl" --arg image "${image}" --arg mode "${failure_mode}" \
+	'{executable:{image:$image,args:(if $mode == "none" then [] else [$mode] end)},input:{uri:$uri}}' > "${run_directory}/submission.json"
 curl -fsS "http://${MILL_HTTP_ADDR}/jobs" -H 'Content-Type: application/json' -H 'Idempotency-Key: word-count-batch' \
 	--data-binary "@${run_directory}/submission.json" > "${run_directory}/job.json"
 job_id="$(jq -er '.id' "${run_directory}/job.json")"
 expected_tasks="$(jq -er '.progress.total' "${run_directory}/job.json")"
 printf '\nMill job: %s\nWatch Pods: kubectl --context kind-mill -n default get pods -l mill.dev/job-id=%s -w\n' "${job_id}" "${job_id}"
 peak=0
-completed=false
+finished=false
 deadline=$((SECONDS + 180))
 while (( SECONDS < deadline )); do
 	curl -fsS "http://${MILL_HTTP_ADDR}/jobs/${job_id}" > "${run_directory}/status.json"
@@ -98,12 +109,53 @@ while (( SECONDS < deadline )); do
 	(( running <= parallelism )) || { printf 'Concurrency limit exceeded\n' >&2; exit 1; }
 	if (( running > peak )); then peak=${running}; fi
 	jq -c '{state,progress}' "${run_directory}/status.json"
-	if [[ "${state}" == completed ]]; then completed=true; break; fi
-	[[ "${state}" != failed ]] || { printf 'Job failed; inspect server.log\n' >&2; exit 1; }
+	if [[ "${state}" == completed || ( "${state}" == failed && "${running}" == 0 ) ]]; then finished=true; break; fi
 	sleep 0.5
 done
-[[ "${completed}" == true ]] || { printf 'Timed out waiting for the batch\n' >&2; exit 1; }
-jq -e --argjson tasks "${expected_tasks}" '.progress.total == $tasks and .progress.completed == $tasks and (.results | length) == $tasks' "${run_directory}/status.json" >/dev/null
+[[ "${finished}" == true ]] || { printf 'Timed out waiting for the batch\n' >&2; exit 1; }
+
+# Preserve durable evidence before stopping the private database. Waiting tasks
+# do not consume slots; each retry must start at least five seconds after failure.
+psql "${MILL_DATABASE_URL}" -XAt -v ON_ERROR_STOP=1 -v job_id="${job_id}" > "${run_directory}/attempts.json" <<'SQL'
+SELECT json_agg(history ORDER BY shard_index, attempt_number)
+FROM (
+    SELECT t.shard_index, t.id AS task_id, t.state AS task_state,
+        a.id AS attempt_id, a.attempt_number, a.state, a.failure_message,
+        a.created_at, a.finished_at,
+        a.attempt_number = 1 OR a.created_at >= previous.finished_at + interval '5 seconds' AS retry_delay_ok
+    FROM tasks t JOIN attempts a ON a.task_id = t.id
+    LEFT JOIN attempts previous ON previous.task_id = a.task_id AND previous.attempt_number = a.attempt_number - 1
+    WHERE t.job_id = :'job_id'::uuid
+) history;
+SQL
+jq -e 'all(.[]; .attempt_number <= 3 and .retry_delay_ok == true)' "${run_directory}/attempts.json" >/dev/null
+printf '\nAttempt history (shard, attempt, state, task state):\n'
+jq -r '.[] | [.shard_index, .attempt_number, .state, .task_state] | @tsv' "${run_directory}/attempts.json"
+printf 'Attempt history: %s/attempts.json\n' "${run_directory}"
+printf 'Inspect: kubectl --context kind-mill -n default get jobs,pods -l mill.dev/job-id=%s\n' "${job_id}"
+printf 'Remove Jobs/Pods when finished: kubectl --context kind-mill -n default delete jobs -l mill.dev/job-id=%s\n' "${job_id}"
+
+if [[ "${failure_mode}" != none ]]; then
+	mapfile -t failed_attempts < <(jq -r '.[] | select(.state == "failed") | .attempt_id' "${run_directory}/attempts.json")
+	for attempt in "${failed_attempts[@]}"; do
+		kubectl --context kind-mill -n default logs "job/mill-${attempt}" > "${run_directory}/failure-${attempt}.log"
+		grep -q 'injected failure:' "${run_directory}/failure-${attempt}.log"
+	done
+fi
+
+if [[ "${failure_mode}" == always ]]; then
+	jq -e '.state == "failed" and .progress.failed == 1 and .progress.running == 0 and (has("results") | not)' "${run_directory}/status.json" >/dev/null
+	jq -e '[.[] | select(.shard_index == 0)] | length == 3 and all(.[]; .state == "failed" and .task_state == "failed")' "${run_directory}/attempts.json" >/dev/null
+	jq -e 'all(.[] | select(.shard_index != 0); .attempt_number == 1 and .state == "completed")' "${run_directory}/attempts.json" >/dev/null
+	printf '\nPASS: shard 0 exhausted exactly three attempts; job failed, no successful job result published.\nObserved peak running tasks: %s\nJob status: %s/status.json\n' "${peak}" "${run_directory}"
+	exit 0
+fi
+jq -e --argjson tasks "${expected_tasks}" '.state == "completed" and .progress.total == $tasks and .progress.completed == $tasks and (.results | length) == $tasks' "${run_directory}/status.json" >/dev/null
+if [[ "${failure_mode}" == once ]]; then
+	jq -e --argjson tasks "${expected_tasks}" 'length == $tasks + 1 and ([.[] | select(.shard_index == 0) | .state] == ["failed", "completed"]) and all(.[] | select(.shard_index != 0); .attempt_number == 1 and .state == "completed")' "${run_directory}/attempts.json" >/dev/null
+else
+	jq -e --argjson tasks "${expected_tasks}" 'length == $tasks and all(.[]; .attempt_number == 1 and .state == "completed")' "${run_directory}/attempts.json" >/dev/null
+fi
 
 docker exec mill-control-plane tar -C "${node_directory}/output" -cf - . | tar -C "${run_directory}/output" -xf -
 mapfile -t partials < <(jq -r '.results[].uri | sub("^file://"; "")' "${run_directory}/status.json")
@@ -114,5 +166,3 @@ go run ./examples/word-count/cmd/word-count --job-id "${job_id}" --task-id local
 	--output-uri "file://${run_directory}/baseline.jsonl" --
 cmp "${run_directory}/baseline.jsonl" "${run_directory}/counts.jsonl"
 printf '\nPASS: %s task outputs merged; exact match with the full-input local count.\nObserved peak running tasks: %s\nFinal counts: %s/counts.jsonl\nJob status: %s/status.json\n' "${expected_tasks}" "${peak}" "${run_directory}" "${run_directory}"
-printf 'Inspect: kubectl --context kind-mill -n default get jobs,pods -l mill.dev/job-id=%s\n' "${job_id}"
-printf 'Remove Jobs/Pods when finished: kubectl --context kind-mill -n default delete jobs -l mill.dev/job-id=%s\n' "${job_id}"

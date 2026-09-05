@@ -62,7 +62,7 @@ func (c *Coordinator) Tick(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		c.Logger.Printf("claimed job=%s shard=%d attempt=%s", attempt.Attempt.JobID, attempt.ShardIndex, attempt.Attempt.ID)
+		c.Logger.Printf("claimed job=%s shard=%d attempt=%s number=%d", attempt.Attempt.JobID, attempt.ShardIndex, attempt.Attempt.ID, attempt.Attempt.Number)
 		if err := c.reconcile(ctx, attempt); err != nil {
 			return err
 		}
@@ -85,7 +85,7 @@ func (c *Coordinator) reconcile(ctx context.Context, claimed job.ClaimedAttempt)
 	if observed.Failure != "" {
 		_, err = c.Store.FailAttempt(ctx, id, observed.Failure)
 		if err == nil {
-			c.Logger.Printf("failed job=%s shard=%d attempt=%s reason=%s", claimed.Attempt.JobID, claimed.ShardIndex, id, observed.Failure)
+			c.Logger.Printf("attempt_failed job=%s shard=%d attempt=%s number=%d reason=%s", claimed.Attempt.JobID, claimed.ShardIndex, id, claimed.Attempt.Number, observed.Failure)
 		}
 		return err
 	}
