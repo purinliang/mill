@@ -6,28 +6,28 @@ scope.
 
 ## Current project state
 
-Mill has completed Milestone 2's container workload contract. Milestone 1's
-HTTP process, PostgreSQL connection/readiness behavior, create/get API, local
-JSONL logical sharding, and durable job/task materialization are implemented.
-CLI argument serialization, local JSONL-copy and word-count reference workloads,
-their minimal non-root Docker images, and a deterministic word-count input
-generator are also implemented. An optional coordinator now launches native
-Kubernetes Jobs through the official Go client, using PostgreSQL task claims
-and attempt transitions. The local adapter uses staged input/output paths on
-one kind node, and successful job status includes attempt output URIs.
-`scripts/demo-word-count-batch` exercises the HTTP API, PostgreSQL, concurrent
-Pods, and example-specific result merging. Mill now retries terminal task
-failures up to three total attempts with a durable five-second delay. The batch
-demo's `--failure once|always` modes exercise recovery and retry exhaustion with
-a test-only workload wrapper. Its `--restart-coordinator` mode kills Mill while
-the initial Pods run, restarts it, and verifies durable attempt and Kubernetes
-identity recovery without duplicate work. Workload image inspection, generic output
-verification/aggregation, full fault recovery, and S3 remain planned.
-`scripts/setup` provides a repeatable local kind environment.
-Add implementation only in small,
-explicitly requested increments. Do not add more Dockerfiles, Kubernetes
-manifests, CI workflows, Terraform, or unrelated infrastructure unless a later
-task requires them.
+Mill currently runs as one Go HTTP process with an optional in-process
+coordinator. It validates and plans JSONL inputs, stores jobs, logical tasks,
+attempts, retry eligibility, and progress in PostgreSQL, and launches one
+native Kubernetes Job for each attempt. The workload CLI contract, local-file
+execution, bounded retries, attempt history, deterministic Kubernetes identity,
+and coordinator restart reconciliation are implemented.
+
+The object-storage adapter supports `file://` and `s3://`. S3-backed attempts
+perform ranged reads and publish unique outputs without hostPath mounts or node
+pinning. `scripts/demo-word-count-batch` exercises the complete node-local
+control plane; its failure and restart modes test retry exhaustion and process
+recovery. `scripts/demo-word-count-s3` proves the shared-storage path against a
+disposable S3-compatible service and exact local baseline. `scripts/setup`
+provides a repeatable local kind environment.
+
+Workload image inspection, generic output verification/aggregation, and wider
+fault recovery remain planned. Separate Job and executor services, gRPC,
+resource classes, PostgreSQL replication, and multi-node availability are
+documented future milestones, not current behavior. Add implementation only in
+small, explicitly requested increments. Do not add more Dockerfiles,
+Kubernetes manifests, CI workflows, Terraform, or unrelated infrastructure
+unless a later task requires them.
 
 `scripts/demo-word-count-single-task` runs one manual word-count Job with staged
 node-local input and verifies its output against a local run. It uses
@@ -62,6 +62,9 @@ operational and maintenance cost.
   unless a deliberate architecture change is documented.
 - Store large datasets and task outputs in S3 or compatible object storage.
   Never store large binary datasets in PostgreSQL.
+- Keep object access URI-oriented. Planning may stream a whole input; workload
+  attempts must read only their assigned range and publish only their unique
+  output. Preserve file-backed tests while S3 is the shared-storage direction.
 - Keep one input URI and generated output root on the job. A logical task owns
   its shard index and input byte range; do not duplicate calculable input or
   output URIs on every task.
@@ -90,7 +93,9 @@ operational and maintenance cost.
 - Keep one coordinator per database using the dedicated advisory-lock
   connection. Preserve the same cluster and storage configuration on restart.
   Missing running Jobs and identity mismatches require investigation; never
-  silently recreate them.
+  silently recreate them. This is the implemented single-coordinator rule;
+  replace it with durable leases only in the planned replicated-executor
+  milestone.
 - Preserve `scripts/demo-word-count-batch --restart-coordinator` as a real
   process-boundary recovery test. It must use SIGKILL only on the child Mill PID,
   keep PostgreSQL and Kubernetes alive, compare stable attempt IDs and Job UIDs,
@@ -107,8 +112,22 @@ operational and maintenance cost.
   reconciliation errors or ambiguous execution state.
 - Prefer deterministic tests where practical. Add fault and recovery tests as
   distributed behavior is introduced.
-- Keep the API and coordinator as logical boundaries; do not split them into
-  deployable services without a concrete operational reason.
+- The approved future deployment boundary is one replicated Job service and
+  replicated executor workers. Keep planning inside the Job service and do not
+  create a separate planner service without measured independent scaling need.
+  Do not split other packages into services merely to increase Pod count.
+- When the service-boundary milestone begins, make the Job service the sole
+  owner of Mill metadata tables. Executor replicas communicate through a
+  versioned Protobuf/gRPC domain API with deadlines, durable lease tokens,
+  expected versions, and idempotent mutations. Do not use gRPC as a durable
+  queue or change the workload CLI contract to gRPC.
+- Availability claims must identify their failure domain. Two laptops may
+  demonstrate individual Pod/process and controlled primary/standby failure;
+  do not describe that as whole-node or network-partition tolerance. Quorum-safe
+  node loss requires three independent voters and available object storage.
+- Prefer consistency to conflicting writes during an ambiguous partition.
+  Delegate Kubernetes consensus to etcd and PostgreSQL promotion to the chosen
+  database operator; Mill must not implement either election.
 - Assume trusted workloads for V1. Do not expand a feature into arbitrary
   untrusted-code sandboxing or multi-tenant security without an explicit scope
   change.
@@ -130,9 +149,9 @@ job, task, shard, attempt, or state-transition semantics.
 
 ## Code organization
 
-- Keep Mill as one Go module and one control-plane binary until a concrete
-  deployment or ownership boundary requires otherwise. A logical module is not
-  automatically a service.
+- Keep Mill as one Go module. The current implementation remains one
+  control-plane binary until the documented Job-service/executor milestone is
+  explicitly started. A logical module is not automatically a service.
 - Keep `cmd/mill` as the composition root: environment configuration,
   dependency construction, route assembly, process lifecycle, and shutdown
   belong there. Do not put job or execution policy in `main.go`.
@@ -147,6 +166,10 @@ job, task, shard, attempt, or state-transition semantics.
 - Keep local JSONL partition planning in `internal/job/partition.go` while it is
   part of the cohesive job-creation workflow. Logical shard boundaries must be
   contiguous, non-empty, and aligned to complete JSONL records.
+- Keep `internal/objectstore` limited to file and S3-compatible access. A custom
+  endpoint is a local-development concern; use normal AWS SDK endpoint and
+  credential resolution in AWS. Close read bodies and require seekable bodies
+  for the current complete-object upload path.
 - Keep backend-independent task observation/claim logic in
   `internal/coordinator`, Kubernetes types and API calls in
   `internal/kubernetes`, and their lifecycle/configuration in
@@ -184,8 +207,10 @@ job, task, shard, attempt, or state-transition semantics.
   tests clearly as integration tests and make them opt-in when they require a
   developer-managed service.
 - Update the module view, repository structure, and current status in
-  `README.md` when a change makes any of them materially inaccurate. Document
-  planned paths as planned; do not create placeholder files for them.
+  `README.md` when a change makes any of them materially inaccurate. Keep
+  detailed design in `docs/architecture.md` and operational commands and
+  structure in `docs/development.md`. Document planned paths as planned; do not
+  create placeholder files for them.
 
 ## Testing expectations
 
@@ -194,6 +219,9 @@ job, task, shard, attempt, or state-transition semantics.
 - Integration-test PostgreSQL behavior and transaction boundaries once
   persistence exists.
 - Test the workload contract independently of orchestration.
+- Test object storage with a bounded fake S3 endpoint and preserve the live
+  `scripts/demo-word-count-s3` check for ranged reads, output publication, and
+  absence of node-local mounts.
 - Add Kubernetes end-to-end tests only when Kubernetes execution is introduced.
 - Cover retries, duplicate reconciliation, partial failure, and restart recovery
   during the reliability milestone.
