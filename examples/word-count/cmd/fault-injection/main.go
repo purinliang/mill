@@ -1,5 +1,6 @@
-// This test-only wrapper fails shard 0 before delegating to the normal mapper.
-// Mill itself never reads the marker: PostgreSQL owns the real retry policy.
+// This test-only wrapper injects deterministic failure or delay before
+// delegating to the normal mapper. Mill itself never reads the marker:
+// PostgreSQL owns the real retry policy.
 package main
 
 import (
@@ -10,13 +11,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/purinliang/mill/internal/workload"
 )
 
 func main() {
 	log.SetFlags(0)
-	if err := run(os.Args[1:], "/output/.mill-faults", func(args []string) error {
+	if err := run(os.Args[1:], "/output/.mill-faults", time.Sleep, func(args []string) error {
 		command := exec.Command("/mill-word-count", args...)
 		command.Stdout, command.Stderr = os.Stdout, os.Stderr
 		return command.Run()
@@ -25,15 +27,20 @@ func main() {
 	}
 }
 
-func run(args []string, markerRoot string, execute func([]string) error) error {
+func run(args []string, markerRoot string, pause func(time.Duration), execute func([]string) error) error {
 	invocation, err := workload.ParseArgs(args)
 	if err != nil {
 		return err
 	}
-	if len(invocation.ExecutableArgs) != 1 || (invocation.ExecutableArgs[0] != "once" && invocation.ExecutableArgs[0] != "always") {
-		return errors.New("fault-injection expects -- once or -- always")
+	if len(invocation.ExecutableArgs) != 1 || (invocation.ExecutableArgs[0] != "once" && invocation.ExecutableArgs[0] != "always" && invocation.ExecutableArgs[0] != "delay") {
+		return errors.New("fault-injection expects -- once, -- always, or -- delay")
 	}
 	mode := invocation.ExecutableArgs[0]
+	// Keep the initial wave alive long enough for the restart demo to kill and
+	// replace the coordinator. Later shards run normally to keep the demo short.
+	if mode == "delay" && invocation.ShardIndex < 3 {
+		pause(15 * time.Second)
+	}
 	if invocation.ShardIndex == 0 {
 		fail := mode == "always"
 		if mode == "once" {

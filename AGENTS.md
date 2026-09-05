@@ -19,7 +19,9 @@ one kind node, and successful job status includes attempt output URIs.
 Pods, and example-specific result merging. Mill now retries terminal task
 failures up to three total attempts with a durable five-second delay. The batch
 demo's `--failure once|always` modes exercise recovery and retry exhaustion with
-a test-only workload wrapper. Workload image inspection, generic output
+a test-only workload wrapper. Its `--restart-coordinator` mode kills Mill while
+the initial Pods run, restarts it, and verifies durable attempt and Kubernetes
+identity recovery without duplicate work. Workload image inspection, generic output
 verification/aggregation, full fault recovery, and S3 remain planned.
 `scripts/setup` provides a repeatable local kind environment.
 Add implementation only in small,
@@ -89,6 +91,10 @@ operational and maintenance cost.
   connection. Preserve the same cluster and storage configuration on restart.
   Missing running Jobs and identity mismatches require investigation; never
   silently recreate them.
+- Preserve `scripts/demo-word-count-batch --restart-coordinator` as a real
+  process-boundary recovery test. It must use SIGKILL only on the child Mill PID,
+  keep PostgreSQL and Kubernetes alive, compare stable attempt IDs and Job UIDs,
+  reject duplicate attempts, and still verify the complete workload output.
 - Do not implement a custom cluster scheduler when Kubernetes provides a
   suitable primitive. Initially map one Mill attempt to one Kubernetes Job so
   its arguments, output, and retry history remain independently observable.

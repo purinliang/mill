@@ -3,10 +3,13 @@
 set -euo pipefail
 
 failure_mode=none
+restart_coordinator=false
 if [[ $# -eq 2 && "$1" == --failure && ( "$2" == once || "$2" == always ) ]]; then
 	failure_mode="$2"
+elif [[ $# -eq 1 && "$1" == --restart-coordinator ]]; then
+	restart_coordinator=true
 elif [[ $# -ne 0 ]]; then
-	printf 'Usage: %s [--failure once|always]\n' "$0" >&2; exit 1
+	printf 'Usage: %s [--failure once|always | --restart-coordinator]\n' "$0" >&2; exit 1
 fi
 cd "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 for required in go docker kind kubectl initdb pg_ctl psql curl jq mktemp wc tr tar cmp basename grep; do
@@ -52,7 +55,7 @@ go run ./examples/word-count/generate --output "${run_directory}/input/records.j
 go build -o "${run_directory}/mill" ./cmd/mill
 image=mill/word-count:dev
 dockerfile=examples/word-count/cmd/word-count/Dockerfile
-if [[ "${failure_mode}" != none ]]; then
+if [[ "${failure_mode}" != none || "${restart_coordinator}" == true ]]; then
 	image=mill/word-count-fault:dev
 	dockerfile=examples/word-count/cmd/fault-injection/Dockerfile
 fi
@@ -82,17 +85,23 @@ export MILL_HTTP_ADDR="127.0.0.1:${port}" MILL_PARALLELISM="${parallelism}"
 export MILL_OUTPUT_ROOT_URI="file://${run_directory}/output"
 export MILL_EXECUTOR=kubernetes MILL_KUBE_CONTEXT=kind-mill MILL_KUBE_NAMESPACE=default MILL_KUBE_NODE=mill-control-plane
 export MILL_LOCAL_ROOT="${run_directory}" MILL_NODE_ROOT="${node_directory}"
-"${run_directory}/mill" > "${run_directory}/server.log" 2>&1 &
-server_pid=$!
-ready=false
-for _ in {1..60}; do
-	kill -0 "${server_pid}" 2>/dev/null || { printf 'Mill exited; inspect server.log\n' >&2; exit 1; }
-	if grep -q 'Mill HTTP server listening on' "${run_directory}/server.log" && curl -fsS "http://${MILL_HTTP_ADDR}/readyz" >/dev/null; then ready=true; break; fi
-	sleep 0.5
-done
-[[ "${ready}" == true ]] || { printf 'Mill did not become ready\n' >&2; exit 1; }
+start_mill() {
+	printf '\n--- starting Mill process ---\n' >> "${run_directory}/server.log"
+	"${run_directory}/mill" >> "${run_directory}/server.log" 2>&1 &
+	server_pid=$!
+	local ready=false
+	for _ in {1..60}; do
+		kill -0 "${server_pid}" 2>/dev/null || { printf 'Mill exited; inspect server.log\n' >&2; return 1; }
+		if curl -fsS "http://${MILL_HTTP_ADDR}/readyz" >/dev/null 2>&1; then ready=true; break; fi
+		sleep 0.5
+	done
+	[[ "${ready}" == true ]] || { printf 'Mill did not become ready\n' >&2; return 1; }
+}
+start_mill
 
-jq -n --arg uri "file://${run_directory}/input/records.jsonl" --arg image "${image}" --arg mode "${failure_mode}" \
+workload_mode="${failure_mode}"
+if [[ "${restart_coordinator}" == true ]]; then workload_mode=delay; fi
+jq -n --arg uri "file://${run_directory}/input/records.jsonl" --arg image "${image}" --arg mode "${workload_mode}" \
 	'{executable:{image:$image,args:(if $mode == "none" then [] else [$mode] end)},input:{uri:$uri}}' > "${run_directory}/submission.json"
 curl -fsS "http://${MILL_HTTP_ADDR}/jobs" -H 'Content-Type: application/json' -H 'Idempotency-Key: word-count-batch' \
 	--data-binary "@${run_directory}/submission.json" > "${run_directory}/job.json"
@@ -101,6 +110,7 @@ expected_tasks="$(jq -er '.progress.total' "${run_directory}/job.json")"
 printf '\nMill job: %s\nWatch Pods: kubectl --context kind-mill -n default get pods -l mill.dev/job-id=%s -w\n' "${job_id}" "${job_id}"
 peak=0
 finished=false
+coordinator_restarted=false
 deadline=$((SECONDS + 180))
 while (( SECONDS < deadline )); do
 	curl -fsS "http://${MILL_HTTP_ADDR}/jobs/${job_id}" > "${run_directory}/status.json"
@@ -109,10 +119,70 @@ while (( SECONDS < deadline )); do
 	(( running <= parallelism )) || { printf 'Concurrency limit exceeded\n' >&2; exit 1; }
 	if (( running > peak )); then peak=${running}; fi
 	jq -c '{state,progress}' "${run_directory}/status.json"
+	if [[ "${restart_coordinator}" == true && "${coordinator_restarted}" == false && "${running}" == "${parallelism}" ]]; then
+		durable_running="$(psql "${MILL_DATABASE_URL}" -XAt -v ON_ERROR_STOP=1 -c "
+			SELECT count(*) FROM attempts a JOIN tasks t ON t.id = a.task_id
+			WHERE t.job_id = '${job_id}'::uuid AND a.state = 'running' AND a.external_id IS NOT NULL")"
+		if [[ "${durable_running}" == "${parallelism}" ]]; then
+			psql "${MILL_DATABASE_URL}" -XAt -v ON_ERROR_STOP=1 -v job_id="${job_id}" > "${run_directory}/attempts-before-crash.json" <<'SQL'
+SELECT json_agg(snapshot ORDER BY shard_index)
+FROM (
+    SELECT t.shard_index, t.id::text AS task_id, a.id::text AS attempt_id,
+        a.attempt_number, a.external_id, a.state
+    FROM tasks t JOIN attempts a ON a.task_id = t.id
+    WHERE t.job_id = :'job_id'::uuid
+) snapshot;
+SQL
+			kubectl --context kind-mill -n default get jobs -l "mill.dev/job-id=${job_id}" -o json \
+				| jq '[.items[] | {name:.metadata.name,uid:.metadata.uid}] | sort_by(.name)' \
+				> "${run_directory}/kubernetes-before-crash.json"
+			jq -e --argjson expected "${parallelism}" 'length == $expected and all(.[]; .attempt_number == 1 and .state == "running" and (.external_id | length > 0))' \
+				"${run_directory}/attempts-before-crash.json" >/dev/null
+			jq -e --argjson expected "${parallelism}" 'length == $expected' "${run_directory}/kubernetes-before-crash.json" >/dev/null
+
+			printf '\nCrashing Mill PID %s while %s attempts are running...\n' "${server_pid}" "${parallelism}"
+			crashed_pid="${server_pid}"
+			server_pid=""
+			kill -KILL "${crashed_pid}"
+			if wait "${crashed_pid}" 2>/dev/null; then
+				printf 'Expected the killed Mill process to exit unsuccessfully\n' >&2; exit 1
+			fi
+			if curl -fsS "http://${MILL_HTTP_ADDR}/readyz" >/dev/null 2>&1; then
+				printf 'Mill still answers after SIGKILL\n' >&2; exit 1
+			fi
+			psql "${MILL_DATABASE_URL}" -XAt -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null
+			kubectl --context kind-mill -n default get jobs -l "mill.dev/job-id=${job_id}" -o json \
+				| jq '[.items[] | {name:.metadata.name,uid:.metadata.uid}] | sort_by(.name)' \
+				> "${run_directory}/kubernetes-without-coordinator.json"
+			cmp "${run_directory}/kubernetes-before-crash.json" "${run_directory}/kubernetes-without-coordinator.json"
+
+			printf 'PostgreSQL and Kubernetes survived. Restarting Mill...\n'
+			start_mill
+			psql "${MILL_DATABASE_URL}" -XAt -v ON_ERROR_STOP=1 -v job_id="${job_id}" > "${run_directory}/attempts-after-restart.json" <<'SQL'
+SELECT json_agg(snapshot ORDER BY shard_index)
+FROM (
+    SELECT t.shard_index, t.id::text AS task_id, a.id::text AS attempt_id,
+        a.attempt_number, a.external_id, a.state
+    FROM tasks t JOIN attempts a ON a.task_id = t.id
+    WHERE t.job_id = :'job_id'::uuid
+) snapshot;
+SQL
+			kubectl --context kind-mill -n default get jobs -l "mill.dev/job-id=${job_id}" -o json \
+				| jq '[.items[] | {name:.metadata.name,uid:.metadata.uid}] | sort_by(.name)' \
+				> "${run_directory}/kubernetes-after-restart.json"
+			cmp "${run_directory}/attempts-before-crash.json" "${run_directory}/attempts-after-restart.json"
+			cmp "${run_directory}/kubernetes-before-crash.json" "${run_directory}/kubernetes-after-restart.json"
+			coordinator_restarted=true
+			printf 'Recovered the same attempt IDs and Kubernetes UIDs; no duplicate was created.\n\n'
+		fi
+	fi
 	if [[ "${state}" == completed || ( "${state}" == failed && "${running}" == 0 ) ]]; then finished=true; break; fi
 	sleep 0.5
 done
 [[ "${finished}" == true ]] || { printf 'Timed out waiting for the batch\n' >&2; exit 1; }
+if [[ "${restart_coordinator}" == true && "${coordinator_restarted}" != true ]]; then
+	printf 'The coordinator restart was never triggered\n' >&2; exit 1
+fi
 
 # Preserve durable evidence before stopping the private database. Waiting tasks
 # do not consume slots; each retry must start at least five seconds after failure.
@@ -165,4 +235,8 @@ go run ./examples/word-count/cmd/word-count --job-id "${job_id}" --task-id local
 	--input-uri "file://${run_directory}/input/records.jsonl" --input-start-byte 0 --input-end-byte "${input_size}" \
 	--output-uri "file://${run_directory}/baseline.jsonl" --
 cmp "${run_directory}/baseline.jsonl" "${run_directory}/counts.jsonl"
+if [[ "${restart_coordinator}" == true ]]; then
+	printf '\nPASS: Mill recovered the same running attempts and Kubernetes Jobs after SIGKILL.\n'
+	printf 'Recovery snapshots: %s/attempts-before-crash.json and %s/kubernetes-before-crash.json\n' "${run_directory}" "${run_directory}"
+fi
 printf '\nPASS: %s task outputs merged; exact match with the full-input local count.\nObserved peak running tasks: %s\nFinal counts: %s/counts.jsonl\nJob status: %s/status.json\n' "${expected_tasks}" "${peak}" "${run_directory}" "${run_directory}"

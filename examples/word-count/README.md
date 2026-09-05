@@ -153,6 +153,45 @@ per task with a five-second delay between observed failure and retry eligibility
 Generic result aggregation remains future work; this script performs only the
 word-count-specific merge.
 
+## Crash and restart the coordinator
+
+Run the process-boundary recovery demonstration with:
+
+```bash
+./scripts/demo-word-count-batch --restart-coordinator
+```
+
+The same test-only wrapper used for failure injection receives `delay` and
+holds shards 0–2 for 15 seconds before delegating to the unchanged mapper. This
+creates a deterministic window in which the first three attempts are running.
+The delay is demonstration behavior, not part of Mill's workload contract.
+
+Once PostgreSQL contains three `running` attempts with Kubernetes UIDs, the
+script saves their identities and the corresponding Job names/UIDs, then sends
+SIGKILL to **only the child Mill process**. It immediately verifies PostgreSQL
+still answers and the same Kubernetes Jobs still exist. It then starts a new
+Mill process with exactly the same database, cluster, namespace, node, and
+storage configuration.
+
+The restart is accepted only when:
+
+- attempt IDs, task IDs, attempt numbers, and external UIDs are unchanged;
+- Kubernetes Job names and UIDs are unchanged;
+- no duplicate attempts were created;
+- the captured parallelism limit was preserved; and
+- all task outputs still merge to the exact full-input count.
+
+The run directory retains `attempts-before-crash.json`,
+`attempts-after-restart.json`, `kubernetes-before-crash.json`,
+`kubernetes-without-coordinator.json`, and `kubernetes-after-restart.json`.
+`server.log` contains entries from both Mill processes, separated by a start
+marker. `attempts.json` and `status.json` show the final state.
+
+This proves the implemented recovery path for loss of the coordinator process
+while Kubernetes remains healthy. It does not prove recovery from PostgreSQL
+loss, Kubernetes API partitions, node failure, deleted active Jobs, or every
+possible instruction-level crash window.
+
 ## Inject a failure and observe retries
 
 Start with the recoverable case:

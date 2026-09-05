@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/purinliang/mill/internal/workload"
 )
@@ -28,7 +29,7 @@ func TestFailOnceThenDelegateWithoutChangingInvocation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return run(args, filepath.Join(root, "markers"), execute)
+		return run(args, filepath.Join(root, "markers"), func(time.Duration) {}, execute)
 	}
 	if err := invoke(); err == nil || !strings.Contains(err.Error(), "injected failure") || calls != 0 {
 		t.Fatalf("first attempt err=%v calls=%d", err, calls)
@@ -56,13 +57,13 @@ func TestPermanentFailureAndOtherShards(t *testing.T) {
 	execute := func([]string) error { calls++; return want }
 	for range 4 {
 		args, _ := inv.CommandArgs()
-		if err := run(args, root, execute); err == nil || !strings.Contains(err.Error(), "injected failure") || calls != 0 {
+		if err := run(args, root, func(time.Duration) {}, execute); err == nil || !strings.Contains(err.Error(), "injected failure") || calls != 0 {
 			t.Fatalf("permanent injection: %v calls=%d", err, calls)
 		}
 	}
 	inv.ShardIndex = 1
 	args, _ := inv.CommandArgs()
-	if err := run(args, root, execute); !errors.Is(err, want) || calls != 1 {
+	if err := run(args, root, func(time.Duration) {}, execute); !errors.Is(err, want) || calls != 1 {
 		t.Fatalf("other shard should delegate and preserve error: %v calls=%d", err, calls)
 	}
 }
@@ -76,10 +77,38 @@ func TestRejectBadModeAndUnsafeMarkerIdentity(t *testing.T) {
 				inv.TaskID = "../escape"
 			}
 			args, _ := inv.CommandArgs()
-			if err := run(args, root, func([]string) error { t.Fatal("unexpected execution"); return nil }); err == nil {
+			if err := run(args, root, func(time.Duration) {}, func([]string) error { t.Fatal("unexpected execution"); return nil }); err == nil {
 				t.Fatal("expected validation error")
 			}
 		})
+	}
+}
+
+func TestDelayHoldsOnlyTheInitialWaveThenDelegates(t *testing.T) {
+	root := t.TempDir()
+	var pauses []time.Duration
+	executions := 0
+	for shard := 0; shard < 4; shard++ {
+		inv := testInvocation(t, root, "delay")
+		inv.ShardIndex = shard
+		args, err := inv.CommandArgs()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := run(args, root, func(delay time.Duration) { pauses = append(pauses, delay) }, func([]string) error {
+			executions++
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if executions != 4 || len(pauses) != 3 {
+		t.Fatalf("executions=%d pauses=%v", executions, pauses)
+	}
+	for _, delay := range pauses {
+		if delay != 15*time.Second {
+			t.Fatalf("delay=%s, want 15s", delay)
+		}
 	}
 }
 

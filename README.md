@@ -398,6 +398,14 @@ missing running Job or changed UID is reported as an error and retains its
 slot for investigation. Do not delete active Jobs or change storage/cluster
 configuration while recovering attempts.
 
+The batch demo includes a live process-boundary check: it sends SIGKILL to Mill
+with a full initial wave running, leaves PostgreSQL and Kubernetes untouched,
+then starts a new Mill process with the same configuration. The demo compares
+durable attempt IDs and recorded Kubernetes UIDs before and after restart,
+checks that no replacement attempts were created, and verifies the completed
+batch output. This demonstrates recovery from control-plane process loss; it
+does not simulate database, cluster, node, or network failure.
+
 This is basic local reconciliation, not full fault tolerance. Recovery of
 `preparing` jobs, coordinator failover during network
 partitions, and deleted-resource recovery remain future work.
@@ -688,6 +696,21 @@ directory. See [the example guide](examples/word-count/README.md#inject-a-failur
 for the wrapper's marker behavior. The normal mapper and workload CLI contract
 are unchanged.
 
+To exercise coordinator process recovery independently of workload failure:
+
+```bash
+./scripts/demo-word-count-batch --restart-coordinator
+```
+
+The test wrapper delays the initial Pods for 15 seconds. The script waits until
+three attempts have durable external IDs, saves PostgreSQL and Kubernetes
+identity snapshots, kills only the Mill child process with SIGKILL, and proves
+the database and Jobs remain available. After restarting Mill, it requires the
+attempt IDs, task IDs, attempt numbers, and Kubernetes Job UIDs to match. It
+then verifies exactly 12 first attempts completed and the merged count equals
+the local baseline. Recovery snapshots and the combined two-process server log
+remain in the printed run directory.
+
 ### Enabling the local coordinator
 
 The batch script sets these variables in addition to the normal database,
@@ -785,9 +808,10 @@ listing. Staging uses one kind node; multi-node storage remains future work.
 ### Milestone 4 — Reliable execution
 
 **In progress:** bounded retries, durable fixed-delay backoff, retained attempt
-history, idempotent failure transitions, and deterministic transient/permanent
-failure demonstrations are implemented. Broader crash-window tests, runtime
-deletion recovery, and cleanup remain planned.
+history, idempotent failure transitions, deterministic transient/permanent
+failure demonstrations, and live coordinator-process restart recovery are
+implemented. Dispatch crash-window expansion, runtime deletion recovery, and
+cleanup remain planned.
 
 ### Milestone 5 — AWS deployment
 
@@ -825,6 +849,8 @@ retry slice. Implemented behavior includes:
 - an optional in-process coordinator and Kubernetes adapter;
 - durable attempt rediscovery, stable Kubernetes identities, and a single
   coordinator ownership lock;
+- live SIGKILL/restart recovery that reuses running attempts and Kubernetes
+  Jobs without duplicate attempts;
 - a batch demo that submits, executes, and merges all tasks, with final output
   verified against a local count; and
 - an idempotent local kind and kubectl setup command.
@@ -832,9 +858,9 @@ retry slice. Implemented behavior includes:
 Generic image inspection, storage-level output verification/aggregation, S3,
 and full failure recovery are not implemented. Exhausting a task's retry budget
 fails its job. Already active tasks are still observed to completion, while
-pending tasks stop dispatching. Coordinator stop/restart during a live failed
-Pod, network partition failover, and deleted-resource recovery still need
-dedicated end-to-end tests.
+pending tasks stop dispatching. Network partition failover, database or cluster
+loss, deletion of a running Job, and crashes in narrower dispatch windows still
+need dedicated end-to-end tests.
 
 ## Local and cloud development philosophy
 
