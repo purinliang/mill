@@ -137,6 +137,18 @@ dispatches, completions, and failures; `status.json` contains final API status.
 This is a correctness demonstration, not a throughput benchmark: the input is
 small and Pod startup dominates execution time.
 
+To run the same batch through the service boundary:
+
+```bash
+./scripts/demo-word-count-batch --split-process
+```
+
+This mode runs one Job service and two standalone executor replicas. Executors
+have no PostgreSQL configuration and lease work only through the Job service's
+gRPC API. One replica may own all current leases while the other stands by;
+parallel computation still occurs in the bounded set of Kubernetes workload
+Pods. The script verifies the same 12 outputs against the local baseline.
+
 For two active attempts instead:
 
 ```bash

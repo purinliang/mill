@@ -110,6 +110,22 @@ generated 12-record Walden input, executes the planned logical tasks with
 bounded concurrency, merges successful outputs, and compares them to a local
 full-input result. It uses hostPath storage on the single kind node.
 
+Run the same batch across the implemented service boundary with:
+
+```bash
+./scripts/demo-word-count-batch --split-process
+```
+
+This starts one Job-service process and two standalone executor replicas. The
+executors receive no PostgreSQL configuration and access execution state only
+through gRPC. The script verifies that the Job service did not start its
+in-process coordinator, all 12 task outputs match the local baseline, and no
+more than the configured number of workload Pods run concurrently. One
+executor may own all active leases while the other remains available as
+standby; executor replicas provide reconciliation availability, while workload
+Pods provide computation parallelism. Override the gRPC port with
+`MILL_DEMO_GRPC_PORT` when necessary.
+
 Use two active attempts with:
 
 ```bash
@@ -229,8 +245,8 @@ The standalone executor uses these RPC variables:
 The current local-file Kubernetes path also needs the node/root variables below;
 S3 tasks need the workload storage variables. The gRPC connection is currently
 plaintext and must remain on a trusted local or cluster-internal network. The
-full 12-task demonstration still uses the in-process path until its dedicated
-split-process mode is implemented.
+full 12-task demonstration uses the in-process path unless its dedicated
+split-process mode is selected.
 
 Node-local file tasks additionally require:
 

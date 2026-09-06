@@ -18,8 +18,9 @@ adapter establish a tested code boundary, and the process can expose the
 Job-side API on an optional gRPC listener. `cmd/mill-executor` can run the
 coordinator and Kubernetes adapter against that API without a PostgreSQL
 dependency. The original process can still use its direct repository path until
-the split-process demonstration is complete; these are not yet separately
-packaged or deployed services.
+that transitional path is removed. The full batch has been demonstrated across
+the process boundary, but these are not yet separately packaged or deployed
+services.
 
 ```text
 User
@@ -263,12 +264,13 @@ transport credentials or authorization, so it should bind only to a trusted
 local or cluster-internal address. `cmd/mill-executor` is now the separate
 executor entrypoint. It uses a bounded, deadline-bearing gRPC client, has no
 PostgreSQL configuration or dependency, and retries later coordinator ticks
-when the Job service is temporarily unavailable. A full split-process batch,
-removal of the old direct path, service authentication, and multi-Pod packaging
-remain planned. Lease expiry transfers observation ownership; it does not
-create a new attempt. An explicit expected version may be added only if the
-existing fencing and state guards prove insufficient for safely retrying an
-unknown RPC outcome.
+when the Job service is temporarily unavailable. The 12-task batch now runs
+through one Job-service process and two standalone executor replicas. Removal
+of the old direct path, executor failover through gRPC, service authentication,
+and multi-Pod packaging remain planned. Lease expiry transfers observation
+ownership; it does not create a new attempt. An explicit expected version may
+be added only if the existing fencing and state guards prove insufficient for
+safely retrying an unknown RPC outcome.
 
 ### Runtime separation implementation path
 
@@ -284,13 +286,13 @@ package refactor:
    executor instance identity, `executionrpc.Client`, coordinator loop, and
    Kubernetes client. Its dependency graph contains neither `internal/job` nor
    PostgreSQL, and temporary RPC failures leave it running for a later tick.
-3. **Remove the direct execution path.** Once the remote path works, remove the
-   in-process coordinator, `repositoryExecutionStore`, and `MILL_EXECUTOR` from
-   the Job service instead of maintaining two permanent execution modes.
-4. **Prove a complete split-process batch.** Run the existing 12-task example
-   through one Job-service process and two executor processes. Preserve bounded
-   parallelism and exact output comparison, and verify executors have no
-   database configuration.
+3. **Prove a complete split-process batch — implemented.** Run the existing
+   12-task example through one Job-service process and two executor processes.
+   Preserve bounded parallelism and exact output comparison, and verify
+   executors have no database configuration.
+4. **Remove the direct execution path.** Now that the remote path works, remove
+   the in-process coordinator, `repositoryExecutionStore`, and `MILL_EXECUTOR`
+   from the Job service instead of maintaining two permanent execution modes.
 5. **Prove executor failover.** Record active attempt IDs, lease tokens,
    Kubernetes Job names, and UIDs; kill one executor with `SIGKILL`; wait for
    lease expiry; and verify the survivor receives new fencing tokens while the

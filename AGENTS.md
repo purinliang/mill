@@ -34,8 +34,11 @@ in-memory transport. `cmd/mill` can serve the Job-side API on an optional 1 MiB
 bounded gRPC listener with graceful shutdown. The current coordinator still
 supports a direct repository adapter. `cmd/mill-executor` is a separately
 runnable gRPC-to-Kubernetes coordinator with no Job-package or PostgreSQL
-dependency. The full batch has not yet been demonstrated through the separate
-process, so the direct path remains temporarily.
+dependency. The batch demo's `--split-process` mode proves the 12-task flow
+through one Job service and two live standalone executor replicas. An executor
+may own all current leases while the other remains standby; Kubernetes workload
+Pods, not executor replicas, provide task parallelism. The direct path remains
+temporarily until the demonstrated remote path is reviewed.
 
 Workload image inspection, generic output verification/aggregation, and wider
 fault recovery remain planned. Separate runtime services, resource classes,
@@ -120,6 +123,10 @@ operational and maintenance cost.
   simultaneous-process lease test. Both processes must overlap before SIGKILL;
   the standby must not steal live leases, and takeover must change fencing
   tokens without changing attempt IDs, external UIDs, or Kubernetes Jobs.
+- Preserve `scripts/demo-word-count-batch --split-process` as the runtime
+  boundary test. The Job service must not start an in-process coordinator, two
+  standalone executor processes must remain live, neither executor may receive
+  PostgreSQL configuration, and all task outputs must match the local baseline.
 - Do not implement a custom cluster scheduler when Kubernetes provides a
   suitable primitive. Initially map one Mill attempt to one Kubernetes Job so
   its arguments, output, and retry history remain independently observable.
