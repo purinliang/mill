@@ -13,8 +13,6 @@ import (
 	executionv1 "github.com/purinliang/mill/internal/executionrpc/v1"
 )
 
-const maxExecutionRPCMessageBytes = 1 << 20
-
 type executionRPCService struct {
 	server *grpc.Server
 	errors <-chan error
@@ -46,8 +44,8 @@ func newExecutionRPCServer(backend executionrpc.Backend) (*grpc.Server, error) {
 		return nil, err
 	}
 	server := grpc.NewServer(
-		grpc.MaxRecvMsgSize(maxExecutionRPCMessageBytes),
-		grpc.MaxSendMsgSize(maxExecutionRPCMessageBytes),
+		grpc.MaxRecvMsgSize(executionrpc.MaxMessageBytes),
+		grpc.MaxSendMsgSize(executionrpc.MaxMessageBytes),
 	)
 	executionv1.RegisterExecutionServiceServer(server, executionServer)
 	return server, nil

@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/purinliang/mill/internal/execution"
+	"github.com/purinliang/mill/internal/executionrpc"
 	executionv1 "github.com/purinliang/mill/internal/executionrpc/v1"
 )
 
@@ -62,7 +63,7 @@ func TestExecutionRPCServerRejectsOversizedRequest(t *testing.T) {
 	client := serveExecutionRPCForTest(t, backend)
 	_, err := client.FailAttempt(context.Background(), &executionv1.FailAttemptRequest{
 		AttemptId: "attempt-1", LeaseToken: "token-1",
-		FailureMessage: strings.Repeat("x", maxExecutionRPCMessageBytes+1),
+		FailureMessage: strings.Repeat("x", executionrpc.MaxMessageBytes+1),
 	})
 	if status.Code(err) != codes.ResourceExhausted || backend.failCalls != 0 {
 		t.Fatalf("error = %v, backend calls = %d", err, backend.failCalls)
@@ -70,7 +71,7 @@ func TestExecutionRPCServerRejectsOversizedRequest(t *testing.T) {
 }
 
 func TestExecutionRPCServerShutsDownGracefully(t *testing.T) {
-	listener := bufconn.Listen(maxExecutionRPCMessageBytes)
+	listener := bufconn.Listen(executionrpc.MaxMessageBytes)
 	server, err := newExecutionRPCServer(testExecutionRPCBackend())
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +107,7 @@ func testExecutionRPCBackend() *executionRPCBackend {
 
 func serveExecutionRPCForTest(t *testing.T, backend *executionRPCBackend) executionv1.ExecutionServiceClient {
 	t.Helper()
-	listener := bufconn.Listen(maxExecutionRPCMessageBytes * 2)
+	listener := bufconn.Listen(executionrpc.MaxMessageBytes * 2)
 	server, err := newExecutionRPCServer(backend)
 	if err != nil {
 		t.Fatal(err)
