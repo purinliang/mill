@@ -23,6 +23,13 @@ for required in go docker kind kubectl initdb pg_ctl psql curl jq mktemp wc tr t
 done
 parallelism="${MILL_PARALLELISM:-3}"
 [[ "${parallelism}" == 2 || "${parallelism}" == 3 ]] || { printf 'This demo supports MILL_PARALLELISM=2 or 3.\n' >&2; exit 1; }
+resource_class="${MILL_DEMO_RESOURCE_CLASS:-small}"
+case "${resource_class}" in
+	small) expected_memory=128Mi; expected_memory_bytes=134217728 ;;
+	medium) expected_memory=512Mi; expected_memory_bytes=536870912 ;;
+	large) expected_memory=2Gi; expected_memory_bytes=2147483648 ;;
+	*) printf 'MILL_DEMO_RESOURCE_CLASS must be small, medium, or large.\n' >&2; exit 1 ;;
+esac
 port="${MILL_DEMO_PORT:-18080}"
 [[ "${port}" =~ ^[0-9]+$ ]] && (( port > 1024 && port < 65536 )) || { printf 'Invalid MILL_DEMO_PORT\n' >&2; exit 1; }
 grpc_port="${MILL_DEMO_GRPC_PORT:-$((port + 1))}"
@@ -164,7 +171,9 @@ fi
 workload_mode="${failure_mode}"
 if [[ "${restart_coordinator}" == true || "${replica_failover}" == true ]]; then workload_mode=delay; fi
 jq -n --arg uri "file://${run_directory}/input/records.jsonl" --arg image "${image}" --arg mode "${workload_mode}" \
-	'{executable:{image:$image,args:(if $mode == "none" then [] else [$mode] end)},input:{uri:$uri}}' > "${run_directory}/submission.json"
+	--arg resource_class "${resource_class}" \
+	'{executable:{image:$image,args:(if $mode == "none" then [] else [$mode] end)},input:{uri:$uri},resource_class:$resource_class}' \
+	> "${run_directory}/submission.json"
 curl -fsS "http://${MILL_HTTP_ADDR}/jobs" -H 'Content-Type: application/json' -H 'Idempotency-Key: word-count-batch' \
 	--data-binary "@${run_directory}/submission.json" > "${run_directory}/job.json"
 job_id="$(jq -er '.id' "${run_directory}/job.json")"
@@ -362,6 +371,21 @@ if [[ "${failure_mode}" == always ]]; then
 	exit 0
 fi
 jq -e --argjson tasks "${expected_tasks}" '.state == "completed" and .progress.total == $tasks and .progress.completed == $tasks and (.results | length) == $tasks' "${run_directory}/status.json" >/dev/null
+jq -e --arg class "${resource_class}" --argjson memory "${expected_memory_bytes}" '
+	.resource_class == $class
+	and .resources.cpu_request_millis == 100
+	and .resources.cpu_limit_millis == 1000
+	and .resources.memory_request_bytes == $memory
+	and .resources.memory_limit_bytes == $memory
+' "${run_directory}/status.json" >/dev/null
+kubectl --context kind-mill -n default get jobs -l "mill.dev/job-id=${job_id}" -o json > "${run_directory}/kubernetes-jobs.json"
+jq -e --arg memory "${expected_memory}" '
+	.items | length > 0 and all(.[];
+		.spec.template.spec.containers[0].resources.requests.cpu == "100m"
+		and .spec.template.spec.containers[0].resources.limits.cpu == "1"
+		and .spec.template.spec.containers[0].resources.requests.memory == $memory
+		and .spec.template.spec.containers[0].resources.limits.memory == $memory)
+' "${run_directory}/kubernetes-jobs.json" >/dev/null
 if [[ "${failure_mode}" == once ]]; then
 	jq -e --argjson tasks "${expected_tasks}" 'length == $tasks + 1 and ([.[] | select(.shard_index == 0) | .state] == ["failed", "completed"]) and all(.[] | select(.shard_index != 0); .attempt_number == 1 and .state == "completed")' "${run_directory}/attempts.json" >/dev/null
 else
