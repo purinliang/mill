@@ -25,6 +25,11 @@ const jobSelectColumns = `
 	j.input_record_count,
 	j.output_root_uri,
 	j.parallelism,
+	j.resource_class,
+	j.workload_cpu_request_millis,
+	j.workload_cpu_limit_millis,
+	j.workload_memory_request_bytes,
+	j.workload_memory_limit_bytes,
 	j.state,
 	COALESCE(j.task_count, 0),
 	(SELECT count(*) FROM public.tasks AS t WHERE t.job_id = j.id AND t.state = 'pending'),
@@ -104,6 +109,10 @@ func (r *Repository) Create(
 	if parallelism < 1 || parallelism > maxParallelism {
 		return Job{}, false, &ValidationError{Field: "parallelism", Problem: "must be between 1 and 10000"}
 	}
+	resources, valid := resolveResources(normalizedSubmission.ResourceClass)
+	if !valid {
+		return Job{}, false, &ValidationError{Field: "resource_class", Problem: "must be small, medium, or large"}
+	}
 
 	tx, err := r.database.Begin(ctx)
 	if err != nil {
@@ -132,9 +141,14 @@ func (r *Repository) Create(
 			input_sha256,
 			input_record_count,
 			output_root_uri,
-			parallelism
+			parallelism,
+			resource_class,
+			workload_cpu_request_millis,
+			workload_cpu_limit_millis,
+			workload_memory_request_bytes,
+			workload_memory_limit_bytes
 		)
-		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		ON CONFLICT (idempotency_key) DO NOTHING
 		RETURNING id::text
 	`,
@@ -147,6 +161,11 @@ func (r *Repository) Create(
 		inputRecordCount,
 		outputRootURI,
 		parallelism,
+		normalizedSubmission.ResourceClass,
+		resources.CPURequestMillis,
+		resources.CPULimitMillis,
+		resources.MemoryRequestBytes,
+		resources.MemoryLimitBytes,
 	).Scan(&createdID)
 	if err == nil {
 		createdJob, err := queryJob(ctx, tx, jobSelectByID, createdID)
@@ -304,6 +323,11 @@ func scanJob(row pgx.Row) (Job, error) {
 		&inputRecordCount,
 		&job.Output.URI,
 		&job.Parallelism,
+		&job.ResourceClass,
+		&job.Resources.CPURequestMillis,
+		&job.Resources.CPULimitMillis,
+		&job.Resources.MemoryRequestBytes,
+		&job.Resources.MemoryLimitBytes,
 		&job.State,
 		&job.Progress.Total,
 		&job.Progress.Pending,
@@ -333,5 +357,6 @@ func scanJob(row pgx.Row) (Job, error) {
 func sameSubmission(job Job, submission Submission) bool {
 	return job.Executable.Image == submission.Executable.Image &&
 		slices.Equal(job.Executable.Args, submission.Executable.Args) &&
-		job.Input.URI == submission.Input.URI
+		job.Input.URI == submission.Input.URI &&
+		job.ResourceClass == submission.ResourceClass
 }

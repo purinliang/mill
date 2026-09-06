@@ -132,6 +132,12 @@ func (e *Executor) Reconcile(ctx context.Context, claimed execution.ClaimedAttem
 }
 
 func (e *Executor) manifest(claimed execution.ClaimedAttempt) (*batchv1.Job, error) {
+	if claimed.Resources.CPURequestMillis < 1 ||
+		claimed.Resources.CPULimitMillis < claimed.Resources.CPURequestMillis ||
+		claimed.Resources.MemoryRequestBytes < 1 ||
+		claimed.Resources.MemoryLimitBytes < claimed.Resources.MemoryRequestBytes {
+		return nil, errors.New("claimed attempt has invalid workload resources")
+	}
 	inputURI, inputLocal, err := e.workloadURI(claimed.InputURI, "input")
 	if err != nil {
 		return nil, err
@@ -164,8 +170,15 @@ func (e *Executor) manifest(claimed execution.ClaimedAttempt) (*batchv1.Job, err
 		SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &no, ReadOnlyRootFilesystem: &yes,
 			Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
 		Resources: corev1.ResourceRequirements{
-			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("32Mi")},
-			Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("128Mi")}},
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    *resource.NewMilliQuantity(claimed.Resources.CPURequestMillis, resource.DecimalSI),
+				corev1.ResourceMemory: *resource.NewQuantity(claimed.Resources.MemoryRequestBytes, resource.BinarySI),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    *resource.NewMilliQuantity(claimed.Resources.CPULimitMillis, resource.DecimalSI),
+				corev1.ResourceMemory: *resource.NewQuantity(claimed.Resources.MemoryLimitBytes, resource.BinarySI),
+			},
+		},
 	}
 	pod := corev1.PodSpec{
 		RestartPolicy:                corev1.RestartPolicyNever,

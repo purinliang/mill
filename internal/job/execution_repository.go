@@ -53,7 +53,9 @@ func (r *Repository) LeaseActiveAttempts(
 			l.lease_owner, l.lease_token::text, l.lease_expires_at,
 			t.shard_index, t.input_start_byte, t.input_end_byte,
 			j.executable_image_ref, j.executable_args, j.input_uri,
-			j.output_root_uri
+			j.output_root_uri, j.workload_cpu_request_millis,
+			j.workload_cpu_limit_millis, j.workload_memory_request_bytes,
+			j.workload_memory_limit_bytes
 		FROM leased AS l
 		JOIN public.tasks AS t ON t.id = l.task_id
 		JOIN public.jobs AS j ON j.id = t.job_id
@@ -80,7 +82,9 @@ func scanClaimedAttempts(rows claimedAttemptRows, executor string) ([]ClaimedAtt
 			&a.Attempt.Number, &a.Attempt.State, &a.Attempt.ExternalID,
 			&a.Attempt.LeaseOwner, &a.Attempt.LeaseToken, &a.Attempt.LeaseExpiresAt,
 			&a.ShardIndex, &a.InputStartByte, &a.InputEndByte, &a.Executable.Image,
-			&a.Executable.Args, &a.InputURI, &a.OutputURI); err != nil {
+			&a.Executable.Args, &a.InputURI, &a.OutputURI,
+			&a.Resources.CPURequestMillis, &a.Resources.CPULimitMillis,
+			&a.Resources.MemoryRequestBytes, &a.Resources.MemoryLimitBytes); err != nil {
 			return nil, fmt.Errorf("read active attempt: %w", err)
 		}
 		a.Attempt.Executor = executor

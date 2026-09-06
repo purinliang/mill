@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.12
 // 	protoc        v3.21.12
-// source: mill/execution/v1/execution.proto
+// source: api/proto/mill/execution/v1/execution.proto
 
 package executionv1
 
@@ -61,11 +61,11 @@ func (x AttemptState) String() string {
 }
 
 func (AttemptState) Descriptor() protoreflect.EnumDescriptor {
-	return file_mill_execution_v1_execution_proto_enumTypes[0].Descriptor()
+	return file_api_proto_mill_execution_v1_execution_proto_enumTypes[0].Descriptor()
 }
 
 func (AttemptState) Type() protoreflect.EnumType {
-	return &file_mill_execution_v1_execution_proto_enumTypes[0]
+	return &file_api_proto_mill_execution_v1_execution_proto_enumTypes[0]
 }
 
 func (x AttemptState) Number() protoreflect.EnumNumber {
@@ -74,7 +74,7 @@ func (x AttemptState) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use AttemptState.Descriptor instead.
 func (AttemptState) EnumDescriptor() ([]byte, []int) {
-	return file_mill_execution_v1_execution_proto_rawDescGZIP(), []int{0}
+	return file_api_proto_mill_execution_v1_execution_proto_rawDescGZIP(), []int{0}
 }
 
 type LeaseActiveAttemptsRequest struct {
@@ -87,7 +87,7 @@ type LeaseActiveAttemptsRequest struct {
 
 func (x *LeaseActiveAttemptsRequest) Reset() {
 	*x = LeaseActiveAttemptsRequest{}
-	mi := &file_mill_execution_v1_execution_proto_msgTypes[0]
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -99,7 +99,7 @@ func (x *LeaseActiveAttemptsRequest) String() string {
 func (*LeaseActiveAttemptsRequest) ProtoMessage() {}
 
 func (x *LeaseActiveAttemptsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_execution_v1_execution_proto_msgTypes[0]
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -112,7 +112,7 @@ func (x *LeaseActiveAttemptsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeaseActiveAttemptsRequest.ProtoReflect.Descriptor instead.
 func (*LeaseActiveAttemptsRequest) Descriptor() ([]byte, []int) {
-	return file_mill_execution_v1_execution_proto_rawDescGZIP(), []int{0}
+	return file_api_proto_mill_execution_v1_execution_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *LeaseActiveAttemptsRequest) GetExecutor() string {
@@ -138,7 +138,7 @@ type LeaseActiveAttemptsResponse struct {
 
 func (x *LeaseActiveAttemptsResponse) Reset() {
 	*x = LeaseActiveAttemptsResponse{}
-	mi := &file_mill_execution_v1_execution_proto_msgTypes[1]
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -150,7 +150,7 @@ func (x *LeaseActiveAttemptsResponse) String() string {
 func (*LeaseActiveAttemptsResponse) ProtoMessage() {}
 
 func (x *LeaseActiveAttemptsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_execution_v1_execution_proto_msgTypes[1]
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -163,7 +163,7 @@ func (x *LeaseActiveAttemptsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeaseActiveAttemptsResponse.ProtoReflect.Descriptor instead.
 func (*LeaseActiveAttemptsResponse) Descriptor() ([]byte, []int) {
-	return file_mill_execution_v1_execution_proto_rawDescGZIP(), []int{1}
+	return file_api_proto_mill_execution_v1_execution_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *LeaseActiveAttemptsResponse) GetAttempts() []*ClaimedAttempt {
@@ -183,7 +183,7 @@ type ClaimNextAttemptRequest struct {
 
 func (x *ClaimNextAttemptRequest) Reset() {
 	*x = ClaimNextAttemptRequest{}
-	mi := &file_mill_execution_v1_execution_proto_msgTypes[2]
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -195,7 +195,7 @@ func (x *ClaimNextAttemptRequest) String() string {
 func (*ClaimNextAttemptRequest) ProtoMessage() {}
 
 func (x *ClaimNextAttemptRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_execution_v1_execution_proto_msgTypes[2]
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -208,7 +208,7 @@ func (x *ClaimNextAttemptRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClaimNextAttemptRequest.ProtoReflect.Descriptor instead.
 func (*ClaimNextAttemptRequest) Descriptor() ([]byte, []int) {
-	return file_mill_execution_v1_execution_proto_rawDescGZIP(), []int{2}
+	return file_api_proto_mill_execution_v1_execution_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *ClaimNextAttemptRequest) GetExecutor() string {
@@ -234,7 +234,7 @@ type ClaimNextAttemptResponse struct {
 
 func (x *ClaimNextAttemptResponse) Reset() {
 	*x = ClaimNextAttemptResponse{}
-	mi := &file_mill_execution_v1_execution_proto_msgTypes[3]
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -246,7 +246,7 @@ func (x *ClaimNextAttemptResponse) String() string {
 func (*ClaimNextAttemptResponse) ProtoMessage() {}
 
 func (x *ClaimNextAttemptResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_execution_v1_execution_proto_msgTypes[3]
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -259,7 +259,7 @@ func (x *ClaimNextAttemptResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClaimNextAttemptResponse.ProtoReflect.Descriptor instead.
 func (*ClaimNextAttemptResponse) Descriptor() ([]byte, []int) {
-	return file_mill_execution_v1_execution_proto_rawDescGZIP(), []int{3}
+	return file_api_proto_mill_execution_v1_execution_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *ClaimNextAttemptResponse) GetAttempt() *ClaimedAttempt {
@@ -280,7 +280,7 @@ type MarkAttemptRunningRequest struct {
 
 func (x *MarkAttemptRunningRequest) Reset() {
 	*x = MarkAttemptRunningRequest{}
-	mi := &file_mill_execution_v1_execution_proto_msgTypes[4]
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -292,7 +292,7 @@ func (x *MarkAttemptRunningRequest) String() string {
 func (*MarkAttemptRunningRequest) ProtoMessage() {}
 
 func (x *MarkAttemptRunningRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_execution_v1_execution_proto_msgTypes[4]
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -305,7 +305,7 @@ func (x *MarkAttemptRunningRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MarkAttemptRunningRequest.ProtoReflect.Descriptor instead.
 func (*MarkAttemptRunningRequest) Descriptor() ([]byte, []int) {
-	return file_mill_execution_v1_execution_proto_rawDescGZIP(), []int{4}
+	return file_api_proto_mill_execution_v1_execution_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *MarkAttemptRunningRequest) GetAttemptId() string {
@@ -339,7 +339,7 @@ type CompleteAttemptRequest struct {
 
 func (x *CompleteAttemptRequest) Reset() {
 	*x = CompleteAttemptRequest{}
-	mi := &file_mill_execution_v1_execution_proto_msgTypes[5]
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -351,7 +351,7 @@ func (x *CompleteAttemptRequest) String() string {
 func (*CompleteAttemptRequest) ProtoMessage() {}
 
 func (x *CompleteAttemptRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_execution_v1_execution_proto_msgTypes[5]
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -364,7 +364,7 @@ func (x *CompleteAttemptRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompleteAttemptRequest.ProtoReflect.Descriptor instead.
 func (*CompleteAttemptRequest) Descriptor() ([]byte, []int) {
-	return file_mill_execution_v1_execution_proto_rawDescGZIP(), []int{5}
+	return file_api_proto_mill_execution_v1_execution_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *CompleteAttemptRequest) GetAttemptId() string {
@@ -392,7 +392,7 @@ type FailAttemptRequest struct {
 
 func (x *FailAttemptRequest) Reset() {
 	*x = FailAttemptRequest{}
-	mi := &file_mill_execution_v1_execution_proto_msgTypes[6]
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -404,7 +404,7 @@ func (x *FailAttemptRequest) String() string {
 func (*FailAttemptRequest) ProtoMessage() {}
 
 func (x *FailAttemptRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_execution_v1_execution_proto_msgTypes[6]
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -417,7 +417,7 @@ func (x *FailAttemptRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FailAttemptRequest.ProtoReflect.Descriptor instead.
 func (*FailAttemptRequest) Descriptor() ([]byte, []int) {
-	return file_mill_execution_v1_execution_proto_rawDescGZIP(), []int{6}
+	return file_api_proto_mill_execution_v1_execution_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *FailAttemptRequest) GetAttemptId() string {
@@ -450,7 +450,7 @@ type AttemptResponse struct {
 
 func (x *AttemptResponse) Reset() {
 	*x = AttemptResponse{}
-	mi := &file_mill_execution_v1_execution_proto_msgTypes[7]
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -462,7 +462,7 @@ func (x *AttemptResponse) String() string {
 func (*AttemptResponse) ProtoMessage() {}
 
 func (x *AttemptResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_execution_v1_execution_proto_msgTypes[7]
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -475,7 +475,7 @@ func (x *AttemptResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttemptResponse.ProtoReflect.Descriptor instead.
 func (*AttemptResponse) Descriptor() ([]byte, []int) {
-	return file_mill_execution_v1_execution_proto_rawDescGZIP(), []int{7}
+	return file_api_proto_mill_execution_v1_execution_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *AttemptResponse) GetAttempt() *Attempt {
@@ -494,13 +494,14 @@ type ClaimedAttempt struct {
 	InputStartByte int64                  `protobuf:"varint,5,opt,name=input_start_byte,json=inputStartByte,proto3" json:"input_start_byte,omitempty"`
 	InputEndByte   int64                  `protobuf:"varint,6,opt,name=input_end_byte,json=inputEndByte,proto3" json:"input_end_byte,omitempty"`
 	OutputUri      string                 `protobuf:"bytes,7,opt,name=output_uri,json=outputUri,proto3" json:"output_uri,omitempty"`
+	Resources      *Resources             `protobuf:"bytes,8,opt,name=resources,proto3" json:"resources,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ClaimedAttempt) Reset() {
 	*x = ClaimedAttempt{}
-	mi := &file_mill_execution_v1_execution_proto_msgTypes[8]
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -512,7 +513,7 @@ func (x *ClaimedAttempt) String() string {
 func (*ClaimedAttempt) ProtoMessage() {}
 
 func (x *ClaimedAttempt) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_execution_v1_execution_proto_msgTypes[8]
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -525,7 +526,7 @@ func (x *ClaimedAttempt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClaimedAttempt.ProtoReflect.Descriptor instead.
 func (*ClaimedAttempt) Descriptor() ([]byte, []int) {
-	return file_mill_execution_v1_execution_proto_rawDescGZIP(), []int{8}
+	return file_api_proto_mill_execution_v1_execution_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ClaimedAttempt) GetAttempt() *Attempt {
@@ -577,6 +578,81 @@ func (x *ClaimedAttempt) GetOutputUri() string {
 	return ""
 }
 
+func (x *ClaimedAttempt) GetResources() *Resources {
+	if x != nil {
+		return x.Resources
+	}
+	return nil
+}
+
+type Resources struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	CpuRequestMillis   int64                  `protobuf:"varint,1,opt,name=cpu_request_millis,json=cpuRequestMillis,proto3" json:"cpu_request_millis,omitempty"`
+	CpuLimitMillis     int64                  `protobuf:"varint,2,opt,name=cpu_limit_millis,json=cpuLimitMillis,proto3" json:"cpu_limit_millis,omitempty"`
+	MemoryRequestBytes int64                  `protobuf:"varint,3,opt,name=memory_request_bytes,json=memoryRequestBytes,proto3" json:"memory_request_bytes,omitempty"`
+	MemoryLimitBytes   int64                  `protobuf:"varint,4,opt,name=memory_limit_bytes,json=memoryLimitBytes,proto3" json:"memory_limit_bytes,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *Resources) Reset() {
+	*x = Resources{}
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Resources) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Resources) ProtoMessage() {}
+
+func (x *Resources) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Resources.ProtoReflect.Descriptor instead.
+func (*Resources) Descriptor() ([]byte, []int) {
+	return file_api_proto_mill_execution_v1_execution_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *Resources) GetCpuRequestMillis() int64 {
+	if x != nil {
+		return x.CpuRequestMillis
+	}
+	return 0
+}
+
+func (x *Resources) GetCpuLimitMillis() int64 {
+	if x != nil {
+		return x.CpuLimitMillis
+	}
+	return 0
+}
+
+func (x *Resources) GetMemoryRequestBytes() int64 {
+	if x != nil {
+		return x.MemoryRequestBytes
+	}
+	return 0
+}
+
+func (x *Resources) GetMemoryLimitBytes() int64 {
+	if x != nil {
+		return x.MemoryLimitBytes
+	}
+	return 0
+}
+
 type Executable struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Image         string                 `protobuf:"bytes,1,opt,name=image,proto3" json:"image,omitempty"`
@@ -587,7 +663,7 @@ type Executable struct {
 
 func (x *Executable) Reset() {
 	*x = Executable{}
-	mi := &file_mill_execution_v1_execution_proto_msgTypes[9]
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -599,7 +675,7 @@ func (x *Executable) String() string {
 func (*Executable) ProtoMessage() {}
 
 func (x *Executable) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_execution_v1_execution_proto_msgTypes[9]
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -612,7 +688,7 @@ func (x *Executable) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Executable.ProtoReflect.Descriptor instead.
 func (*Executable) Descriptor() ([]byte, []int) {
-	return file_mill_execution_v1_execution_proto_rawDescGZIP(), []int{9}
+	return file_api_proto_mill_execution_v1_execution_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Executable) GetImage() string {
@@ -652,7 +728,7 @@ type Attempt struct {
 
 func (x *Attempt) Reset() {
 	*x = Attempt{}
-	mi := &file_mill_execution_v1_execution_proto_msgTypes[10]
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -664,7 +740,7 @@ func (x *Attempt) String() string {
 func (*Attempt) ProtoMessage() {}
 
 func (x *Attempt) ProtoReflect() protoreflect.Message {
-	mi := &file_mill_execution_v1_execution_proto_msgTypes[10]
+	mi := &file_api_proto_mill_execution_v1_execution_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -677,7 +753,7 @@ func (x *Attempt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Attempt.ProtoReflect.Descriptor instead.
 func (*Attempt) Descriptor() ([]byte, []int) {
-	return file_mill_execution_v1_execution_proto_rawDescGZIP(), []int{10}
+	return file_api_proto_mill_execution_v1_execution_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *Attempt) GetId() string {
@@ -785,11 +861,11 @@ func (x *Attempt) GetLeaseExpiresAt() *timestamppb.Timestamp {
 	return nil
 }
 
-var File_mill_execution_v1_execution_proto protoreflect.FileDescriptor
+var File_api_proto_mill_execution_v1_execution_proto protoreflect.FileDescriptor
 
-const file_mill_execution_v1_execution_proto_rawDesc = "" +
+const file_api_proto_mill_execution_v1_execution_proto_rawDesc = "" +
 	"\n" +
-	"!mill/execution/v1/execution.proto\x12\x11mill.execution.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"Y\n" +
+	"+api/proto/mill/execution/v1/execution.proto\x12\x11mill.execution.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"Y\n" +
 	"\x1aLeaseActiveAttemptsRequest\x12\x1a\n" +
 	"\bexecutor\x18\x01 \x01(\tR\bexecutor\x12\x1f\n" +
 	"\vlease_owner\x18\x02 \x01(\tR\n" +
@@ -821,7 +897,7 @@ const file_mill_execution_v1_execution_proto_rawDesc = "" +
 	"leaseToken\x12'\n" +
 	"\x0ffailure_message\x18\x03 \x01(\tR\x0efailureMessage\"G\n" +
 	"\x0fAttemptResponse\x124\n" +
-	"\aattempt\x18\x01 \x01(\v2\x1a.mill.execution.v1.AttemptR\aattempt\"\xb2\x02\n" +
+	"\aattempt\x18\x01 \x01(\v2\x1a.mill.execution.v1.AttemptR\aattempt\"\xee\x02\n" +
 	"\x0eClaimedAttempt\x124\n" +
 	"\aattempt\x18\x01 \x01(\v2\x1a.mill.execution.v1.AttemptR\aattempt\x12=\n" +
 	"\n" +
@@ -833,7 +909,13 @@ const file_mill_execution_v1_execution_proto_rawDesc = "" +
 	"\x10input_start_byte\x18\x05 \x01(\x03R\x0einputStartByte\x12$\n" +
 	"\x0einput_end_byte\x18\x06 \x01(\x03R\finputEndByte\x12\x1d\n" +
 	"\n" +
-	"output_uri\x18\a \x01(\tR\toutputUri\"6\n" +
+	"output_uri\x18\a \x01(\tR\toutputUri\x12:\n" +
+	"\tresources\x18\b \x01(\v2\x1c.mill.execution.v1.ResourcesR\tresources\"\xc3\x01\n" +
+	"\tResources\x12,\n" +
+	"\x12cpu_request_millis\x18\x01 \x01(\x03R\x10cpuRequestMillis\x12(\n" +
+	"\x10cpu_limit_millis\x18\x02 \x01(\x03R\x0ecpuLimitMillis\x120\n" +
+	"\x14memory_request_bytes\x18\x03 \x01(\x03R\x12memoryRequestBytes\x12,\n" +
+	"\x12memory_limit_bytes\x18\x04 \x01(\x03R\x10memoryLimitBytes\"6\n" +
 	"\n" +
 	"Executable\x12\x14\n" +
 	"\x05image\x18\x01 \x01(\tR\x05image\x12\x12\n" +
@@ -876,20 +958,20 @@ const file_mill_execution_v1_execution_proto_rawDesc = "" +
 	"\vFailAttempt\x12%.mill.execution.v1.FailAttemptRequest\x1a\".mill.execution.v1.AttemptResponseBAZ?github.com/purinliang/mill/internal/executionrpc/v1;executionv1b\x06proto3"
 
 var (
-	file_mill_execution_v1_execution_proto_rawDescOnce sync.Once
-	file_mill_execution_v1_execution_proto_rawDescData []byte
+	file_api_proto_mill_execution_v1_execution_proto_rawDescOnce sync.Once
+	file_api_proto_mill_execution_v1_execution_proto_rawDescData []byte
 )
 
-func file_mill_execution_v1_execution_proto_rawDescGZIP() []byte {
-	file_mill_execution_v1_execution_proto_rawDescOnce.Do(func() {
-		file_mill_execution_v1_execution_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_mill_execution_v1_execution_proto_rawDesc), len(file_mill_execution_v1_execution_proto_rawDesc)))
+func file_api_proto_mill_execution_v1_execution_proto_rawDescGZIP() []byte {
+	file_api_proto_mill_execution_v1_execution_proto_rawDescOnce.Do(func() {
+		file_api_proto_mill_execution_v1_execution_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_api_proto_mill_execution_v1_execution_proto_rawDesc), len(file_api_proto_mill_execution_v1_execution_proto_rawDesc)))
 	})
-	return file_mill_execution_v1_execution_proto_rawDescData
+	return file_api_proto_mill_execution_v1_execution_proto_rawDescData
 }
 
-var file_mill_execution_v1_execution_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_mill_execution_v1_execution_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
-var file_mill_execution_v1_execution_proto_goTypes = []any{
+var file_api_proto_mill_execution_v1_execution_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_api_proto_mill_execution_v1_execution_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_api_proto_mill_execution_v1_execution_proto_goTypes = []any{
 	(AttemptState)(0),                   // 0: mill.execution.v1.AttemptState
 	(*LeaseActiveAttemptsRequest)(nil),  // 1: mill.execution.v1.LeaseActiveAttemptsRequest
 	(*LeaseActiveAttemptsResponse)(nil), // 2: mill.execution.v1.LeaseActiveAttemptsResponse
@@ -900,60 +982,62 @@ var file_mill_execution_v1_execution_proto_goTypes = []any{
 	(*FailAttemptRequest)(nil),          // 7: mill.execution.v1.FailAttemptRequest
 	(*AttemptResponse)(nil),             // 8: mill.execution.v1.AttemptResponse
 	(*ClaimedAttempt)(nil),              // 9: mill.execution.v1.ClaimedAttempt
-	(*Executable)(nil),                  // 10: mill.execution.v1.Executable
-	(*Attempt)(nil),                     // 11: mill.execution.v1.Attempt
-	(*timestamppb.Timestamp)(nil),       // 12: google.protobuf.Timestamp
+	(*Resources)(nil),                   // 10: mill.execution.v1.Resources
+	(*Executable)(nil),                  // 11: mill.execution.v1.Executable
+	(*Attempt)(nil),                     // 12: mill.execution.v1.Attempt
+	(*timestamppb.Timestamp)(nil),       // 13: google.protobuf.Timestamp
 }
-var file_mill_execution_v1_execution_proto_depIdxs = []int32{
+var file_api_proto_mill_execution_v1_execution_proto_depIdxs = []int32{
 	9,  // 0: mill.execution.v1.LeaseActiveAttemptsResponse.attempts:type_name -> mill.execution.v1.ClaimedAttempt
 	9,  // 1: mill.execution.v1.ClaimNextAttemptResponse.attempt:type_name -> mill.execution.v1.ClaimedAttempt
-	11, // 2: mill.execution.v1.AttemptResponse.attempt:type_name -> mill.execution.v1.Attempt
-	11, // 3: mill.execution.v1.ClaimedAttempt.attempt:type_name -> mill.execution.v1.Attempt
-	10, // 4: mill.execution.v1.ClaimedAttempt.executable:type_name -> mill.execution.v1.Executable
-	0,  // 5: mill.execution.v1.Attempt.state:type_name -> mill.execution.v1.AttemptState
-	12, // 6: mill.execution.v1.Attempt.created_at:type_name -> google.protobuf.Timestamp
-	12, // 7: mill.execution.v1.Attempt.started_at:type_name -> google.protobuf.Timestamp
-	12, // 8: mill.execution.v1.Attempt.finished_at:type_name -> google.protobuf.Timestamp
-	12, // 9: mill.execution.v1.Attempt.updated_at:type_name -> google.protobuf.Timestamp
-	12, // 10: mill.execution.v1.Attempt.lease_expires_at:type_name -> google.protobuf.Timestamp
-	1,  // 11: mill.execution.v1.ExecutionService.LeaseActiveAttempts:input_type -> mill.execution.v1.LeaseActiveAttemptsRequest
-	3,  // 12: mill.execution.v1.ExecutionService.ClaimNextAttempt:input_type -> mill.execution.v1.ClaimNextAttemptRequest
-	5,  // 13: mill.execution.v1.ExecutionService.MarkAttemptRunning:input_type -> mill.execution.v1.MarkAttemptRunningRequest
-	6,  // 14: mill.execution.v1.ExecutionService.CompleteAttempt:input_type -> mill.execution.v1.CompleteAttemptRequest
-	7,  // 15: mill.execution.v1.ExecutionService.FailAttempt:input_type -> mill.execution.v1.FailAttemptRequest
-	2,  // 16: mill.execution.v1.ExecutionService.LeaseActiveAttempts:output_type -> mill.execution.v1.LeaseActiveAttemptsResponse
-	4,  // 17: mill.execution.v1.ExecutionService.ClaimNextAttempt:output_type -> mill.execution.v1.ClaimNextAttemptResponse
-	8,  // 18: mill.execution.v1.ExecutionService.MarkAttemptRunning:output_type -> mill.execution.v1.AttemptResponse
-	8,  // 19: mill.execution.v1.ExecutionService.CompleteAttempt:output_type -> mill.execution.v1.AttemptResponse
-	8,  // 20: mill.execution.v1.ExecutionService.FailAttempt:output_type -> mill.execution.v1.AttemptResponse
-	16, // [16:21] is the sub-list for method output_type
-	11, // [11:16] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	12, // 2: mill.execution.v1.AttemptResponse.attempt:type_name -> mill.execution.v1.Attempt
+	12, // 3: mill.execution.v1.ClaimedAttempt.attempt:type_name -> mill.execution.v1.Attempt
+	11, // 4: mill.execution.v1.ClaimedAttempt.executable:type_name -> mill.execution.v1.Executable
+	10, // 5: mill.execution.v1.ClaimedAttempt.resources:type_name -> mill.execution.v1.Resources
+	0,  // 6: mill.execution.v1.Attempt.state:type_name -> mill.execution.v1.AttemptState
+	13, // 7: mill.execution.v1.Attempt.created_at:type_name -> google.protobuf.Timestamp
+	13, // 8: mill.execution.v1.Attempt.started_at:type_name -> google.protobuf.Timestamp
+	13, // 9: mill.execution.v1.Attempt.finished_at:type_name -> google.protobuf.Timestamp
+	13, // 10: mill.execution.v1.Attempt.updated_at:type_name -> google.protobuf.Timestamp
+	13, // 11: mill.execution.v1.Attempt.lease_expires_at:type_name -> google.protobuf.Timestamp
+	1,  // 12: mill.execution.v1.ExecutionService.LeaseActiveAttempts:input_type -> mill.execution.v1.LeaseActiveAttemptsRequest
+	3,  // 13: mill.execution.v1.ExecutionService.ClaimNextAttempt:input_type -> mill.execution.v1.ClaimNextAttemptRequest
+	5,  // 14: mill.execution.v1.ExecutionService.MarkAttemptRunning:input_type -> mill.execution.v1.MarkAttemptRunningRequest
+	6,  // 15: mill.execution.v1.ExecutionService.CompleteAttempt:input_type -> mill.execution.v1.CompleteAttemptRequest
+	7,  // 16: mill.execution.v1.ExecutionService.FailAttempt:input_type -> mill.execution.v1.FailAttemptRequest
+	2,  // 17: mill.execution.v1.ExecutionService.LeaseActiveAttempts:output_type -> mill.execution.v1.LeaseActiveAttemptsResponse
+	4,  // 18: mill.execution.v1.ExecutionService.ClaimNextAttempt:output_type -> mill.execution.v1.ClaimNextAttemptResponse
+	8,  // 19: mill.execution.v1.ExecutionService.MarkAttemptRunning:output_type -> mill.execution.v1.AttemptResponse
+	8,  // 20: mill.execution.v1.ExecutionService.CompleteAttempt:output_type -> mill.execution.v1.AttemptResponse
+	8,  // 21: mill.execution.v1.ExecutionService.FailAttempt:output_type -> mill.execution.v1.AttemptResponse
+	17, // [17:22] is the sub-list for method output_type
+	12, // [12:17] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
-func init() { file_mill_execution_v1_execution_proto_init() }
-func file_mill_execution_v1_execution_proto_init() {
-	if File_mill_execution_v1_execution_proto != nil {
+func init() { file_api_proto_mill_execution_v1_execution_proto_init() }
+func file_api_proto_mill_execution_v1_execution_proto_init() {
+	if File_api_proto_mill_execution_v1_execution_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_mill_execution_v1_execution_proto_rawDesc), len(file_mill_execution_v1_execution_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_mill_execution_v1_execution_proto_rawDesc), len(file_api_proto_mill_execution_v1_execution_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   11,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_mill_execution_v1_execution_proto_goTypes,
-		DependencyIndexes: file_mill_execution_v1_execution_proto_depIdxs,
-		EnumInfos:         file_mill_execution_v1_execution_proto_enumTypes,
-		MessageInfos:      file_mill_execution_v1_execution_proto_msgTypes,
+		GoTypes:           file_api_proto_mill_execution_v1_execution_proto_goTypes,
+		DependencyIndexes: file_api_proto_mill_execution_v1_execution_proto_depIdxs,
+		EnumInfos:         file_api_proto_mill_execution_v1_execution_proto_enumTypes,
+		MessageInfos:      file_api_proto_mill_execution_v1_execution_proto_msgTypes,
 	}.Build()
-	File_mill_execution_v1_execution_proto = out.File
-	file_mill_execution_v1_execution_proto_goTypes = nil
-	file_mill_execution_v1_execution_proto_depIdxs = nil
+	File_api_proto_mill_execution_v1_execution_proto = out.File
+	file_api_proto_mill_execution_v1_execution_proto_goTypes = nil
+	file_api_proto_mill_execution_v1_execution_proto_depIdxs = nil
 }

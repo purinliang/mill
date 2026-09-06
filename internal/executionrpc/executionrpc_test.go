@@ -86,6 +86,8 @@ func TestClientServerRoundTripAndServerOwnedLeasePolicy(t *testing.T) {
 		Executable: execution.Executable{Image: "mill/word-count:dev", Args: []string{"--demo"}},
 		ShardIndex: 3, InputURI: "s3://input/data.jsonl", InputStartByte: 10,
 		InputEndByte: 20, OutputURI: "s3://output/result.jsonl",
+		Resources: execution.Resources{CPURequestMillis: 100, CPULimitMillis: 1000,
+			MemoryRequestBytes: 512 << 20, MemoryLimitBytes: 512 << 20},
 	}}
 	backend.active = []execution.ClaimedAttempt{backend.claimed}
 	client := newTestClient(t, backend, 15*time.Second)
@@ -102,7 +104,8 @@ func TestClientServerRoundTripAndServerOwnedLeasePolicy(t *testing.T) {
 		t.Fatalf("backend lease duration = %s", backend.leaseDuration)
 	}
 	if claimed.Attempt.ID != backend.claimed.Attempt.ID || claimed.Executable.Image != backend.claimed.Executable.Image ||
-		claimed.ShardIndex != 3 || claimed.InputStartByte != 10 || claimed.InputEndByte != 20 {
+		claimed.ShardIndex != 3 || claimed.InputStartByte != 10 || claimed.InputEndByte != 20 ||
+		claimed.Resources != backend.claimed.Resources {
 		t.Fatalf("claimed attempt changed across RPC: %+v", claimed)
 	}
 	running, err := client.MarkAttemptRunning(context.Background(), claimed.Attempt.ID, claimed.Attempt.LeaseToken, "uid-1")

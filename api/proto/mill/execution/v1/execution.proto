@@ -63,6 +63,14 @@ message ClaimedAttempt {
   int64 input_start_byte = 5;
   int64 input_end_byte = 6;
   string output_uri = 7;
+  Resources resources = 8;
+}
+
+message Resources {
+  int64 cpu_request_millis = 1;
+  int64 cpu_limit_millis = 2;
+  int64 memory_request_bytes = 3;
+  int64 memory_limit_bytes = 4;
 }
 
 message Executable {

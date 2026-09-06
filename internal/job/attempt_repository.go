@@ -103,7 +103,11 @@ func (r *Repository) ClaimNextAttempt(ctx context.Context, executor, leaseOwner 
 			j.executable_image_ref,
 			j.executable_args,
 			j.input_uri,
-			j.output_root_uri
+			j.output_root_uri,
+			j.workload_cpu_request_millis,
+			j.workload_cpu_limit_millis,
+			j.workload_memory_request_bytes,
+			j.workload_memory_limit_bytes
 		FROM public.tasks AS t
 		JOIN public.jobs AS j ON j.id = t.job_id
 		WHERE t.job_id = $1::uuid
@@ -123,6 +127,10 @@ func (r *Repository) ClaimNextAttempt(ctx context.Context, executor, leaseOwner 
 		&claimed.Executable.Args,
 		&claimed.InputURI,
 		&claimed.OutputURI,
+		&claimed.Resources.CPURequestMillis,
+		&claimed.Resources.CPULimitMillis,
+		&claimed.Resources.MemoryRequestBytes,
+		&claimed.Resources.MemoryLimitBytes,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ClaimedAttempt{}, ErrNoTaskAvailable

@@ -23,6 +23,9 @@ func TestNormalizeSubmission(t *testing.T) {
 	if len(submission.Executable.Args) != 0 {
 		t.Fatalf("executable args = %v, want empty", submission.Executable.Args)
 	}
+	if submission.ResourceClass != ResourceClassSmall {
+		t.Fatalf("resource class = %q, want %q", submission.ResourceClass, ResourceClassSmall)
+	}
 }
 
 func TestNormalizeSubmissionRejectsInvalidFields(t *testing.T) {
@@ -55,6 +58,14 @@ func TestNormalizeSubmissionRejectsInvalidFields(t *testing.T) {
 			submission: Submission{
 				Executable: Executable{Image: "mill/example:dev"},
 				Input:      InputSpec{URI: "file:///data/"},
+			},
+		},
+		{
+			name: "unknown resource class",
+			submission: Submission{
+				Executable:    Executable{Image: "mill/example:dev"},
+				Input:         InputSpec{URI: "file:///data/records.jsonl"},
+				ResourceClass: "huge",
 			},
 		},
 	}

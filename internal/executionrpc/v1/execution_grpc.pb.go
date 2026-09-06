@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.2
 // - protoc             v3.21.12
-// source: mill/execution/v1/execution.proto
+// source: api/proto/mill/execution/v1/execution.proto
 
 package executionv1
 
@@ -275,5 +275,5 @@ var ExecutionService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "mill/execution/v1/execution.proto",
+	Metadata: "api/proto/mill/execution/v1/execution.proto",
 }

@@ -52,6 +52,10 @@ func TestRepositoryCreateReplayGetAndPersist(t *testing.T) {
 	if createdJob.Parallelism != 3 {
 		t.Errorf("parallelism = %d, want 3", createdJob.Parallelism)
 	}
+	if createdJob.ResourceClass != ResourceClassSmall || createdJob.Resources.MemoryRequestBytes != 128<<20 ||
+		createdJob.Resources.MemoryLimitBytes != 128<<20 {
+		t.Errorf("created resources = class %q %+v", createdJob.ResourceClass, createdJob.Resources)
+	}
 	if createdJob.Executable.Args == nil {
 		t.Error("executable args are nil, want an empty array")
 	}
@@ -98,6 +102,11 @@ func TestRepositoryCreateReplayGetAndPersist(t *testing.T) {
 		"input": {
 			Executable: submission.Executable,
 			Input:      InputSpec{URI: "file:///data/other.jsonl"},
+		},
+		"resource class": {
+			Executable:    submission.Executable,
+			Input:         submission.Input,
+			ResourceClass: ResourceClassLarge,
 		},
 	}
 	for name, conflictingSubmission := range conflictingSubmissions {

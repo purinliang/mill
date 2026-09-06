@@ -40,12 +40,21 @@ func normalizeSubmission(submission Submission) (Submission, error) {
 		args = []string{}
 	}
 
+	resourceClass := submission.ResourceClass
+	if resourceClass == "" {
+		resourceClass = ResourceClassSmall
+	}
+	if _, valid := resolveResources(resourceClass); !valid {
+		return Submission{}, &ValidationError{Field: "resource_class", Problem: "must be small, medium, or large"}
+	}
+
 	return Submission{
 		Executable: Executable{
 			Image: submission.Executable.Image,
 			Args:  args,
 		},
-		Input: InputSpec{URI: inputURI},
+		Input:         InputSpec{URI: inputURI},
+		ResourceClass: resourceClass,
 	}, nil
 }
 

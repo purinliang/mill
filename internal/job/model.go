@@ -41,8 +41,9 @@ type Output struct {
 }
 
 type Submission struct {
-	Executable Executable `json:"executable"`
-	Input      InputSpec  `json:"input"`
+	Executable    Executable    `json:"executable"`
+	Input         InputSpec     `json:"input"`
+	ResourceClass ResourceClass `json:"resource_class,omitempty"`
 }
 
 type Progress struct {
@@ -54,16 +55,18 @@ type Progress struct {
 }
 
 type Job struct {
-	ID          string     `json:"id"`
-	State       State      `json:"state"`
-	Executable  Executable `json:"executable"`
-	Input       Input      `json:"input"`
-	Output      Output     `json:"output"`
-	Parallelism int        `json:"parallelism"`
-	Progress    Progress   `json:"progress"`
-	Results     []Result   `json:"results,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID            string              `json:"id"`
+	State         State               `json:"state"`
+	Executable    Executable          `json:"executable"`
+	Input         Input               `json:"input"`
+	Output        Output              `json:"output"`
+	Parallelism   int                 `json:"parallelism"`
+	ResourceClass ResourceClass       `json:"resource_class"`
+	Resources     execution.Resources `json:"resources"`
+	Progress      Progress            `json:"progress"`
+	Results       []Result            `json:"results,omitempty"`
+	CreatedAt     time.Time           `json:"created_at"`
+	UpdatedAt     time.Time           `json:"updated_at"`
 }
 
 type Result struct {

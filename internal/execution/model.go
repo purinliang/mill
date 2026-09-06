@@ -28,6 +28,13 @@ type Executable struct {
 	Args  []string `json:"args"`
 }
 
+type Resources struct {
+	CPURequestMillis   int64 `json:"cpu_request_millis"`
+	CPULimitMillis     int64 `json:"cpu_limit_millis"`
+	MemoryRequestBytes int64 `json:"memory_request_bytes"`
+	MemoryLimitBytes   int64 `json:"memory_limit_bytes"`
+}
+
 type Attempt struct {
 	ID             string
 	JobID          string
@@ -54,4 +61,5 @@ type ClaimedAttempt struct {
 	InputStartByte int64
 	InputEndByte   int64
 	OutputURI      string
+	Resources      Resources
 }

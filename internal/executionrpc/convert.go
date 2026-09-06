@@ -22,11 +22,17 @@ func claimedAttemptToProto(claimed execution.ClaimedAttempt) *executionv1.Claime
 		InputStartByte: claimed.InputStartByte,
 		InputEndByte:   claimed.InputEndByte,
 		OutputUri:      claimed.OutputURI,
+		Resources: &executionv1.Resources{
+			CpuRequestMillis:   claimed.Resources.CPURequestMillis,
+			CpuLimitMillis:     claimed.Resources.CPULimitMillis,
+			MemoryRequestBytes: claimed.Resources.MemoryRequestBytes,
+			MemoryLimitBytes:   claimed.Resources.MemoryLimitBytes,
+		},
 	}
 }
 
 func claimedAttemptFromProto(value *executionv1.ClaimedAttempt) (execution.ClaimedAttempt, error) {
-	if value == nil || value.Attempt == nil || value.Executable == nil {
+	if value == nil || value.Attempt == nil || value.Executable == nil || value.Resources == nil {
 		return execution.ClaimedAttempt{}, fmt.Errorf("execution RPC returned an incomplete claimed attempt")
 	}
 	attempt, err := attemptFromProto(value.Attempt)
@@ -44,6 +50,12 @@ func claimedAttemptFromProto(value *executionv1.ClaimedAttempt) (execution.Claim
 		InputStartByte: value.InputStartByte,
 		InputEndByte:   value.InputEndByte,
 		OutputURI:      value.OutputUri,
+		Resources: execution.Resources{
+			CPURequestMillis:   value.Resources.CpuRequestMillis,
+			CPULimitMillis:     value.Resources.CpuLimitMillis,
+			MemoryRequestBytes: value.Resources.MemoryRequestBytes,
+			MemoryLimitBytes:   value.Resources.MemoryLimitBytes,
+		},
 	}, nil
 }
 

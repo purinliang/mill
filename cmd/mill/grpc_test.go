@@ -102,6 +102,8 @@ func testExecutionRPCBackend() *executionRPCBackend {
 		Executable: execution.Executable{Image: "mill/word-count:dev"},
 		InputURI:   "s3://input/data.jsonl", InputEndByte: 10,
 		OutputURI: "s3://output/result.jsonl",
+		Resources: execution.Resources{CPURequestMillis: 100, CPULimitMillis: 1000,
+			MemoryRequestBytes: 128 << 20, MemoryLimitBytes: 128 << 20},
 	}}
 }
 

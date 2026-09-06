@@ -21,7 +21,9 @@ func testClaim() execution.ClaimedAttempt {
 	return execution.ClaimedAttempt{Attempt: execution.Attempt{ID: "attempt-1", JobID: "job-1", TaskID: "task-1", State: execution.AttemptStateStarting},
 		Executable: execution.Executable{Image: "mill/word-count:dev", Args: []string{"--user-arg"}}, ShardIndex: 2,
 		InputURI: "file:///local/input/records.jsonl", InputStartByte: 100, InputEndByte: 200,
-		OutputURI: "file:///local/output/job-1/tasks/2/attempts/attempt-1/result.jsonl"}
+		OutputURI: "file:///local/output/job-1/tasks/2/attempts/attempt-1/result.jsonl",
+		Resources: execution.Resources{CPURequestMillis: 100, CPULimitMillis: 1000,
+			MemoryRequestBytes: 128 << 20, MemoryLimitBytes: 128 << 20}}
 }
 
 func testConfig() Config {
@@ -51,6 +53,19 @@ func TestManifestPreservesRangeAndSeparatesMounts(t *testing.T) {
 	}
 	if *m.Spec.BackoffLimit != 0 || *m.Spec.Parallelism != 1 || spec.RestartPolicy != corev1.RestartPolicyNever {
 		t.Fatal("unexpected native retries/parallelism")
+	}
+	resources := spec.Containers[0].Resources
+	if resources.Requests.Cpu().MilliValue() != 100 || resources.Limits.Cpu().MilliValue() != 1000 ||
+		resources.Requests.Memory().Value() != 128<<20 || resources.Limits.Memory().Value() != 128<<20 {
+		t.Fatalf("workload resources = %+v", resources)
+	}
+}
+
+func TestManifestRejectsInvalidResources(t *testing.T) {
+	claim := testClaim()
+	claim.Resources.MemoryLimitBytes = claim.Resources.MemoryRequestBytes - 1
+	if _, err := (&Executor{config: testConfig()}).manifest(claim); err == nil {
+		t.Fatal("manifest accepted a memory limit below its request")
 	}
 }
 
