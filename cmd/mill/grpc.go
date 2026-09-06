@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"time"
 
 	"google.golang.org/grpc"
 
 	"github.com/purinliang/mill/internal/executionrpc"
 	executionv1 "github.com/purinliang/mill/internal/executionrpc/v1"
 )
+
+const attemptLeaseDuration = 15 * time.Second
 
 type executionRPCService struct {
 	server *grpc.Server

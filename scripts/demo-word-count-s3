@@ -7,7 +7,7 @@ if [[ $# -ne 0 ]]; then
 	exit 1
 fi
 cd "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-for required in go docker kind kubectl initdb pg_ctl psql curl jq mktemp wc openssl; do
+for required in go docker kind kubectl initdb pg_ctl psql curl jq mktemp wc openssl env grep tr; do
 	command -v "${required}" >/dev/null || { printf 'Missing command: %s\n' "${required}" >&2; exit 1; }
 done
 curl --help all | grep -q -- '--aws-sigv4' || { printf 'curl must support --aws-sigv4\n' >&2; exit 1; }
@@ -20,18 +20,25 @@ parallelism="${MILL_PARALLELISM:-3}"
 [[ "${parallelism}" =~ ^[1-9][0-9]*$ ]] && (( parallelism <= 10000 )) || { printf 'Invalid MILL_PARALLELISM\n' >&2; exit 1; }
 port="${MILL_DEMO_PORT:-18081}"
 [[ "${port}" =~ ^[0-9]+$ ]] && (( port > 1024 && port < 65536 )) || { printf 'Invalid MILL_DEMO_PORT\n' >&2; exit 1; }
+grpc_port="${MILL_DEMO_GRPC_PORT:-$((port + 1))}"
+[[ "${grpc_port}" =~ ^[0-9]+$ ]] && (( grpc_port > 1024 && grpc_port < 65536 && grpc_port != port )) || { printf 'Invalid MILL_DEMO_GRPC_PORT\n' >&2; exit 1; }
 
 run_directory="$(mktemp -d /tmp/mill-s3.XXXXXXXX)"
 run_token="$(basename "${run_directory}" | tr '[:upper:]' '[:lower:]' | tr '.' '-')"
 storage_container="${run_token}-storage"
 credentials_secret="${run_token}-credentials"
 server_pid=""
+executor_pid=""
 postgres_started=false
 storage_started=false
 secret_created=false
 job_id=""
 cleanup() {
 	local status=$?
+	if [[ -n "${executor_pid}" ]]; then
+		kill -TERM "${executor_pid}" 2>/dev/null || true
+		wait "${executor_pid}" 2>/dev/null || status=1
+	fi
 	if [[ -n "${server_pid}" ]]; then
 		kill -TERM "${server_pid}" 2>/dev/null || true
 		wait "${server_pid}" 2>/dev/null || status=1
@@ -46,8 +53,8 @@ cleanup() {
 		docker rm -f "${storage_container}" >/dev/null || true
 	fi
 	if (( status != 0 )); then
-		printf '\nDemo failed; inspect %s/server.log, %s/storage.log, and %s/postgres.log\n' \
-			"${run_directory}" "${run_directory}" "${run_directory}" >&2
+		printf '\nDemo failed; inspect %s/server.log, %s/executor.log, %s/storage.log, and %s/postgres.log\n' \
+			"${run_directory}" "${run_directory}" "${run_directory}" "${run_directory}" >&2
 		if [[ -n "${job_id}" ]]; then
 			kubectl --context kind-mill -n default get jobs,pods -l "mill.dev/job-id=${job_id}" || true
 		fi
@@ -60,6 +67,7 @@ printf 'Demo files: %s\n' "${run_directory}"
 mkdir "${run_directory}/input" "${run_directory}/output" "${run_directory}/socket" "${run_directory}/storage"
 go run ./examples/word-count/generate --output "${run_directory}/input/records.jsonl"
 go build -o "${run_directory}/mill" ./cmd/mill
+go build -o "${run_directory}/mill-executor" ./cmd/mill-executor
 docker build --file examples/word-count/cmd/word-count/Dockerfile --tag mill/word-count:dev .
 kind load docker-image mill/word-count:dev --name mill
 
@@ -108,7 +116,8 @@ done
 export AWS_ACCESS_KEY_ID="${access_key}" AWS_SECRET_ACCESS_KEY="${secret_key}" AWS_REGION="${region}"
 export MILL_S3_ENDPOINT="${host_endpoint}" MILL_OUTPUT_ROOT_URI=s3://mill-output
 export MILL_HTTP_ADDR="127.0.0.1:${port}" MILL_PARALLELISM="${parallelism}"
-export MILL_EXECUTOR=kubernetes MILL_KUBE_CONTEXT=kind-mill MILL_KUBE_NAMESPACE=default
+export MILL_GRPC_ADDR="127.0.0.1:${grpc_port}"
+export MILL_KUBE_CONTEXT=kind-mill MILL_KUBE_NAMESPACE=default
 export MILL_WORKLOAD_S3_REGION="${region}" MILL_WORKLOAD_S3_ENDPOINT="${pod_endpoint}"
 export MILL_WORKLOAD_S3_CREDENTIALS_SECRET="${credentials_secret}"
 "${run_directory}/mill" > "${run_directory}/server.log" 2>&1 &
@@ -121,6 +130,20 @@ for _ in {1..60}; do
 done
 [[ "${ready}" == true ]] || { printf 'Mill did not become ready\n' >&2; exit 1; }
 
+env -u MILL_DATABASE_URL -u MILL_OUTPUT_ROOT_URI -u MILL_PARALLELISM -u MILL_HTTP_ADDR -u MILL_GRPC_ADDR \
+	MILL_JOB_GRPC_TARGET="127.0.0.1:${grpc_port}" "${run_directory}/mill-executor" > "${run_directory}/executor.log" 2>&1 &
+executor_pid=$!
+ready=false
+for _ in {1..60}; do
+	kill -0 "${executor_pid}" 2>/dev/null || { printf 'Executor exited; inspect executor.log\n' >&2; exit 1; }
+	if grep -q 'Mill executor instance=' "${run_directory}/executor.log"; then ready=true; break; fi
+	sleep 0.1
+done
+[[ "${ready}" == true ]] || { printf 'Executor did not initialize\n' >&2; exit 1; }
+if tr '\0' '\n' < "/proc/${executor_pid}/environ" | grep -q '^MILL_DATABASE_URL='; then
+	printf 'Executor inherited MILL_DATABASE_URL\n' >&2; exit 1
+fi
+
 jq -n --arg image mill/word-count:dev --arg uri s3://mill-input/records.jsonl \
 	'{executable:{image:$image,args:[]},input:{uri:$uri}}' > "${run_directory}/submission.json"
 curl -fsS "http://${MILL_HTTP_ADDR}/jobs" -H 'Content-Type: application/json' -H 'Idempotency-Key: word-count-s3' \
@@ -132,6 +155,7 @@ peak=0
 finished=false
 deadline=$((SECONDS + 180))
 while (( SECONDS < deadline )); do
+	kill -0 "${executor_pid}" 2>/dev/null || { printf 'Executor stopped during the batch\n' >&2; exit 1; }
 	curl -fsS "http://${MILL_HTTP_ADDR}/jobs/${job_id}" > "${run_directory}/status.json"
 	state="$(jq -r '.state' "${run_directory}/status.json")"
 	running="$(jq -r '.progress.running' "${run_directory}/status.json")"

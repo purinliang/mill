@@ -46,8 +46,6 @@ func main() {
 }
 
 func run(ctx context.Context, httpAddress, grpcAddress, databaseURL, outputRootURI, parallelismValue string) error {
-	ctx, cancelRun := context.WithCancel(ctx)
-	defer cancelRun()
 	if httpAddress == "" {
 		httpAddress = defaultHTTPAddress
 	}
@@ -83,10 +81,6 @@ func run(ctx context.Context, httpAddress, grpcAddress, databaseURL, outputRootU
 		return err
 	}
 	jobHandler := job.NewHandler(jobService, log.Default())
-	executionLoop, err := configureExecution(jobRepository)
-	if err != nil {
-		return err
-	}
 
 	server := &http.Server{
 		Addr:              httpAddress,
@@ -110,18 +104,6 @@ func run(ctx context.Context, httpAddress, grpcAddress, databaseURL, outputRootU
 	go func() {
 		serveErrors <- server.Serve(listener)
 	}()
-	executionErrors := make(chan error, 1)
-	if executionLoop != nil {
-		executionDone := make(chan struct{})
-		go func() {
-			defer close(executionDone)
-			executionErrors <- executionLoop.run(ctx)
-		}()
-		defer func() {
-			cancelRun()
-			<-executionDone
-		}()
-	}
 	defer server.Close()
 
 	log.Printf("Mill HTTP server listening on %s", listener.Addr())
@@ -131,10 +113,6 @@ func run(ctx context.Context, httpAddress, grpcAddress, databaseURL, outputRootU
 	}
 
 	select {
-	case err := <-executionErrors:
-		if ctx.Err() == nil {
-			return fmt.Errorf("execution coordinator stopped: %w", err)
-		}
 	case err := <-serveErrors:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
