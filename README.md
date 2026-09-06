@@ -61,6 +61,7 @@ resource-class proposal, and availability design.
 - Store metadata and execution state in PostgreSQL.
 - Store datasets and attempt outputs through `file://` or `s3://` URIs.
 - Execute attempts as Kubernetes Jobs with bounded parallelism.
+- Select a server-defined `small`, `medium`, or `large` workload resource class.
 - Track pending, running, completed, and failed tasks.
 - Retry terminal failures up to three total attempts.
 - Return successful attempt output locations after job completion.
@@ -141,6 +142,7 @@ Implemented:
 - demonstrated executor-process failover with lease-token replacement and
   stable attempt and Kubernetes Job identities;
 - deterministic Kubernetes identity and executor restart reconciliation;
+- durable workload resource classes propagated through gRPC to Kubernetes;
 - trusted workload CLI contract and non-root example images;
 - local, container, single-task, full-batch, retry, restart, replica-failover,
   and S3-backed word-count demonstrations; and
@@ -150,7 +152,6 @@ Not implemented:
 
 - service authentication for the internal gRPC boundary;
 - a packaged Kubernetes multi-replica deployment;
-- named workload resource classes;
 - replicated PostgreSQL or multi-node K3s deployment;
 - network-partition or physical-node failure tests;
 - generic aggregation or validation of arbitrary workload outputs;
@@ -193,13 +194,13 @@ Read and plan JSONL through S3-compatible storage, use HTTP byte-range requests
 inside workload Pods, and publish unique attempt outputs without hostPath or
 node pinning. Real AWS S3 remains untested.
 
-### 6 — Service boundary and resource classes — in progress
+### 6 — Service boundary and resource classes — implemented locally
 
 The pure execution domain contract, versioned Protobuf/gRPC adapters, Job-side
 listener, standalone executor, removal of the direct path, and executor
-failover proof are implemented. Next, review this runnable boundary, then add
-optional named `small`, `medium`, and `large` workload classes and persist their
-resolved resources so retries remain stable.
+failover proof are implemented. Optional named `small`, `medium`, and `large`
+workload classes persist their resolved CPU and memory resources so retries
+remain stable if server profiles change later.
 
 ### 7 — Two-laptop replica availability — planned
 

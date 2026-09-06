@@ -295,15 +295,13 @@ package refactor:
    fencing tokens while the attempt IDs, Job names, and UIDs remain unchanged.
    All 12 tasks must finish without duplicate attempts or Kubernetes Jobs.
 
-After step 5, stop and review the working two-service system before adding
-resource classes or deployment infrastructure. This is a learning and ownership
-review, not a major redesign: trace one submitted job through REST, planning,
-PostgreSQL, gRPC, reconciliation, Kubernetes, and output publication; identify
-which invariants each package and transaction protects; then clean up only
-concrete problems such as duplicated lifecycle code, confusing configuration,
-conversion complexity, or mixed ownership. Do not split the planner, HTTP
-handling, or PostgreSQL repositories out of `internal/job` merely because the
-package contains several files.
+After step 5, the two-service system was reviewed before further feature work.
+The dependency direction and package ownership remained cohesive, so no broad
+refactor was justified. The review traced one submitted job through REST,
+planning, PostgreSQL, gRPC, reconciliation, Kubernetes, and output publication,
+then retained the existing boundaries. Do not split the planner, HTTP handling,
+or PostgreSQL repositories out of `internal/job` merely because the package
+contains several files.
 
 This checkpoint demonstrates executor-process availability and a real service
 boundary. It does not demonstrate complete infrastructure availability. A Job
@@ -340,9 +338,9 @@ Short code reviews still occur after every implementation slice. The two major
 checkpoints are for consolidating lessons from new failure domains, not for
 postponing understanding of code written earlier.
 
-## Planned workload resource classes
+## Workload resource classes
 
-An optional top-level `resource_class` will select a server-defined profile:
+An optional top-level `resource_class` selects a server-defined profile:
 
 ```json
 {
@@ -352,8 +350,8 @@ An optional top-level `resource_class` will select a server-defined profile:
 }
 ```
 
-Omission will mean `small`. The Job service will persist the class and resolved
-requests/limits so configuration changes cannot alter a retry. The initial
+Omission means `small`. The Job service persists the class and resolved
+requests/limits so configuration changes cannot alter a retry. The implemented
 memory profiles are:
 
 | Class | Memory request and limit |
@@ -362,9 +360,10 @@ memory profiles are:
 | `medium` | 512 MiB |
 | `large` | 2 GiB |
 
-Users will not submit raw Kubernetes resource strings. CPU values and operator
-configuration will be decided when this milestone is implemented. Current
-Kubernetes attempts still use fixed resources.
+All three classes request `100m` CPU and limit CPU to `1`; these values remain
+server policy rather than user input. Users do not submit raw Kubernetes
+resource strings. Executors receive resolved integer resources through gRPC
+and construct the corresponding Kubernetes quantities.
 
 The Job and executor services should normally request 64 MiB and limit at
 128 MiB. Their memory may scale with explicitly bounded concurrent requests,

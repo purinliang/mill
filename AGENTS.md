@@ -38,13 +38,15 @@ gRPC-to-Kubernetes coordinator and has no Job-package or PostgreSQL dependency.
 The batch demo's `--split-process` mode proves the 12-task flow
 through one Job service and two live standalone executor replicas. An executor
 may own all current leases while the other remains standby; Kubernetes workload
-Pods, not executor replicas, provide task parallelism. The
+Pods, not executor replicas, provide task parallelism. Jobs select an optional
+`small`, `medium`, or `large` resource class; the Job service persists resolved
+CPU and memory values and executors receive them through gRPC. The
 `--replica-failover` mode proves survivor takeover across this boundary while
 preserving attempt and Kubernetes Job identities.
 
 Workload image inspection, generic output verification/aggregation, and wider
-fault recovery remain planned. Packaged runtime deployments, resource classes,
-PostgreSQL replication, and multi-node availability are documented future
+fault recovery remain planned. Packaged runtime deployments, PostgreSQL
+replication, and multi-node availability are documented future
 milestones, not current behavior. Add implementation only in small, explicitly
 requested increments. Do not add more Dockerfiles,
 Kubernetes manifests, CI workflows, Terraform, or unrelated infrastructure
@@ -92,6 +94,10 @@ operational and maintenance cost.
 - Keep user-facing submission simple: `executable` plus `input`. JSONL is the
   only current format, partition sizing is internal policy, and parallelism is
   server configuration captured durably on each job.
+- Keep workload resources server-defined. Accept only the named resource
+  classes, default omission to `small`, persist both the class and resolved
+  integer requests/limits on the job, and pass resolved values—not policy
+  names—to executors. A retry must retain its job's persisted resources.
 - Use explicit, validated state transitions. Make transitions idempotent where
   retries, reconciliation, or process restarts can repeat an operation.
 - Persist a `starting` attempt and mark its task active in one transaction

@@ -133,6 +133,16 @@ Use two active attempts with:
 MILL_PARALLELISM=2 ./scripts/demo-word-count-batch
 ```
 
+Exercise a workload resource class and verify every generated Pod template:
+
+```bash
+MILL_DEMO_RESOURCE_CLASS=medium ./scripts/demo-word-count-batch
+```
+
+The accepted values are `small`, `medium`, and `large`; omission defaults to
+`small` in the API. The demo checks both the returned resolved resources and
+the Kubernetes CPU and memory requests/limits.
+
 Exercise deterministic task failure and retry exhaustion:
 
 ```bash

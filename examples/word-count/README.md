@@ -157,6 +157,16 @@ For two active attempts instead:
 MILL_PARALLELISM=2 ./scripts/demo-word-count-batch
 ```
 
+To run and verify the `medium` workload resource class:
+
+```bash
+MILL_DEMO_RESOURCE_CLASS=medium ./scripts/demo-word-count-batch
+```
+
+Mill persists the resolved profile on the job, sends it to the executor through
+gRPC, and applies `100m`/`1` CPU and `512Mi` memory request/limit to every
+workload Pod.
+
 With this configuration the current planner produces six tasks, each covering
 two of the 12 records. The result still covers the entire input. The demo uses
 the task count returned by Mill rather than choosing its own shards.
