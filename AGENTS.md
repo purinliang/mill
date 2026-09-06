@@ -30,8 +30,10 @@ The backend-independent execution model and store contract have been extracted
 from `internal/job`. A versioned Protobuf schema and gRPC client/server adapters
 now carry the implemented lease operations with server-owned lease duration,
 fencing tokens, deadlines, and domain error mapping. They are tested over an
-in-memory transport. The current process still uses a direct repository adapter;
-separate Job/executor entrypoints and a network listener are not implemented.
+in-memory transport. `cmd/mill` can serve the Job-side API on an optional 1 MiB
+bounded gRPC listener with graceful shutdown. The current coordinator still
+uses a direct repository adapter; a separate executor entrypoint is not
+implemented.
 
 Workload image inspection, generic output verification/aggregation, and wider
 fault recovery remain planned. Separate runtime services, resource classes,

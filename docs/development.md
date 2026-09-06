@@ -57,11 +57,14 @@ awk 'BEGIN { for (i = 0; i < 100; i++) print "{\"value\":" i "}" }' \
 
 export MILL_OUTPUT_ROOT_URI='file:///tmp/mill-output'
 export MILL_PARALLELISM=3
+export MILL_GRPC_ADDR='127.0.0.1:9090'
 go run ./cmd/mill
 ```
 
-The default address is `:8080`; set `MILL_HTTP_ADDR` to override it. Submit a
-job from another shell:
+The default HTTP address is `:8080`; set `MILL_HTTP_ADDR` to override it. The
+gRPC listener is disabled when `MILL_GRPC_ADDR` is empty. It currently has no
+transport authentication and should bind only to a trusted local or
+cluster-internal address. Submit a job from another shell:
 
 ```bash
 curl --include --request POST http://localhost:8080/jobs \
@@ -193,6 +196,7 @@ Core process variables:
 | `MILL_OUTPUT_ROOT_URI` | Required `file://` or `s3://` root. |
 | `MILL_PARALLELISM` | Required job concurrency captured at submission. |
 | `MILL_HTTP_ADDR` | Optional listen address; default `:8080`. |
+| `MILL_GRPC_ADDR` | Optional internal execution gRPC listen address; empty disables it. |
 | `AWS_REGION` | Enables S3 in the planner/workload storage adapter. |
 | `MILL_S3_ENDPOINT` | Optional custom S3-compatible endpoint. |
 
@@ -270,6 +274,7 @@ headers. Review both the schema and generated diff together.
 ```text
 cmd/mill/
   main.go                         process composition and HTTP lifecycle
+  grpc.go                         optional bounded execution gRPC listener
   execution.go                    coordinator lifecycle and direct store adapter
 api/proto/mill/execution/v1/
   execution.proto                 versioned internal lease/state RPC schema

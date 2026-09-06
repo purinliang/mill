@@ -14,8 +14,9 @@ election, or arbitrary workload aggregation.
 
 The current deployment is one Go process containing the HTTP API, job service,
 streaming planner, and optional coordinator. The execution domain and gRPC
-adapter now establish a tested code boundary, but they are not yet separately
-deployed services.
+adapter establish a tested code boundary, and the process can expose the
+Job-side API on an optional gRPC listener. The coordinator still uses the
+direct repository path; these are not yet separately deployed services.
 
 ```text
 User
@@ -252,12 +253,87 @@ test proves schema conversion, server-owned lease policy, and error mapping
 without opening a network port.
 
 The current `cmd/mill` process still connects the coordinator directly to the
-PostgreSQL repository through a small adapter. Separate Job and executor
-entrypoints, a real gRPC listener, transport credentials, authorization, and a
+PostgreSQL repository through a small adapter. It can also serve the Job-side
+API when `MILL_GRPC_ADDR` is set; messages are limited to 1 MiB and the gRPC
+server shuts down with the HTTP server. This transitional listener has no
+transport credentials or authorization, so it should bind only to a trusted
+local or cluster-internal address. A separate executor entrypoint and
 multi-Pod deployment are still planned. Lease expiry transfers observation
 ownership; it does not create a new attempt. An explicit expected version may
 be added only if the existing fencing and state guards prove insufficient for
 safely retrying an unknown RPC outcome.
+
+### Runtime separation implementation path
+
+Implement the boundary as small runnable slices rather than another broad
+package refactor:
+
+1. **Serve the Job-side RPC API — implemented.** Keep `cmd/mill` as the Job
+   service for now. It runs REST and optional gRPC listeners together,
+   registers `executionrpc.Server`, limits messages to 1 MiB, and shuts both
+   listeners down gracefully. PostgreSQL remains reachable only from this
+   process.
+2. **Add a separate executor process.** Add `cmd/mill-executor` with an executor
+   instance identity, `executionrpc.Client`, coordinator loop, and Kubernetes
+   client. It must not import `internal/job` or PostgreSQL packages, accept a
+   database URL, or access Mill metadata tables directly.
+3. **Remove the direct execution path.** Once the remote path works, remove the
+   in-process coordinator, `repositoryExecutionStore`, and `MILL_EXECUTOR` from
+   the Job service instead of maintaining two permanent execution modes.
+4. **Prove a complete split-process batch.** Run the existing 12-task example
+   through one Job-service process and two executor processes. Preserve bounded
+   parallelism and exact output comparison, and verify executors have no
+   database configuration.
+5. **Prove executor failover.** Record active attempt IDs, lease tokens,
+   Kubernetes Job names, and UIDs; kill one executor with `SIGKILL`; wait for
+   lease expiry; and verify the survivor receives new fencing tokens while the
+   attempt IDs, Job names, and UIDs remain unchanged. All 12 tasks must finish
+   without duplicate attempts or Kubernetes Jobs.
+
+After step 5, stop and review the working two-service system before adding
+resource classes or deployment infrastructure. This is a learning and ownership
+review, not a major redesign: trace one submitted job through REST, planning,
+PostgreSQL, gRPC, reconciliation, Kubernetes, and output publication; identify
+which invariants each package and transaction protects; then clean up only
+concrete problems such as duplicated lifecycle code, confusing configuration,
+conversion complexity, or mixed ownership. Do not split the planner, HTTP
+handling, or PostgreSQL repositories out of `internal/job` merely because the
+package contains several files.
+
+This checkpoint demonstrates executor-process availability and a real service
+boundary. It does not demonstrate complete infrastructure availability. A Job
+service replica can later reconnect executors through a Kubernetes Service, but
+PostgreSQL remains a failure point until database replication is implemented,
+and single-node kind remains a node-level failure point until the multi-node
+stage.
+
+### Refactor checkpoints
+
+Schedule two larger refactor checkpoints after the architecture has produced
+real deployment and failure evidence:
+
+1. **After the two-laptop replica milestone**, freeze feature work and review
+   the complete code path together. Refactor service composition,
+   configuration, lifecycle and shutdown, package ownership, deployment
+   manifests, observability, and test/demo duplication where the running
+   primary/standby system has exposed friction. Preserve the demonstrated Pod
+   failure and controlled PostgreSQL promotion tests throughout the refactor.
+2. **After the three-node quorum milestone**, freeze feature work again and
+   refactor the failure model using evidence from physical-node loss and
+   minority isolation. Revisit RPC deadlines and retry classification,
+   reconciliation boundaries, database failover assumptions, operational
+   diagnostics, and fault-test structure. Preserve quorum safety, fencing, and
+   absence of duplicate execution as executable regression tests.
+
+Neither checkpoint is permission for a ground-up rewrite or speculative
+frameworks. Begin each with a package/dependency inventory and an end-to-end
+code walkthrough; delete obsolete paths before introducing abstractions; keep
+behavior unchanged in refactor commits; and rerun all unit, integration,
+process-failover, and deployment-failure tests before resuming feature work.
+
+Short code reviews still occur after every implementation slice. The two major
+checkpoints are for consolidating lessons from new failure domains, not for
+postponing understanding of code written earlier.
 
 ## Planned workload resource classes
 

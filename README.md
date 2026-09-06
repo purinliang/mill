@@ -52,10 +52,11 @@ shared object storage from any eligible node.
 The next service architecture separates a replicated Job service from
 replicated executor workers. The backend-independent execution contract and a
 versioned Protobuf/gRPC client/server adapter are implemented and tested over
-an in-memory connection. Runtime deployment is still one process using a
-direct repository adapter: no separate services or network listener exist yet.
-See [Architecture](docs/architecture.md) for the domain model, correctness
-rules, resource-class proposal, and availability design.
+an in-memory connection. The Job process can now serve that API on an optional,
+bounded gRPC listener alongside REST. Runtime deployment is still one process
+using a direct repository adapter: no separate executor service exists yet. See
+[Architecture](docs/architecture.md) for the domain model, correctness rules,
+resource-class proposal, and availability design.
 
 ## V1 scope
 
@@ -131,6 +132,7 @@ Implemented:
 - durable attempt leases, renewal, expiry takeover, and stale-owner fencing;
 - backend-independent execution types and store contract;
 - versioned execution Protobuf schema and tested gRPC client/server adapters;
+- optional Job-side gRPC listener with bounded messages and graceful shutdown;
 - deterministic Kubernetes identity and coordinator restart reconciliation;
 - trusted workload CLI contract and non-root example images;
 - local, container, single-task, full-batch, retry, restart, replica-failover,
@@ -139,8 +141,8 @@ Implemented:
 
 Not implemented:
 
-- separately runnable Job and executor services, RPC listener configuration,
-  and service authentication;
+- a separately runnable executor service, executor-to-Job RPC wiring, and
+  service authentication;
 - a packaged Kubernetes multi-replica deployment;
 - named workload resource classes;
 - replicated PostgreSQL or multi-node K3s deployment;
@@ -187,12 +189,12 @@ node pinning. Real AWS S3 remains untested.
 
 ### 6 — Service boundary and resource classes — in progress
 
-The pure execution domain contract and versioned Protobuf/gRPC adapters are
-implemented. Next, split the current process into separately runnable Job and
-executor services: keep planning and the lease-policy backend inside the Job
-service, and make executor workers use the RPC client rather than PostgreSQL.
-Then add optional named `small`, `medium`, and `large` workload classes and
-persist their resolved resources so retries remain stable.
+The pure execution domain contract, versioned Protobuf/gRPC adapters, and
+optional Job-side listener are implemented. Next, add a separately runnable
+executor process and make it use the RPC client rather than PostgreSQL. Remove
+the old in-process execution path after the split-process batch passes. Then add
+optional named `small`, `medium`, and `large` workload classes and persist their
+resolved resources so retries remain stable.
 
 ### 7 — Two-laptop replica availability — planned
 
@@ -202,6 +204,10 @@ with availability-oriented synchronous replication. Demonstrate individual
 Mill Pod failure and controlled PostgreSQL Pod promotion. This stage will not
 claim whole-laptop or network-partition tolerance.
 
+After this milestone, pause feature work for the first major architecture and
+code-ownership review. Refactor only issues demonstrated by the runnable
+two-laptop system while preserving its process and database-promotion tests.
+
 ### 8 — Three-node quorum availability — planned
 
 Add a third independent failure domain, run three K3s server/etcd voters, and
@@ -209,6 +215,10 @@ place one PostgreSQL instance on each node. Use required synchronous replication
 and failover quorum, then test one physical-node loss and an isolated minority
 without conflicting writers or duplicate attempts. Full-stack claims also
 require replicated object storage or AWS S3.
+
+After this milestone, perform a second major review focused on quorum behavior,
+failure classification, reconciliation, and operational clarity. Preserve the
+node-loss and minority-isolation evidence as regression tests while refactoring.
 
 ### 9 — CI/CD and disposable AWS deployment — planned
 
