@@ -6,12 +6,13 @@ scope.
 
 ## Current project state
 
-Mill currently runs as one Go HTTP process with an optional in-process
-coordinator. It validates and plans JSONL inputs, stores jobs, logical tasks,
-attempts, retry eligibility, and progress in PostgreSQL, and launches one
-native Kubernetes Job for each attempt. The workload CLI contract, local-file
-execution, bounded retries, attempt history, deterministic Kubernetes identity,
-and coordinator restart reconciliation are implemented.
+Mill currently has a Job-service process and a standalone executor process. The
+Job service validates and plans JSONL inputs and stores jobs, logical tasks,
+attempts, retry eligibility, and progress in PostgreSQL. Executor replicas use
+gRPC to lease that work and launch one native Kubernetes Job for each attempt.
+The workload CLI contract, local-file execution, bounded retries, attempt
+history, deterministic Kubernetes identity, and executor restart reconciliation
+are implemented.
 
 The object-storage adapter supports `file://` and `s3://`. S3-backed attempts
 perform ranged reads and publish unique outputs without hostPath mounts or node
@@ -19,7 +20,7 @@ pinning. `scripts/demo-word-count-batch` exercises the complete node-local
 control plane; its failure and restart modes test retry exhaustion and process
 recovery. Per-attempt PostgreSQL leases now provide renewable ownership,
 expired-owner takeover, and fencing tokens for all state mutations.
-The batch demo's `--replica-failover` mode runs two Mill processes concurrently,
+The batch demo's `--replica-failover` mode runs two executors concurrently,
 rejects premature lease stealing, kills the primary, and verifies fenced
 takeover of the same attempts and Kubernetes Jobs.
 `scripts/demo-word-count-s3` proves the shared-storage path against a disposable
@@ -31,17 +32,18 @@ from `internal/job`. A versioned Protobuf schema and gRPC client/server adapters
 now carry the implemented lease operations with server-owned lease duration,
 fencing tokens, deadlines, and domain error mapping. They are tested over an
 in-memory transport. `cmd/mill` can serve the Job-side API on an optional 1 MiB
-bounded gRPC listener with graceful shutdown. The current coordinator still
-supports a direct repository adapter. `cmd/mill-executor` is a separately
-runnable gRPC-to-Kubernetes coordinator with no Job-package or PostgreSQL
-dependency. The batch demo's `--split-process` mode proves the 12-task flow
+bounded gRPC listener with graceful shutdown and no longer imports coordinator
+or Kubernetes packages. `cmd/mill-executor` is the only runnable
+gRPC-to-Kubernetes coordinator and has no Job-package or PostgreSQL dependency.
+The batch demo's `--split-process` mode proves the 12-task flow
 through one Job service and two live standalone executor replicas. An executor
 may own all current leases while the other remains standby; Kubernetes workload
-Pods, not executor replicas, provide task parallelism. The direct path remains
-temporarily until the demonstrated remote path is reviewed.
+Pods, not executor replicas, provide task parallelism. The
+`--replica-failover` mode proves survivor takeover across this boundary while
+preserving attempt and Kubernetes Job identities.
 
 Workload image inspection, generic output verification/aggregation, and wider
-fault recovery remain planned. Separate runtime services, resource classes,
+fault recovery remain planned. Packaged runtime deployments, resource classes,
 PostgreSQL replication, and multi-node availability are documented future
 milestones, not current behavior. Add implementation only in small, explicitly
 requested increments. Do not add more Dockerfiles,
@@ -116,9 +118,10 @@ operational and maintenance cost.
   new attempt. Missing running Jobs and identity mismatches require
   investigation; never silently recreate them.
 - Preserve `scripts/demo-word-count-batch --restart-coordinator` as a real
-  process-boundary recovery test. It must use SIGKILL only on the child Mill PID,
-  keep PostgreSQL and Kubernetes alive, compare stable attempt IDs and Job UIDs,
-  reject duplicate attempts, and still verify the complete workload output.
+  process-boundary recovery test. It must use SIGKILL only on the child executor
+  PID, keep the Job service, PostgreSQL, and Kubernetes alive, compare stable
+  attempt IDs and Job UIDs, reject duplicate attempts, and still verify the
+  complete workload output.
 - Preserve `scripts/demo-word-count-batch --replica-failover` as the
   simultaneous-process lease test. Both processes must overlap before SIGKILL;
   the standby must not steal live leases, and takeover must change fencing
@@ -176,9 +179,9 @@ job, task, shard, attempt, or state-transition semantics.
 
 ## Code organization
 
-- Keep Mill as one Go module. The current implementation remains one
-  control-plane binary until the documented Job-service/executor milestone is
-  explicitly started. A logical module is not automatically a service.
+- Keep Mill as one Go module with the implemented Job-service and executor
+  binaries. A logical module is not automatically a service; do not create more
+  service boundaries without a concrete operational reason.
 - Keep `cmd/mill` as the composition root: environment configuration,
   dependency construction, route assembly, process lifecycle, and shutdown
   belong there. Do not put job or execution policy in `main.go`.
@@ -200,7 +203,7 @@ job, task, shard, attempt, or state-transition semantics.
 - Keep backend-independent task observation/claim logic in
   `internal/coordinator`, Kubernetes types and API calls in
   `internal/kubernetes`, and their lifecycle/configuration in
-  `cmd/mill/execution.go`. Word-count aggregation stays in the example.
+  `cmd/mill-executor/main.go`. Word-count aggregation stays in the example.
 - Keep executor-facing attempt types, sentinel domain failures, and the
   transport-independent store contract in `internal/execution`. Coordinator
   and Kubernetes packages must not import `internal/job`.

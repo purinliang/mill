@@ -28,36 +28,30 @@ User
   |
   | REST/JSON: submit or inspect a job
   v
-Mill (one Go process today)
+Job service
   |
   +--> streaming JSONL planner --> record-aligned byte ranges
   |
   +--> PostgreSQL --> jobs, tasks, attempts, retry eligibility
   |
-  `--> coordinator --> Kubernetes Job per attempt
-                           |
-                           `--> workload Pod
-                                  +--> ranged file/S3 input
-                                  `--> per-attempt file/S3 output
+  `-- gRPC --> executor replica(s) --> Kubernetes Job per attempt
+                                         |
+                                         `--> workload Pod
+                                                +--> ranged file/S3 input
+                                                `--> per-attempt file/S3 output
 ```
 
-The HTTP API and coordinator are still deployed together. The coordinator
-persists an attempt before creating its deterministic Kubernetes Job, then
-reconciles Kubernetes observations back into PostgreSQL. Durable per-attempt
-leases fence stale coordinators and allow another process to take over an
-expired lease while preserving the attempt and Kubernetes Job identity. For
-S3-backed jobs, Pods need no hostPath volume or fixed-node selector and can use
-shared object storage from any eligible node.
-
-The next service architecture separates a replicated Job service from
-replicated executor workers. The backend-independent execution contract and a
-versioned Protobuf/gRPC client/server adapter are implemented and tested over
-an in-memory connection. The Job process can now serve that API on an optional,
-bounded gRPC listener alongside REST. A standalone executor process can use the
-gRPC client without importing PostgreSQL or the Job package. The original
-in-process execution path remains temporarily while the demonstrated remote
-path is reviewed. See [Architecture](docs/architecture.md) for the domain model,
-correctness rules, resource-class proposal, and availability design.
+The Job service owns REST, planning, PostgreSQL, and the internal execution API;
+it does not import the coordinator or Kubernetes adapter. Standalone executor
+replicas access execution state exclusively through bounded Protobuf/gRPC calls.
+An executor persists an attempt through the Job service before creating its
+deterministic Kubernetes Job, then reconciles Kubernetes observations back into
+PostgreSQL. Durable per-attempt leases fence stale executors and allow a replica
+to take over an expired lease while preserving the attempt and Kubernetes Job
+identity. For S3-backed jobs, Pods need no hostPath volume or fixed-node selector
+and can use shared object storage from any eligible node. See
+[Architecture](docs/architecture.md) for the domain model, correctness rules,
+resource-class proposal, and availability design.
 
 ## V1 scope
 
@@ -97,7 +91,7 @@ replicas communicating over gRPC:
 ./scripts/demo-word-count-batch --split-process
 ```
 
-Run two Mill processes and kill the active coordinator:
+Run two executor replicas and kill the active lease owner:
 
 ```bash
 ./scripts/demo-word-count-batch --replica-failover
@@ -144,7 +138,9 @@ Implemented:
 - separately runnable executor process with no PostgreSQL dependency;
 - demonstrated 12-task split-process execution through one Job service and two
   live executor replicas;
-- deterministic Kubernetes identity and coordinator restart reconciliation;
+- demonstrated executor-process failover with lease-token replacement and
+  stable attempt and Kubernetes Job identities;
+- deterministic Kubernetes identity and executor restart reconciliation;
 - trusted workload CLI contract and non-root example images;
 - local, container, single-task, full-batch, retry, restart, replica-failover,
   and S3-backed word-count demonstrations; and
@@ -152,8 +148,7 @@ Implemented:
 
 Not implemented:
 
-- removal of the old in-process path, executor-process failover through gRPC,
-  and service authentication;
+- service authentication for the internal gRPC boundary;
 - a packaged Kubernetes multi-replica deployment;
 - named workload resource classes;
 - replicated PostgreSQL or multi-node K3s deployment;
@@ -187,7 +182,7 @@ parallelism, and expose successful output URIs.
 ### 4 — Reliable execution — in progress
 
 Bound retries, preserve attempt history, delay retry eligibility durably, and
-recover the same Kubernetes identities after coordinator process loss. Use
+recover the same Kubernetes identities after executor process loss. Use
 durable leases to renew or transfer attempt ownership and reject stale state
 changes. Wider dispatch crash windows, resource deletion, long API stalls, and
 network ambiguity remain.
@@ -200,11 +195,11 @@ node pinning. Real AWS S3 remains untested.
 
 ### 6 — Service boundary and resource classes — in progress
 
-The pure execution domain contract, versioned Protobuf/gRPC adapters, optional
-Job-side listener, standalone executor process, and split-process batch proof
-are implemented. Next, remove the old in-process path and prove executor lease
-takeover through gRPC. Then add optional named `small`, `medium`, and `large`
-workload classes and persist their resolved resources so retries remain stable.
+The pure execution domain contract, versioned Protobuf/gRPC adapters, Job-side
+listener, standalone executor, removal of the direct path, and executor
+failover proof are implemented. Next, review this runnable boundary, then add
+optional named `small`, `medium`, and `large` workload classes and persist their
+resolved resources so retries remain stable.
 
 ### 7 — Two-laptop replica availability — planned
 

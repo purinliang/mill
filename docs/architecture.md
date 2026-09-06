@@ -12,32 +12,30 @@ metadata, S3 or local files hold data, and Kubernetes owns placement and
 container lifecycle. Mill does not implement a cluster scheduler, database
 election, or arbitrary workload aggregation.
 
-The current deployment is one Go process containing the HTTP API, job service,
-streaming planner, and optional coordinator. The execution domain and gRPC
-adapter establish a tested code boundary, and the process can expose the
-Job-side API on an optional gRPC listener. `cmd/mill-executor` can run the
-coordinator and Kubernetes adapter against that API without a PostgreSQL
-dependency. The original process can still use its direct repository path until
-that transitional path is removed. The full batch has been demonstrated across
-the process boundary, but these are not yet separately packaged or deployed
-services.
+The implemented runtime boundary has two Go executables. `cmd/mill` contains the
+HTTP API, Job service, streaming planner, PostgreSQL repository, and optional
+internal gRPC listener. It does not import the coordinator or Kubernetes
+adapter. `cmd/mill-executor` runs the coordinator and Kubernetes adapter against
+that API without a PostgreSQL dependency. The full batch and executor-failover
+paths have been demonstrated across this boundary, but the processes are not
+yet packaged as Kubernetes services.
 
 ```text
 User
   |
   | POST /jobs or GET /jobs/{id}
   v
-Mill process
+Job service
   |
   +--> JSONL planner --> input object --> logical ranges
   |
   +--> PostgreSQL --> jobs, tasks, attempts
   |
-  `--> coordinator --> Kubernetes API --> Job --> Pod
-                                                 |
-                                                 +--> ranged input
-                                                 `--> unique output
-                                                       file:// or s3://
+  `-- gRPC --> executor replica(s) --> Kubernetes API --> Job --> Pod
+                                                               |
+                                                               +--> ranged input
+                                                               `--> unique output
+                                                                     file:// or s3://
 ```
 
 ## Domain model
@@ -256,21 +254,19 @@ to domain errors, and treats other transport failures as ambiguous. A `bufconn`
 test proves schema conversion, server-owned lease policy, and error mapping
 without opening a network port.
 
-The current `cmd/mill` process still connects the coordinator directly to the
-PostgreSQL repository through a small adapter. It can also serve the Job-side
-API when `MILL_GRPC_ADDR` is set; messages are limited to 1 MiB and the gRPC
-server shuts down with the HTTP server. This transitional listener has no
-transport credentials or authorization, so it should bind only to a trusted
-local or cluster-internal address. `cmd/mill-executor` is now the separate
-executor entrypoint. It uses a bounded, deadline-bearing gRPC client, has no
+The current `cmd/mill` process serves the Job-side API when `MILL_GRPC_ADDR` is
+set; messages are limited to 1 MiB and the gRPC server shuts down with the HTTP
+server. This listener has no transport credentials or authorization, so it
+should bind only to a trusted local or cluster-internal address.
+`cmd/mill-executor` uses a bounded, deadline-bearing gRPC client, has no
 PostgreSQL configuration or dependency, and retries later coordinator ticks
-when the Job service is temporarily unavailable. The 12-task batch now runs
-through one Job-service process and two standalone executor replicas. Removal
-of the old direct path, executor failover through gRPC, service authentication,
-and multi-Pod packaging remain planned. Lease expiry transfers observation
-ownership; it does not create a new attempt. An explicit expected version may
-be added only if the existing fencing and state guards prove insufficient for
-safely retrying an unknown RPC outcome.
+when the Job service is temporarily unavailable. The 12-task batch runs through
+one Job-service process and standalone executor replicas; the failover mode
+kills the active lease owner and proves fenced takeover by a surviving replica.
+Service authentication and multi-Pod packaging remain planned. Lease expiry
+transfers observation ownership; it does not create a new attempt. An explicit
+expected version may be added only if the existing fencing and state guards
+prove insufficient for safely retrying an unknown RPC outcome.
 
 ### Runtime separation implementation path
 
@@ -290,14 +286,14 @@ package refactor:
    12-task example through one Job-service process and two executor processes.
    Preserve bounded parallelism and exact output comparison, and verify
    executors have no database configuration.
-4. **Remove the direct execution path.** Now that the remote path works, remove
-   the in-process coordinator, `repositoryExecutionStore`, and `MILL_EXECUTOR`
-   from the Job service instead of maintaining two permanent execution modes.
-5. **Prove executor failover.** Record active attempt IDs, lease tokens,
-   Kubernetes Job names, and UIDs; kill one executor with `SIGKILL`; wait for
-   lease expiry; and verify the survivor receives new fencing tokens while the
-   attempt IDs, Job names, and UIDs remain unchanged. All 12 tasks must finish
-   without duplicate attempts or Kubernetes Jobs.
+4. **Remove the direct execution path — implemented.** The in-process
+   coordinator, `repositoryExecutionStore`, and `MILL_EXECUTOR` have been
+   removed from the Job service rather than maintained as a second mode.
+5. **Prove executor failover — implemented locally.** Record active attempt
+   IDs, lease tokens, Kubernetes Job names, and UIDs; kill one executor with
+   `SIGKILL`; wait for lease expiry; and verify the survivor receives new
+   fencing tokens while the attempt IDs, Job names, and UIDs remain unchanged.
+   All 12 tasks must finish without duplicate attempts or Kubernetes Jobs.
 
 After step 5, stop and review the working two-service system before adding
 resource classes or deployment infrastructure. This is a learning and ownership

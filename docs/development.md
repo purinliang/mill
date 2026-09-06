@@ -48,7 +48,7 @@ for migration in migrations/*.sql; do
 done
 ```
 
-Create an input and start Mill without an executor:
+Create an input and start the Job service:
 
 ```bash
 mkdir -p /tmp/mill-demo /tmp/mill-output
@@ -77,7 +77,8 @@ curl --include --request POST http://localhost:8080/jobs \
 ```
 
 The first request returns `201`; an identical replay returns `200` with the
-same job. Retrieve status with:
+same job. Without a separately running executor, its tasks remain pending.
+Retrieve status with:
 
 ```bash
 curl http://localhost:8080/jobs/<job-id>
@@ -105,22 +106,22 @@ compares its output with a local run. It does not use PostgreSQL task claims.
 ./scripts/demo-word-count-batch
 ```
 
-This starts private temporary PostgreSQL and Mill processes, submits the
-generated 12-record Walden input, executes the planned logical tasks with
-bounded concurrency, merges successful outputs, and compares them to a local
-full-input result. It uses hostPath storage on the single kind node.
+This starts private temporary PostgreSQL, Job-service, and standalone executor
+processes, submits the generated 12-record Walden input, executes the planned
+logical tasks with bounded concurrency, merges successful outputs, and compares
+them to a local full-input result. It uses hostPath storage on the single kind
+node.
 
-Run the same batch across the implemented service boundary with:
+Run the same batch with a second live executor replica:
 
 ```bash
 ./scripts/demo-word-count-batch --split-process
 ```
 
-This starts one Job-service process and two standalone executor replicas. The
-executors receive no PostgreSQL configuration and access execution state only
-through gRPC. The script verifies that the Job service did not start its
-in-process coordinator, all 12 task outputs match the local baseline, and no
-more than the configured number of workload Pods run concurrently. One
+All modes use the gRPC service boundary. Executors receive no PostgreSQL
+configuration and access execution state only through the Job service. The
+script verifies that all 12 task outputs match the local baseline and no more
+than the configured number of workload Pods run concurrently. One
 executor may own all active leases while the other remains available as
 standby; executor replicas provide reconciliation availability, while workload
 Pods provide computation parallelism. Override the gRPC port with
@@ -139,31 +140,31 @@ Exercise deterministic task failure and retry exhaustion:
 ./scripts/demo-word-count-batch --failure always
 ```
 
-Exercise coordinator process recovery while PostgreSQL and Kubernetes continue:
+Exercise executor process recovery while the Job service, PostgreSQL, and
+Kubernetes continue:
 
 ```bash
 ./scripts/demo-word-count-batch --restart-coordinator
 ```
 
-The replacement process waits for the 15-second attempt leases to expire, takes
+The replacement executor waits for the 15-second attempt leases to expire, takes
 over with new fencing tokens, and observes the same attempt IDs and Kubernetes
 Job UIDs. The script records attempt history, failure logs, and identity
 snapshots in its printed temporary directory. Kubernetes Jobs remain until
 explicitly removed.
 
-Exercise two live coordinators and survivor takeover:
+Exercise two live executor replicas and survivor takeover:
 
 ```bash
 ./scripts/demo-word-count-batch --replica-failover
 ```
 
-The script first lets one process own three delayed attempts, then starts a
-second process on another loopback HTTP port. It proves that the second process
-cannot change the unexpired leases or create duplicate Jobs, kills the primary
-with SIGKILL, and verifies that the survivor receives new fencing tokens for
-the same attempt IDs and Kubernetes UIDs. The remaining shards complete through
-the survivor. Set `MILL_DEMO_SECONDARY_PORT` when the default primary port plus
-one is unavailable.
+The script first lets one executor own three delayed attempts, then starts a
+second executor against the same Job-service gRPC endpoint. It proves that the
+second process cannot change the unexpired leases or create duplicate Jobs,
+kills the lease owner with SIGKILL, and verifies that the survivor receives new
+fencing tokens for the same attempt IDs and Kubernetes UIDs. The Job service
+remains available and the remaining shards complete through the survivor.
 
 ### Full S3-compatible batch
 
@@ -216,17 +217,8 @@ Job-process variables:
 | `AWS_REGION` | Enables S3 in the planner/workload storage adapter. |
 | `MILL_S3_ENDPOINT` | Optional custom S3-compatible endpoint. |
 
-Enable the current in-process Kubernetes coordinator with:
-
-| Variable | Purpose |
-| --- | --- |
-| `MILL_EXECUTOR=kubernetes` | Enable task execution. |
-| `MILL_KUBE_CONTEXT` | Explicit kubeconfig context. |
-| `MILL_KUBE_NAMESPACE` | Namespace for Jobs. |
-
-Alternatively, run the coordinator as a separate process. Start `cmd/mill`
-with `MILL_GRPC_ADDR` set and leave `MILL_EXECUTOR` empty. In another shell,
-configure and start the executor:
+Task execution always runs in the standalone executor. Start `cmd/mill` with
+`MILL_GRPC_ADDR` set, then configure and start the executor in another shell:
 
 ```bash
 export MILL_JOB_GRPC_TARGET='127.0.0.1:9090'
@@ -241,12 +233,13 @@ The standalone executor uses these RPC variables:
 | --- | --- |
 | `MILL_JOB_GRPC_TARGET` | Required Job-service gRPC target. |
 | `MILL_EXECUTION_RPC_TIMEOUT` | Optional per-call timeout; default `3s`, range `100ms`–`30s`. |
+| `MILL_KUBE_CONTEXT` | Explicit kubeconfig context. |
+| `MILL_KUBE_NAMESPACE` | Namespace for Jobs. |
 
 The current local-file Kubernetes path also needs the node/root variables below;
 S3 tasks need the workload storage variables. The gRPC connection is currently
 plaintext and must remain on a trusted local or cluster-internal network. The
-full 12-task demonstration uses the in-process path unless its dedicated
-split-process mode is selected.
+full 12-task and S3-compatible demonstrations both use this external process.
 
 Node-local file tasks additionally require:
 
@@ -315,7 +308,6 @@ headers. Review both the schema and generated diff together.
 cmd/mill/
   main.go                         process composition and HTTP lifecycle
   grpc.go                         optional bounded execution gRPC listener
-  execution.go                    coordinator lifecycle and direct store adapter
 cmd/mill-executor/
   main.go                         standalone gRPC-to-Kubernetes coordinator
 api/proto/mill/execution/v1/

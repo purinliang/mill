@@ -130,24 +130,26 @@ independently of the others.
 After completion, job status lists the 12 successful output URIs. The script
 copies the results back, combines them into `counts.jsonl`, and checks that
 they match a local count over the entire input. It prints the fresh output
-directory, final result, and Kubernetes inspection/cleanup commands. Mill and
-the private PostgreSQL server stop when the script exits; all files and
-Kubernetes resources remain for inspection. `server.log` records claims,
-dispatches, completions, and failures; `status.json` contains final API status.
-This is a correctness demonstration, not a throughput benchmark: the input is
-small and Pod startup dominates execution time.
+directory, final result, and Kubernetes inspection/cleanup commands. The Job
+service, executor processes, and private PostgreSQL server stop when the script
+exits; all files and Kubernetes resources remain for inspection. `server.log`
+records Job-service activity, `executor-*.log` records claims and reconciliation,
+and `status.json` contains final API status. This is a correctness demonstration,
+not a throughput benchmark: the input is small and Pod startup dominates
+execution time.
 
-To run the same batch through the service boundary:
+To run the same batch with a second live executor replica:
 
 ```bash
 ./scripts/demo-word-count-batch --split-process
 ```
 
-This mode runs one Job service and two standalone executor replicas. Executors
+All batch modes run through one Job service and standalone executors. Executors
 have no PostgreSQL configuration and lease work only through the Job service's
-gRPC API. One replica may own all current leases while the other stands by;
-parallel computation still occurs in the bounded set of Kubernetes workload
-Pods. The script verifies the same 12 outputs against the local baseline.
+gRPC API. This mode starts two replicas; one may own all current leases while
+the other stands by. Parallel computation still occurs in the bounded set of
+Kubernetes workload Pods. The script verifies the same 12 outputs against the
+local baseline.
 
 For two active attempts instead:
 
@@ -187,7 +189,7 @@ Temporary S3 credentials and the storage container are removed on exit. The
 printed run directory retains inputs, downloaded outputs, logs, final status,
 and storage data. Completed Kubernetes Jobs remain for inspection.
 
-## Crash and restart the coordinator
+## Crash and restart the executor
 
 Run the process-boundary recovery demonstration with:
 
@@ -202,10 +204,10 @@ The delay is demonstration behavior, not part of Mill's workload contract.
 
 Once PostgreSQL contains three `running` attempts with Kubernetes UIDs, the
 script saves their identities and the corresponding Job names/UIDs, then sends
-SIGKILL to **only the child Mill process**. It immediately verifies PostgreSQL
-still answers and the same Kubernetes Jobs still exist. It then starts a new
-Mill process with exactly the same database, cluster, namespace, node, and
-storage configuration.
+SIGKILL to **only the child executor process**. It immediately verifies the Job
+service and PostgreSQL still answer and the same Kubernetes Jobs still exist.
+It then starts a replacement executor with exactly the same Job-service,
+cluster, namespace, node, and storage configuration.
 
 The restart is accepted only when:
 
@@ -218,15 +220,17 @@ The restart is accepted only when:
 The run directory retains `attempts-before-crash.json`,
 `attempts-after-restart.json`, `kubernetes-before-crash.json`,
 `kubernetes-without-coordinator.json`, and `kubernetes-after-restart.json`.
-`server.log` contains entries from both Mill processes, separated by a start
-marker. `attempts.json` and `status.json` show the final state.
+`server.log` shows the uninterrupted Job service; `executor-1.log` and
+`executor-2.log` show the killed and replacement executors. `attempts.json` and
+`status.json` show the final state.
 
-This proves the implemented recovery path for loss of the coordinator process
-while Kubernetes remains healthy. It does not prove recovery from PostgreSQL
-loss, Kubernetes API partitions, node failure, deleted active Jobs, or every
-possible instruction-level crash window.
+This proves the implemented recovery path for loss of the executor process
+while the Job service, PostgreSQL, and Kubernetes remain healthy. It does not
+prove recovery from Job-service or PostgreSQL loss, Kubernetes API partitions,
+node failure, deleted active Jobs, or every possible instruction-level crash
+window.
 
-## Run two coordinators and kill one
+## Run two executor replicas and kill one
 
 Run the concurrent-process failover demonstration with:
 
@@ -234,13 +238,14 @@ Run the concurrent-process failover demonstration with:
 ./scripts/demo-word-count-batch --replica-failover
 ```
 
-The script starts the primary, waits for three delayed attempts, and then starts
-a second Mill process against the same PostgreSQL database and Kubernetes
-cluster. Before failure, it verifies that both processes are healthy while the
-second process cannot steal unexpired leases or create duplicate Jobs. It kills
-the primary and accepts takeover only when the survivor replaces every fencing
-token while preserving the original task IDs, attempt IDs, external UIDs, and
-Kubernetes Jobs. The final 12 outputs must still match the local baseline.
+The script starts the primary executor, waits for three delayed attempts, and
+then starts a second executor against the same Job-service gRPC endpoint.
+Before failure, it verifies that both executors are healthy while the second
+cannot steal unexpired leases or create duplicate Jobs. It kills the primary
+and accepts takeover only when the survivor replaces every fencing token while
+preserving the original task IDs, attempt IDs, external UIDs, and Kubernetes
+Jobs. The Job service remains alive, and the final 12 outputs must still match
+the local baseline.
 
 This proves process-level coordination and failover on one machine. It is not a
 multi-node Kubernetes, PostgreSQL failover, or network-partition test.
