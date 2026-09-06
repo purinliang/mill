@@ -15,8 +15,11 @@ election, or arbitrary workload aggregation.
 The current deployment is one Go process containing the HTTP API, job service,
 streaming planner, and optional coordinator. The execution domain and gRPC
 adapter establish a tested code boundary, and the process can expose the
-Job-side API on an optional gRPC listener. The coordinator still uses the
-direct repository path; these are not yet separately deployed services.
+Job-side API on an optional gRPC listener. `cmd/mill-executor` can run the
+coordinator and Kubernetes adapter against that API without a PostgreSQL
+dependency. The original process can still use its direct repository path until
+the split-process demonstration is complete; these are not yet separately
+packaged or deployed services.
 
 ```text
 User
@@ -257,11 +260,15 @@ PostgreSQL repository through a small adapter. It can also serve the Job-side
 API when `MILL_GRPC_ADDR` is set; messages are limited to 1 MiB and the gRPC
 server shuts down with the HTTP server. This transitional listener has no
 transport credentials or authorization, so it should bind only to a trusted
-local or cluster-internal address. A separate executor entrypoint and
-multi-Pod deployment are still planned. Lease expiry transfers observation
-ownership; it does not create a new attempt. An explicit expected version may
-be added only if the existing fencing and state guards prove insufficient for
-safely retrying an unknown RPC outcome.
+local or cluster-internal address. `cmd/mill-executor` is now the separate
+executor entrypoint. It uses a bounded, deadline-bearing gRPC client, has no
+PostgreSQL configuration or dependency, and retries later coordinator ticks
+when the Job service is temporarily unavailable. A full split-process batch,
+removal of the old direct path, service authentication, and multi-Pod packaging
+remain planned. Lease expiry transfers observation ownership; it does not
+create a new attempt. An explicit expected version may be added only if the
+existing fencing and state guards prove insufficient for safely retrying an
+unknown RPC outcome.
 
 ### Runtime separation implementation path
 
@@ -273,10 +280,10 @@ package refactor:
    registers `executionrpc.Server`, limits messages to 1 MiB, and shuts both
    listeners down gracefully. PostgreSQL remains reachable only from this
    process.
-2. **Add a separate executor process.** Add `cmd/mill-executor` with an executor
-   instance identity, `executionrpc.Client`, coordinator loop, and Kubernetes
-   client. It must not import `internal/job` or PostgreSQL packages, accept a
-   database URL, or access Mill metadata tables directly.
+2. **Add a separate executor process — implemented.** `cmd/mill-executor` has an
+   executor instance identity, `executionrpc.Client`, coordinator loop, and
+   Kubernetes client. Its dependency graph contains neither `internal/job` nor
+   PostgreSQL, and temporary RPC failures leave it running for a later tick.
 3. **Remove the direct execution path.** Once the remote path works, remove the
    in-process coordinator, `repositoryExecutionStore`, and `MILL_EXECUTOR` from
    the Job service instead of maintaining two permanent execution modes.

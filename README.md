@@ -53,10 +53,11 @@ The next service architecture separates a replicated Job service from
 replicated executor workers. The backend-independent execution contract and a
 versioned Protobuf/gRPC client/server adapter are implemented and tested over
 an in-memory connection. The Job process can now serve that API on an optional,
-bounded gRPC listener alongside REST. Runtime deployment is still one process
-using a direct repository adapter: no separate executor service exists yet. See
-[Architecture](docs/architecture.md) for the domain model, correctness rules,
-resource-class proposal, and availability design.
+bounded gRPC listener alongside REST. A standalone executor process can use the
+gRPC client without importing PostgreSQL or the Job package. The original
+in-process execution path remains temporarily until the split-process batch is
+proven. See [Architecture](docs/architecture.md) for the domain model,
+correctness rules, resource-class proposal, and availability design.
 
 ## V1 scope
 
@@ -133,6 +134,7 @@ Implemented:
 - backend-independent execution types and store contract;
 - versioned execution Protobuf schema and tested gRPC client/server adapters;
 - optional Job-side gRPC listener with bounded messages and graceful shutdown;
+- separately runnable executor process with no PostgreSQL dependency;
 - deterministic Kubernetes identity and coordinator restart reconciliation;
 - trusted workload CLI contract and non-root example images;
 - local, container, single-task, full-batch, retry, restart, replica-failover,
@@ -141,8 +143,8 @@ Implemented:
 
 Not implemented:
 
-- a separately runnable executor service, executor-to-Job RPC wiring, and
-  service authentication;
+- a demonstrated full batch through separate Job/executor processes, removal
+  of the old in-process path, and service authentication;
 - a packaged Kubernetes multi-replica deployment;
 - named workload resource classes;
 - replicated PostgreSQL or multi-node K3s deployment;
@@ -189,12 +191,11 @@ node pinning. Real AWS S3 remains untested.
 
 ### 6 — Service boundary and resource classes — in progress
 
-The pure execution domain contract, versioned Protobuf/gRPC adapters, and
-optional Job-side listener are implemented. Next, add a separately runnable
-executor process and make it use the RPC client rather than PostgreSQL. Remove
-the old in-process execution path after the split-process batch passes. Then add
-optional named `small`, `medium`, and `large` workload classes and persist their
-resolved resources so retries remain stable.
+The pure execution domain contract, versioned Protobuf/gRPC adapters, optional
+Job-side listener, and standalone executor process are implemented. Next, prove
+the existing batch through the two processes and remove the old in-process path
+after that proof passes. Then add optional named `small`, `medium`, and `large`
+workload classes and persist their resolved resources so retries remain stable.
 
 ### 7 — Two-laptop replica availability — planned
 

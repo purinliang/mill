@@ -32,8 +32,10 @@ now carry the implemented lease operations with server-owned lease duration,
 fencing tokens, deadlines, and domain error mapping. They are tested over an
 in-memory transport. `cmd/mill` can serve the Job-side API on an optional 1 MiB
 bounded gRPC listener with graceful shutdown. The current coordinator still
-uses a direct repository adapter; a separate executor entrypoint is not
-implemented.
+supports a direct repository adapter. `cmd/mill-executor` is a separately
+runnable gRPC-to-Kubernetes coordinator with no Job-package or PostgreSQL
+dependency. The full batch has not yet been demonstrated through the separate
+process, so the direct path remains temporarily.
 
 Workload image inspection, generic output verification/aggregation, and wider
 fault recovery remain planned. Separate runtime services, resource classes,

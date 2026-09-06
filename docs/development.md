@@ -188,7 +188,7 @@ input provenance, deterministic record grouping, and result-merging behavior.
 
 ## Configuration
 
-Core process variables:
+Job-process variables:
 
 | Variable | Purpose |
 | --- | --- |
@@ -207,6 +207,30 @@ Enable the current in-process Kubernetes coordinator with:
 | `MILL_EXECUTOR=kubernetes` | Enable task execution. |
 | `MILL_KUBE_CONTEXT` | Explicit kubeconfig context. |
 | `MILL_KUBE_NAMESPACE` | Namespace for Jobs. |
+
+Alternatively, run the coordinator as a separate process. Start `cmd/mill`
+with `MILL_GRPC_ADDR` set and leave `MILL_EXECUTOR` empty. In another shell,
+configure and start the executor:
+
+```bash
+export MILL_JOB_GRPC_TARGET='127.0.0.1:9090'
+export MILL_KUBE_CONTEXT='kind-mill'
+export MILL_KUBE_NAMESPACE='default'
+go run ./cmd/mill-executor
+```
+
+The standalone executor uses these RPC variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `MILL_JOB_GRPC_TARGET` | Required Job-service gRPC target. |
+| `MILL_EXECUTION_RPC_TIMEOUT` | Optional per-call timeout; default `3s`, range `100ms`–`30s`. |
+
+The current local-file Kubernetes path also needs the node/root variables below;
+S3 tasks need the workload storage variables. The gRPC connection is currently
+plaintext and must remain on a trusted local or cluster-internal network. The
+full 12-task demonstration still uses the in-process path until its dedicated
+split-process mode is implemented.
 
 Node-local file tasks additionally require:
 
@@ -276,6 +300,8 @@ cmd/mill/
   main.go                         process composition and HTTP lifecycle
   grpc.go                         optional bounded execution gRPC listener
   execution.go                    coordinator lifecycle and direct store adapter
+cmd/mill-executor/
+  main.go                         standalone gRPC-to-Kubernetes coordinator
 api/proto/mill/execution/v1/
   execution.proto                 versioned internal lease/state RPC schema
 docs/
