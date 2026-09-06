@@ -36,6 +36,7 @@ func main() {
 	if err := run(
 		ctx,
 		os.Getenv("MILL_HTTP_ADDR"),
+		os.Getenv("MILL_GRPC_ADDR"),
 		os.Getenv("MILL_DATABASE_URL"),
 		os.Getenv("MILL_OUTPUT_ROOT_URI"),
 		os.Getenv("MILL_PARALLELISM"),
@@ -44,11 +45,11 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, address, databaseURL, outputRootURI, parallelismValue string) error {
+func run(ctx context.Context, httpAddress, grpcAddress, databaseURL, outputRootURI, parallelismValue string) error {
 	ctx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
-	if address == "" {
-		address = defaultHTTPAddress
+	if httpAddress == "" {
+		httpAddress = defaultHTTPAddress
 	}
 	if databaseURL == "" {
 		return errors.New("MILL_DATABASE_URL is required")
@@ -88,14 +89,22 @@ func run(ctx context.Context, address, databaseURL, outputRootURI, parallelismVa
 	}
 
 	server := &http.Server{
-		Addr:              address,
+		Addr:              httpAddress,
 		Handler:           newHandler(database.Ping, jobHandler),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	listener, err := net.Listen("tcp", address)
+	listener, err := net.Listen("tcp", httpAddress)
 	if err != nil {
 		return fmt.Errorf("listen HTTP: %w", err)
+	}
+	executionRPC, err := startExecutionRPC(grpcAddress, jobRepository)
+	if err != nil {
+		_ = listener.Close()
+		return err
+	}
+	if executionRPC != nil {
+		defer executionRPC.stop()
 	}
 	serveErrors := make(chan error, 1)
 	go func() {
@@ -116,6 +125,10 @@ func run(ctx context.Context, address, databaseURL, outputRootURI, parallelismVa
 	defer server.Close()
 
 	log.Printf("Mill HTTP server listening on %s", listener.Addr())
+	var executionRPCErrors <-chan error
+	if executionRPC != nil {
+		executionRPCErrors = executionRPC.errors
+	}
 
 	select {
 	case err := <-executionErrors:
@@ -127,6 +140,8 @@ func run(ctx context.Context, address, databaseURL, outputRootURI, parallelismVa
 			return nil
 		}
 		return fmt.Errorf("serve HTTP: %w", err)
+	case err := <-executionRPCErrors:
+		return executionRPCServeError(err)
 	case <-ctx.Done():
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
@@ -135,8 +150,18 @@ func run(ctx context.Context, address, databaseURL, outputRootURI, parallelismVa
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("shut down HTTP server: %w", err)
 	}
+	if executionRPC != nil {
+		if err := executionRPC.shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("shut down execution gRPC server: %w", err)
+		}
+	}
 	if err := <-serveErrors; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("serve HTTP: %w", err)
+	}
+	if executionRPC != nil {
+		if err := executionRPCServeError(<-executionRPCErrors); err != nil {
+			return err
+		}
 	}
 	return nil
 }
