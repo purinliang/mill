@@ -186,7 +186,7 @@ func (e *Executor) manifest(claimed execution.ClaimedAttempt) (*batchv1.Job, err
 	yes, no := true, false
 	directory := corev1.HostPathDirectory
 	container := corev1.Container{
-		Name: "workload", Image: claimed.Executable.Image, ImagePullPolicy: corev1.PullNever, Args: args,
+		Name: "workload", Image: claimed.Executable.Image, ImagePullPolicy: corev1.PullIfNotPresent, Args: args,
 		SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &no, ReadOnlyRootFilesystem: &yes,
 			Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
 		Resources: corev1.ResourceRequirements{

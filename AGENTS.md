@@ -190,6 +190,9 @@ operational and maintenance cost.
   its arguments, output, and retry history remain independently observable.
   Reconsider Indexed Jobs only for a concrete requirement that justifies a
   shared shard-manifest lookup contract.
+- Use `IfNotPresent` for workload images so a multi-node cluster can pull a
+  trusted registry image while local demonstrations can use images imported
+  into each node. Do not use `Never` outside an explicitly manual fixture.
 - Keep the workload/container contract minimal and stable. Changes to it require
   documentation and compatibility consideration. Mill-owned CLI flags precede
   a mandatory `--`; arguments after it belong unchanged to the executable.

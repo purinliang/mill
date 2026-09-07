@@ -54,6 +54,9 @@ func TestManifestPreservesRangeAndSeparatesMounts(t *testing.T) {
 	if *m.Spec.BackoffLimit != 0 || *m.Spec.Parallelism != 1 || spec.RestartPolicy != corev1.RestartPolicyNever {
 		t.Fatal("unexpected native retries/parallelism")
 	}
+	if spec.Containers[0].ImagePullPolicy != corev1.PullIfNotPresent {
+		t.Fatalf("image pull policy = %q, want %q", spec.Containers[0].ImagePullPolicy, corev1.PullIfNotPresent)
+	}
 	resources := spec.Containers[0].Resources
 	if resources.Requests.Cpu().MilliValue() != 100 || resources.Limits.Cpu().MilliValue() != 1000 ||
 		resources.Requests.Memory().Value() != 128<<20 || resources.Limits.Memory().Value() != 128<<20 {
