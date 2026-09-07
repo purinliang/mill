@@ -118,6 +118,28 @@ func TestRejectPathsOutsideConfiguredRoots(t *testing.T) {
 	}
 }
 
+func TestConfigRequiresExactlyOneKubernetesClientMode(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		context   string
+		inCluster bool
+		wantError bool
+	}{
+		{name: "kubeconfig context", context: "kind-mill"},
+		{name: "in cluster", inCluster: true},
+		{name: "neither", wantError: true},
+		{name: "both", context: "kind-mill", inCluster: true, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config := Config{Context: test.context, InCluster: test.inCluster, Namespace: "default"}
+			err := config.validate()
+			if gotError := err != nil; gotError != test.wantError {
+				t.Fatalf("validate() error = %v, want error %v", err, test.wantError)
+			}
+		})
+	}
+}
+
 func TestRecoverLostCreateResponseAndObserveTerminalCondition(t *testing.T) {
 	var stored *batchv1.Job
 	creates := 0

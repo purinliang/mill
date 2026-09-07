@@ -58,11 +58,16 @@ func configFromEnvironment(getenv func(string) string) (config, error) {
 		}
 		timeout = parsed
 	}
+	inCluster, err := parseInCluster(getenv("MILL_KUBE_IN_CLUSTER"))
+	if err != nil {
+		return config{}, err
+	}
 	return config{
 		jobGRPCTarget: target,
 		rpcTimeout:    timeout,
 		kubernetes: kubernetes.Config{
 			Context:             getenv("MILL_KUBE_CONTEXT"),
+			InCluster:           inCluster,
 			Namespace:           getenv("MILL_KUBE_NAMESPACE"),
 			Node:                getenv("MILL_KUBE_NODE"),
 			LocalRoot:           getenv("MILL_LOCAL_ROOT"),
@@ -72,6 +77,17 @@ func configFromEnvironment(getenv func(string) string) (config, error) {
 			S3CredentialsSecret: getenv("MILL_WORKLOAD_S3_CREDENTIALS_SECRET"),
 		},
 	}, nil
+}
+
+func parseInCluster(value string) (bool, error) {
+	switch value {
+	case "", "false":
+		return false, nil
+	case "true":
+		return true, nil
+	default:
+		return false, errors.New("MILL_KUBE_IN_CLUSTER must be true or false")
+	}
 }
 
 func run(ctx context.Context, configuration config) error {

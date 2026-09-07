@@ -61,7 +61,22 @@ func TestConfigFromEnvironment(t *testing.T) {
 		t.Fatalf("RPC configuration = %+v", configuration)
 	}
 	if configuration.kubernetes.Context != "kind-mill" || configuration.kubernetes.Namespace != "default" ||
-		configuration.kubernetes.S3CredentialsSecret != "mill-storage" {
+		configuration.kubernetes.InCluster || configuration.kubernetes.S3CredentialsSecret != "mill-storage" {
+		t.Fatalf("Kubernetes configuration = %+v", configuration.kubernetes)
+	}
+}
+
+func TestConfigEnablesExplicitInClusterKubernetesClient(t *testing.T) {
+	values := map[string]string{
+		"MILL_JOB_GRPC_TARGET": "mill-job:9090",
+		"MILL_KUBE_IN_CLUSTER": "true",
+		"MILL_KUBE_NAMESPACE":  "mill",
+	}
+	configuration, err := configFromEnvironment(func(key string) string { return values[key] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !configuration.kubernetes.InCluster || configuration.kubernetes.Context != "" {
 		t.Fatalf("Kubernetes configuration = %+v", configuration.kubernetes)
 	}
 }
@@ -77,6 +92,12 @@ func TestConfigRequiresJobServiceAndBoundsTimeout(t *testing.T) {
 		values := map[string]string{"MILL_JOB_GRPC_TARGET": "job:9090", "MILL_EXECUTION_RPC_TIMEOUT": timeout}
 		if _, err := configFromEnvironment(func(key string) string { return values[key] }); err == nil {
 			t.Errorf("accepted timeout %q", timeout)
+		}
+	}
+	for _, value := range []string{"1", "TRUE", "yes"} {
+		values := map[string]string{"MILL_JOB_GRPC_TARGET": "job:9090", "MILL_KUBE_IN_CLUSTER": value}
+		if _, err := configFromEnvironment(func(key string) string { return values[key] }); err == nil {
+			t.Errorf("accepted in-cluster value %q", value)
 		}
 	}
 }

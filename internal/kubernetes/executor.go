@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	batchclient "k8s.io/client-go/kubernetes/typed/batch/v1"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/purinliang/mill/internal/coordinator"
@@ -25,6 +26,7 @@ import (
 
 type Config struct {
 	Context             string
+	InCluster           bool
 	Namespace           string
 	Node                string
 	LocalRoot           string
@@ -43,12 +45,9 @@ func New(config Config) (*Executor, error) {
 	if err := config.validate(); err != nil {
 		return nil, err
 	}
-	loader := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		clientcmd.NewDefaultClientConfigLoadingRules(),
-		&clientcmd.ConfigOverrides{CurrentContext: config.Context})
-	restConfig, err := loader.ClientConfig()
+	restConfig, err := config.restConfig()
 	if err != nil {
-		return nil, fmt.Errorf("load Kubernetes config: %w", err)
+		return nil, err
 	}
 	restConfig.Timeout = 10 * time.Second
 	client, err := batchclient.NewForConfig(restConfig)
@@ -59,8 +58,11 @@ func New(config Config) (*Executor, error) {
 }
 
 func (c Config) validate() error {
-	if c.Context == "" || c.Namespace == "" {
-		return errors.New("Kubernetes context and namespace must be explicit")
+	if c.Namespace == "" {
+		return errors.New("Kubernetes namespace must be explicit")
+	}
+	if (c.Context == "" && !c.InCluster) || (c.Context != "" && c.InCluster) {
+		return errors.New("configure exactly one Kubernetes client mode: context or in-cluster")
 	}
 	localFields := 0
 	for _, value := range []string{c.Node, c.LocalRoot, c.NodeRoot} {
@@ -83,6 +85,24 @@ func (c Config) validate() error {
 		return errors.New("Kubernetes workload S3 region is required with a custom endpoint")
 	}
 	return nil
+}
+
+func (c Config) restConfig() (*rest.Config, error) {
+	if c.InCluster {
+		config, err := rest.InClusterConfig()
+		if err != nil {
+			return nil, fmt.Errorf("load in-cluster Kubernetes config: %w", err)
+		}
+		return config, nil
+	}
+	loader := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		clientcmd.NewDefaultClientConfigLoadingRules(),
+		&clientcmd.ConfigOverrides{CurrentContext: c.Context})
+	config, err := loader.ClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("load kubeconfig context %q: %w", c.Context, err)
+	}
+	return config, nil
 }
 
 // Reconcile recovers the create/record crash window by a stable Job name.
