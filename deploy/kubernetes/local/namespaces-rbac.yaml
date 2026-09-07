@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mill-system
+  labels:
+    app.kubernetes.io/part-of: mill
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mill-workloads
+  labels:
+    app.kubernetes.io/part-of: mill
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mill-executor
+  namespace: mill-system
+  labels:
+    app.kubernetes.io/name: mill-executor
+    app.kubernetes.io/part-of: mill
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mill-executor
+  namespace: mill-workloads
+  labels:
+    app.kubernetes.io/name: mill-executor
+    app.kubernetes.io/part-of: mill
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mill-executor
+  namespace: mill-workloads
+  labels:
+    app.kubernetes.io/name: mill-executor
+    app.kubernetes.io/part-of: mill
+subjects:
+  - kind: ServiceAccount
+    name: mill-executor
+    namespace: mill-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mill-executor
