@@ -278,6 +278,42 @@ This proves one stateless Job-service Pod may fail while another ready replica,
 PostgreSQL, the executor, Kubernetes node/API, network, and object store remain
 healthy. It does not demonstrate database, node, or partition tolerance.
 
+### Availability manifests
+
+The multi-node profiles live in `deploy/kubernetes/availability`. Install the
+pinned CloudNativePG 1.30.0 operator into the intended context first:
+
+```bash
+MILL_KUBE_CONTEXT=<context> ./scripts/install-cloudnative-pg
+```
+
+The installer downloads the official release manifest, verifies its pinned
+SHA-256 digest, applies it server-side, and waits for the controller. The
+directory then provides:
+
+- `namespaces-rbac.yaml` for the system, workload, and database namespaces and
+  the existing namespace-scoped executor permissions;
+- `control-plane.yaml` for two Job-service and two executor replicas, required
+  hostname anti-affinity, and one-replica disruption budgets;
+- `postgres-two-node.yaml` for two PostgreSQL instances with synchronous
+  `ANY 1` and `dataDurability: preferred`; and
+- `postgres-three-node.yaml` for three instances with synchronous `ANY 1`,
+  `dataDurability: required`, and failover quorum.
+
+The PostgreSQL profiles have the same resource name and are alternatives; do
+not apply both. Each requires a `kubernetes.io/basic-auth` Secret named
+`mill-database-credentials` in `mill-database`, and each uses K3s's
+`local-path` storage class. The control-plane manifest similarly expects its
+configuration Secrets and node-reachable images. A deployment script will
+create these inputs in the next slice.
+
+Required anti-affinity intentionally leaves replicas Pending when the cluster
+has too few distinct hostnames. Weakening it to make a one-node test green
+would invalidate the failure-domain claim. The two-node profile favors write
+availability if its standby disappears; the three-node profile favors
+acknowledged-write durability and stops rather than promoting an unsafe
+minority.
+
 See [the word-count guide](../examples/word-count/README.md) for tokenization,
 input provenance, deterministic record grouping, and result-merging behavior.
 

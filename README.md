@@ -280,7 +280,11 @@ Kubernetes Job names, and Job UIDs remain unchanged. Another single-node test
 deletes the original Job-service Pod and proves the REST client and executor's
 gRPC connection recover through the Service without changing durable work.
 Multi-node replica placement, K3s installation, and database replication remain
-to be built and tested.
+to be exercised. The first deployable manifests are now defined under
+`deploy/kubernetes/availability`: two Mill replicas per service, required
+hostname anti-affinity, disruption budgets, and distinct two- and three-node
+CloudNativePG profiles. Both profiles pass Kubernetes and CloudNativePG 1.30.0
+admission validation; neither has yet been run on multiple nodes.
 
 Continue with focused reviews after each slice, but defer the overall
 architecture and code-ownership refactor until after Milestone 8.
@@ -292,6 +296,9 @@ place one PostgreSQL instance on each node. Use required synchronous replication
 and failover quorum, then test one physical-node loss and an isolated minority
 without conflicting writers or duplicate attempts. Full-stack claims also
 require replicated object storage or AWS S3.
+
+The three-instance CloudNativePG manifest is implemented and admission-tested,
+but the three-node runtime and its failure evidence remain planned.
 
 After this milestone, perform the overall review and refactor using evidence
 from both the two-laptop and three-node systems. Preserve Pod failure, database

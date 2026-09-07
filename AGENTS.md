@@ -64,6 +64,15 @@ Add implementation only in small, explicitly requested increments. Do not add
 more Dockerfiles, Kubernetes manifests, CI workflows, Terraform, or unrelated
 infrastructure unless a later task requires them.
 
+`deploy/kubernetes/availability` contains the explicitly requested multi-node
+foundation. Preserve the distinction between its alternative profiles: two
+PostgreSQL instances use `dataDurability: preferred` for the limited
+two-laptop demonstration; three instances use `dataDurability: required` plus
+failover quorum. Both database and Mill replicas require distinct hostname
+failure domains. Do not weaken anti-affinity to make an undersized cluster
+appear available, and do not claim either profile has passed until its runtime
+evidence exists.
+
 `scripts/demo-word-count-single-task` runs one manual word-count Job with staged
 node-local input and verifies its output against a local run. It uses
 `examples/word-count/job.yaml.template`; it does not claim or transition

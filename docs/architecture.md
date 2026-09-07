@@ -433,6 +433,11 @@ standby is unavailable, writes may continue; overlapping failures can therefore
 lose recently acknowledged metadata. It does not claim survival of an entire
 laptop or an ambiguous network partition.
 
+The deployable two-node profile is implemented but not yet exercised. It uses
+required hostname anti-affinity for both Mill service replicas and both
+PostgreSQL instances, PodDisruptionBudgets for Mill, K3s `local-path` PVCs, and
+CloudNativePG synchronous `ANY 1` with `dataDurability: preferred`.
+
 ### Three-node quorum availability — planned
 
 Three independent nodes each run a K3s server/etcd voter and one PostgreSQL
@@ -445,6 +450,11 @@ does not implement voting: etcd owns Kubernetes consensus and CloudNativePG
 owns PostgreSQL promotion. Full-stack availability also requires an available
 S3 service; a single local object-storage container cannot support a whole-node
 availability claim.
+
+The corresponding three-instance manifest is implemented and validated by the
+CloudNativePG 1.30.0 admission webhook. It enables required `ANY 1` synchronous
+replication and failover quorum, but no three-node runtime claim exists until
+the K3s/etcd topology and failure scenarios have actually passed.
 
 ## Explicitly deferred
 
