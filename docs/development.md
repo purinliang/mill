@@ -210,6 +210,31 @@ The S3 service is a local compatibility fixture, not a production storage
 deployment or availability claim. Override its HTTP port with
 `MILL_DEMO_PORT`; the default is `18081`.
 
+### Full batch through deployed Mill services
+
+```bash
+./scripts/demo-word-count-deployed
+```
+
+This is the single-node deployment proof. It creates unique temporary system
+and workload namespaces, starts disposable PostgreSQL 18 and SeaweedFS
+containers on kind's Docker network, migrates the database, and calls
+`scripts/deploy-local-control-plane`. The API is reached through a temporary
+port-forward; override its local port with `MILL_DEMO_PORT`, whose default is
+`18083`.
+
+The demo submits the same 12-task S3 workload, enforces parallelism three,
+checks that generated Jobs have no hostPath or node selector, downloads only
+successful result URIs, and compares the merged counts with a local full-input
+result. It then captures service logs, Kubernetes resource snapshots, Job
+manifests, database logs, and storage logs in the printed run directory.
+
+Each run uses unique namespaces and container names. On exit it removes only
+those namespaces and containers, so an existing `mill-system` deployment is
+not overwritten. The disposable database and object store are correctness
+fixtures; this test demonstrates a fully deployed control plane, not service,
+node, database, or storage availability.
+
 See [the word-count guide](../examples/word-count/README.md) for tokenization,
 input provenance, deterministic record grouping, and result-merging behavior.
 
@@ -272,6 +297,11 @@ The checked-in manifests are kind-specific: they use local `:dev` images with
 gRPC, and no database or object-store deployment. They establish a runnable
 Pod/RBAC baseline but provide no replica, node, database, or storage
 availability.
+
+`MILL_SYSTEM_NAMESPACE` and `MILL_WORKLOAD_NAMESPACE` may override the default
+namespaces, and `MILL_KUBE_CONTEXT` and `MILL_KIND_CLUSTER` may select another
+local kind cluster. Namespace overrides must be distinct DNS labels. The
+deployed demonstration uses these options to isolate every run.
 
 Inspect the deployment and API:
 
@@ -452,6 +482,7 @@ scripts/
   setup                           pinned local kind/kubectl preparation
   build-control-plane-images      build and inspect both Mill service images
   deploy-local-control-plane      build, configure, and roll out services in kind
+  demo-word-count-deployed        complete S3 batch through deployed Mill Pods
   demo-word-count-single-task     one manual Kubernetes task
   demo-word-count-batch           complete node-local control-plane batch
   demo-word-count-s3              complete shared-storage batch

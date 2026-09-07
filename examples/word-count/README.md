@@ -199,6 +199,24 @@ Temporary S3 credentials and the storage container are removed on exit. The
 printed run directory retains inputs, downloaded outputs, logs, final status,
 and storage data. Completed Kubernetes Jobs remain for inspection.
 
+## Run through deployed Mill services
+
+```bash
+./scripts/demo-word-count-deployed
+```
+
+This variation packages both Mill services as Kubernetes Deployments instead of
+running them as laptop processes. It uses unique temporary control-plane and
+workload namespaces, a ClusterIP REST/gRPC Service, in-cluster executor
+credentials, and namespace-scoped Job RBAC.
+
+The same 12 S3-backed mapper tasks run with peak parallelism three and are
+merged and compared with the local full-input count. Disposable PostgreSQL and
+SeaweedFS containers remain test fixtures outside Kubernetes; the script
+removes its unique namespaces and containers on exit and retains diagnostics in
+the printed run directory. This proves the deployed service path, not high
+availability.
+
 ## Crash and restart the executor
 
 Run the process-boundary recovery demonstration with:

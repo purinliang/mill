@@ -265,8 +265,9 @@ one Job-service process and standalone executor replicas; the failover mode
 kills the active lease owner and proves fenced takeover by a surviving replica.
 Minimal non-root images now package both services. The executor explicitly
 selects either a local kubeconfig context or the standard in-cluster
-service-account configuration; selecting both or neither is an error. Service
-authentication, RBAC, and multi-Pod deployment remain planned. Lease expiry
+service-account configuration; selecting both or neither is an error. Local
+namespace-scoped RBAC and a one-replica Pod deployment are implemented. Service
+authentication and multi-replica deployment remain planned. Lease expiry
 transfers observation ownership; it does not create a new attempt. An explicit
 expected version may be added only if the existing fencing and state guards
 prove insufficient for safely retrying an unknown RPC outcome.
@@ -313,33 +314,24 @@ PostgreSQL remains a failure point until database replication is implemented,
 and single-node kind remains a node-level failure point until the multi-node
 stage.
 
-### Refactor checkpoints
+### Refactor checkpoint
 
-Schedule two larger refactor checkpoints after the architecture has produced
-real deployment and failure evidence:
+Perform one overall architecture and code-ownership refactor after the
+three-node quorum milestone. Waiting until Milestone 8 provides evidence from
+process failure, deployed Pods, controlled primary/standby promotion, physical
+node loss, and minority isolation before reshaping the code.
 
-1. **After the two-laptop replica milestone**, freeze feature work and review
-   the complete code path together. Refactor service composition,
-   configuration, lifecycle and shutdown, package ownership, deployment
-   manifests, observability, and test/demo duplication where the running
-   primary/standby system has exposed friction. Preserve the demonstrated Pod
-   failure and controlled PostgreSQL promotion tests throughout the refactor.
-2. **After the three-node quorum milestone**, freeze feature work again and
-   refactor the failure model using evidence from physical-node loss and
-   minority isolation. Revisit RPC deadlines and retry classification,
-   reconciliation boundaries, database failover assumptions, operational
-   diagnostics, and fault-test structure. Preserve quorum safety, fencing, and
-   absence of duplicate execution as executable regression tests.
+Begin with a package/dependency inventory and an end-to-end walkthrough.
+Review service composition, lifecycle and shutdown, package ownership,
+deployment manifests, RPC retry classification, reconciliation boundaries,
+database assumptions, observability, and test/demo duplication. Delete obsolete
+paths before introducing abstractions, keep behavior unchanged in refactor
+commits, and preserve all process, Pod, database, node-loss, fencing, and quorum
+tests throughout the work. This is not permission for a ground-up rewrite or
+speculative frameworks.
 
-Neither checkpoint is permission for a ground-up rewrite or speculative
-frameworks. Begin each with a package/dependency inventory and an end-to-end
-code walkthrough; delete obsolete paths before introducing abstractions; keep
-behavior unchanged in refactor commits; and rerun all unit, integration,
-process-failover, and deployment-failure tests before resuming feature work.
-
-Short code reviews still occur after every implementation slice. The two major
-checkpoints are for consolidating lessons from new failure domains, not for
-postponing understanding of code written earlier.
+Short reviews and necessary corrections still occur after every implementation
+slice; only the broad consolidation is deferred.
 
 ## Workload resource classes
 
@@ -399,6 +391,13 @@ and S3-compatible storage. The kind-specific images use `imagePullPolicy:
 Never`. This baseline proves Pod startup, PostgreSQL-backed readiness, service
 discovery, in-cluster configuration, and the RBAC boundary. It makes no
 availability claim.
+
+`scripts/demo-word-count-deployed` proves the complete boundary using unique
+temporary namespaces and disposable PostgreSQL/S3 fixtures. It submits 12
+logical tasks through the deployed REST endpoint, leases them through deployed
+gRPC and executor Pods, observes 12 S3-backed Kubernetes Jobs at bounded
+parallelism three, and verifies the merged result exactly. This extends the
+deployment claim to end-to-end correctness, but not availability.
 
 ### Two-laptop replica availability — planned
 

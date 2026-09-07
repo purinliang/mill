@@ -127,11 +127,22 @@ Run the shared-storage demonstration:
 ./scripts/demo-word-count-s3
 ```
 
+Run the same 12-task S3 workload with both Mill services deployed as Pods:
+
+```bash
+./scripts/demo-word-count-deployed
+```
+
 The S3 demonstration starts disposable PostgreSQL and S3-compatible SeaweedFS
 processes, submits 12 logical tasks, runs at most three Pods concurrently, and
 verifies the merged S3 results against a local full-input count. It retains its
 printed result directory and Kubernetes Jobs for inspection while removing its
 temporary credentials and storage container.
+
+The deployed variation runs both Mill services as Pods in unique namespaces,
+captures their diagnostics, and removes only its own namespaces and fixture
+containers after exact result verification. It is an end-to-end deployment
+test, not an availability test.
 
 Run the unit test suite with:
 
@@ -174,7 +185,7 @@ Implemented:
 - durable workload resource classes propagated through gRPC to Kubernetes;
 - trusted workload CLI contract and non-root example images;
 - local, container, single-task, full-batch, retry, restart, replica-failover,
-  and S3-backed word-count demonstrations; and
+  S3-backed, and fully deployed word-count demonstrations; and
 - exact result verification against a local baseline.
 
 Not implemented:
@@ -242,12 +253,13 @@ claim whole-laptop or network-partition tolerance.
 The single-node prerequisite is implemented: both packaged services run as
 one-replica Deployments, communicate through a ClusterIP Service, and isolate
 workload Jobs in a namespace where the executor may only create and get Jobs.
+The complete 12-task S3 workload has run through these deployed services with
+exact result verification and bounded parallelism.
 Multi-replica placement, K3s installation, and database replication remain to
 be built and tested.
 
-After this milestone, pause feature work for the first major architecture and
-code-ownership review. Refactor only issues demonstrated by the runnable
-two-laptop system while preserving its process and database-promotion tests.
+Continue with focused reviews after each slice, but defer the overall
+architecture and code-ownership refactor until after Milestone 8.
 
 ### 8 — Three-node quorum availability — planned
 
@@ -257,9 +269,9 @@ and failover quorum, then test one physical-node loss and an isolated minority
 without conflicting writers or duplicate attempts. Full-stack claims also
 require replicated object storage or AWS S3.
 
-After this milestone, perform a second major review focused on quorum behavior,
-failure classification, reconciliation, and operational clarity. Preserve the
-node-loss and minority-isolation evidence as regression tests while refactoring.
+After this milestone, perform the overall review and refactor using evidence
+from both the two-laptop and three-node systems. Preserve Pod failure, database
+promotion, node-loss, and minority-isolation evidence as regression tests.
 
 ### 9 — CI/CD and disposable AWS deployment — planned
 

@@ -24,8 +24,11 @@ The batch demo's `--replica-failover` mode runs two executors concurrently,
 rejects premature lease stealing, kills the primary, and verifies fenced
 takeover of the same attempts and Kubernetes Jobs.
 `scripts/demo-word-count-s3` proves the shared-storage path against a disposable
-S3-compatible service and exact local baseline. `scripts/setup` provides a
-repeatable local kind environment.
+S3-compatible service and exact local baseline.
+`scripts/demo-word-count-deployed` proves the same 12-task flow through
+deployed Job-service and executor Pods in unique temporary namespaces, then
+removes only its owned cluster resources and fixture containers while retaining
+diagnostics. `scripts/setup` provides a repeatable local kind environment.
 
 The backend-independent execution model and store contract have been extracted
 from `internal/job`. A versioned Protobuf schema and gRPC client/server adapters
@@ -140,6 +143,11 @@ operational and maintenance cost.
   boundary test. The Job service must not start an in-process coordinator, two
   standalone executor processes must remain live, neither executor may receive
   PostgreSQL configuration, and all task outputs must match the local baseline.
+- Preserve `scripts/demo-word-count-deployed` as the packaged control-plane
+  proof. Each run must use unique namespaces, keep the executor free of
+  PostgreSQL credentials, execute exactly 12 S3-backed tasks with bounded
+  parallelism, reject hostPath/node placement, compare exact output, retain
+  diagnostics, and remove only resources created by that run.
 - Do not implement a custom cluster scheduler when Kubernetes provides a
   suitable primitive. Initially map one Mill attempt to one Kubernetes Job so
   its arguments, output, and retry history remain independently observable.
@@ -229,6 +237,9 @@ job, task, shard, attempt, or state-transition semantics.
   uses preloaded development images and external PostgreSQL/S3; do not reuse it
   to claim K3s, database, node, or object-storage availability. Keep secret
   values out of manifests and Git.
+- Defer the broad architecture/code-ownership refactor until Milestone 8 is
+  complete. Continue focused per-slice review and fix demonstrated correctness
+  issues immediately; deferral is not permission to accumulate known defects.
 - Keep executor-facing attempt types, sentinel domain failures, and the
   transport-independent store contract in `internal/execution`. Coordinator
   and Kubernetes packages must not import `internal/job`.
