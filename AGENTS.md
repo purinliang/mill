@@ -44,13 +44,15 @@ CPU and memory values and executors receive them through gRPC. The
 `--replica-failover` mode proves survivor takeover across this boundary while
 preserving attempt and Kubernetes Job identities.
 
-Minimal non-root OCI images package the Job service and executor, but no
-Kubernetes deployment exists for them yet. Workload image inspection, generic
-output verification/aggregation, wider fault recovery, in-cluster executor
-authentication, PostgreSQL replication, and multi-node availability remain
-planned. Add implementation only in small, explicitly requested increments. Do
-not add more Dockerfiles, Kubernetes manifests, CI workflows, Terraform, or
-unrelated infrastructure unless a later task requires them.
+Minimal non-root OCI images package the Job service and executor. The executor
+supports mutually exclusive explicit kubeconfig-context and in-cluster
+service-account modes, but no Kubernetes deployment or RBAC exists for the
+services yet. Workload image inspection, generic output
+verification/aggregation, wider fault recovery, PostgreSQL replication, and
+multi-node availability remain planned. Add implementation only in small,
+explicitly requested increments. Do not add more Dockerfiles, Kubernetes
+manifests, CI workflows, Terraform, or unrelated infrastructure unless a later
+task requires them.
 
 `scripts/demo-word-count-single-task` runs one manual word-count Job with staged
 node-local input and verifies its output against a local run. It uses
@@ -210,6 +212,11 @@ job, task, shard, attempt, or state-transition semantics.
   `internal/coordinator`, Kubernetes types and API calls in
   `internal/kubernetes`, and their lifecycle/configuration in
   `cmd/mill-executor/main.go`. Word-count aggregation stays in the example.
+- Require an executor to select exactly one Kubernetes credential source. Use
+  an explicit kubeconfig context outside the cluster and client-go's standard
+  service-account configuration inside it; do not silently fall back between
+  clusters. Keep namespace selection explicit in both modes, and grant only the
+  RBAC operations the executor actually uses.
 - Keep executor-facing attempt types, sentinel domain failures, and the
   transport-independent store contract in `internal/execution`. Coordinator
   and Kubernetes packages must not import `internal/job`.

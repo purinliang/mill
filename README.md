@@ -147,6 +147,8 @@ Implemented:
 - optional Job-side gRPC listener with bounded messages and graceful shutdown;
 - separately runnable executor process with no PostgreSQL dependency;
 - minimal non-root OCI images for the Job service and executor;
+- explicit executor support for either a kubeconfig context or in-cluster
+  service-account credentials;
 - demonstrated 12-task split-process execution through one Job service and two
   live executor replicas;
 - demonstrated executor-process failover with lease-token replacement and
@@ -220,8 +222,9 @@ with availability-oriented synchronous replication. Demonstrate individual
 Mill Pod failure and controlled PostgreSQL Pod promotion. This stage will not
 claim whole-laptop or network-partition tolerance.
 
-The two service images are packaged. In-cluster Kubernetes authentication,
-manifests, replica placement, and database replication remain to be built.
+The two service images and executor in-cluster client mode are implemented.
+Service-account RBAC, manifests, replica placement, and database replication
+remain to be built.
 
 After this milestone, pause feature work for the first major architecture and
 code-ownership review. Refactor only issues demonstrated by the runnable

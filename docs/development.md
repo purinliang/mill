@@ -229,9 +229,7 @@ unless they have the expected entrypoint and run as the numeric non-root user
 
 Both images contain only a statically linked service binary and CA
 certificates. Building them does not load them into kind or create Kubernetes
-resources. The executor currently requires an explicit kubeconfig context; a
-later deployment slice must add service-account-based in-cluster client
-configuration before deploying it as a Pod.
+resources.
 
 ## Configuration
 
@@ -263,8 +261,15 @@ The standalone executor uses these RPC variables:
 | --- | --- |
 | `MILL_JOB_GRPC_TARGET` | Required Job-service gRPC target. |
 | `MILL_EXECUTION_RPC_TIMEOUT` | Optional per-call timeout; default `3s`, range `100ms`–`30s`. |
-| `MILL_KUBE_CONTEXT` | Explicit kubeconfig context. |
+| `MILL_KUBE_CONTEXT` | Explicit kubeconfig context for an executor outside Kubernetes. |
+| `MILL_KUBE_IN_CLUSTER` | Set exactly to `true` to use the executor Pod's service-account credentials. |
 | `MILL_KUBE_NAMESPACE` | Namespace for Jobs. |
+
+Configure exactly one Kubernetes client mode: set `MILL_KUBE_CONTEXT` for a
+locally running executor, or set `MILL_KUBE_IN_CLUSTER=true` for an executor
+running as a Pod. In-cluster mode uses client-go's standard service-account CA,
+token, and API address. It does not itself create or grant the required RBAC;
+that belongs to the deployment configuration.
 
 The current local-file Kubernetes path also needs the node/root variables below;
 S3 tasks need the workload storage variables. The gRPC connection is currently
