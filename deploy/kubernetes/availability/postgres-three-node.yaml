@@ -1,0 +1,37 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: mill-postgres
+  namespace: mill-database
+  labels:
+    app.kubernetes.io/name: mill-postgres
+    app.kubernetes.io/part-of: mill
+spec:
+  instances: 3
+  failoverDelay: 5
+  bootstrap:
+    initdb:
+      database: mill
+      owner: mill
+      secret:
+        name: mill-database-credentials
+  storage:
+    storageClass: local-path
+    size: 1Gi
+  affinity:
+    enablePodAntiAffinity: true
+    podAntiAffinityType: required
+    topologyKey: kubernetes.io/hostname
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: required
+      failoverQuorum: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
