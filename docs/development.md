@@ -213,6 +213,26 @@ deployment or availability claim. Override its HTTP port with
 See [the word-count guide](../examples/word-count/README.md) for tokenization,
 input provenance, deterministic record grouping, and result-merging behavior.
 
+## Control-plane images
+
+Build both Mill service images from the repository root:
+
+```bash
+./scripts/build-control-plane-images
+```
+
+The script builds `mill/job-service:dev` from `cmd/mill/Dockerfile` and
+`mill/executor:dev` from `cmd/mill-executor/Dockerfile`. Override the tags with
+`MILL_JOB_IMAGE` and `MILL_EXECUTOR_IMAGE`. It inspects both results and fails
+unless they have the expected entrypoint and run as the numeric non-root user
+`65532:65532`.
+
+Both images contain only a statically linked service binary and CA
+certificates. Building them does not load them into kind or create Kubernetes
+resources. The executor currently requires an explicit kubeconfig context; a
+later deployment slice must add service-account-based in-cluster client
+configuration before deploying it as a Pod.
+
 ## Configuration
 
 Job-process variables:
@@ -316,9 +336,11 @@ headers. Review both the schema and generated diff together.
 
 ```text
 cmd/mill/
+  Dockerfile                      minimal non-root Job-service image
   main.go                         process composition and HTTP lifecycle
   grpc.go                         optional bounded execution gRPC listener
 cmd/mill-executor/
+  Dockerfile                      minimal non-root executor image
   main.go                         standalone gRPC-to-Kubernetes coordinator
 api/proto/mill/execution/v1/
   execution.proto                 versioned internal lease/state RPC schema
@@ -362,6 +384,7 @@ internal/workload/
 migrations/                       ordered PostgreSQL schema and lease history
 scripts/
   setup                           pinned local kind/kubectl preparation
+  build-control-plane-images      build and inspect both Mill service images
   demo-word-count-single-task     one manual Kubernetes task
   demo-word-count-batch           complete node-local control-plane batch
   demo-word-count-s3              complete shared-storage batch

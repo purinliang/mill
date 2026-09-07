@@ -44,13 +44,13 @@ CPU and memory values and executors receive them through gRPC. The
 `--replica-failover` mode proves survivor takeover across this boundary while
 preserving attempt and Kubernetes Job identities.
 
-Workload image inspection, generic output verification/aggregation, and wider
-fault recovery remain planned. Packaged runtime deployments, PostgreSQL
-replication, and multi-node availability are documented future
-milestones, not current behavior. Add implementation only in small, explicitly
-requested increments. Do not add more Dockerfiles,
-Kubernetes manifests, CI workflows, Terraform, or unrelated infrastructure
-unless a later task requires them.
+Minimal non-root OCI images package the Job service and executor, but no
+Kubernetes deployment exists for them yet. Workload image inspection, generic
+output verification/aggregation, wider fault recovery, in-cluster executor
+authentication, PostgreSQL replication, and multi-node availability remain
+planned. Add implementation only in small, explicitly requested increments. Do
+not add more Dockerfiles, Kubernetes manifests, CI workflows, Terraform, or
+unrelated infrastructure unless a later task requires them.
 
 `scripts/demo-word-count-single-task` runs one manual word-count Job with staged
 node-local input and verifies its output against a local run. It uses
@@ -233,6 +233,11 @@ job, task, shard, attempt, or state-transition semantics.
 - Keep a reference workload's Dockerfile beside its command. Prefer a
   multi-stage build and a minimal non-root runtime image; do not place build
   tools in the final workload image.
+- Keep each Mill service Dockerfile beside its top-level `cmd` entrypoint. The
+  final service images contain only the static binary and CA certificates, run
+  as `65532:65532`, and are built together by
+  `scripts/build-control-plane-images`. Image creation is distinct from loading
+  or deploying an image.
 - Commit small, stable source fixtures and deterministic generation
   configuration when they explain a demonstration. Do not commit generated
   JSONL inputs, task outputs, or other reproducible artifacts.

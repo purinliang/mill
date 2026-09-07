@@ -51,7 +51,7 @@ to take over an expired lease while preserving the attempt and Kubernetes Job
 identity. For S3-backed jobs, Pods need no hostPath volume or fixed-node selector
 and can use shared object storage from any eligible node. See
 [Architecture](docs/architecture.md) for the domain model, correctness rules,
-resource-class proposal, and availability design.
+resource-class policy, and availability design.
 
 ## V1 scope
 
@@ -78,6 +78,15 @@ installed and accessible:
 ```bash
 ./scripts/setup
 ```
+
+Build the two Mill control-plane images and verify their runtime identities:
+
+```bash
+./scripts/build-control-plane-images
+```
+
+This produces `mill/job-service:dev` and `mill/executor:dev`. No Kubernetes
+deployment is created by this command.
 
 Run the complete batch demonstration with node-local files:
 
@@ -137,6 +146,7 @@ Implemented:
 - versioned execution Protobuf schema and tested gRPC client/server adapters;
 - optional Job-side gRPC listener with bounded messages and graceful shutdown;
 - separately runnable executor process with no PostgreSQL dependency;
+- minimal non-root OCI images for the Job service and executor;
 - demonstrated 12-task split-process execution through one Job service and two
   live executor replicas;
 - demonstrated executor-process failover with lease-token replacement and
@@ -209,6 +219,9 @@ executor replicas across the laptops. Run a CloudNativePG primary and standby
 with availability-oriented synchronous replication. Demonstrate individual
 Mill Pod failure and controlled PostgreSQL Pod promotion. This stage will not
 claim whole-laptop or network-partition tolerance.
+
+The two service images are packaged. In-cluster Kubernetes authentication,
+manifests, replica placement, and database replication remain to be built.
 
 After this milestone, pause feature work for the first major architecture and
 code-ownership review. Refactor only issues demonstrated by the runnable

@@ -263,10 +263,11 @@ PostgreSQL configuration or dependency, and retries later coordinator ticks
 when the Job service is temporarily unavailable. The 12-task batch runs through
 one Job-service process and standalone executor replicas; the failover mode
 kills the active lease owner and proves fenced takeover by a surviving replica.
-Service authentication and multi-Pod packaging remain planned. Lease expiry
-transfers observation ownership; it does not create a new attempt. An explicit
-expected version may be added only if the existing fencing and state guards
-prove insufficient for safely retrying an unknown RPC outcome.
+Minimal non-root images now package both services. Service authentication,
+in-cluster Kubernetes client configuration, and multi-Pod deployment remain
+planned. Lease expiry transfers observation ownership; it does not create a new
+attempt. An explicit expected version may be added only if the existing fencing
+and state guards prove insufficient for safely retrying an unknown RPC outcome.
 
 ### Runtime separation implementation path
 
