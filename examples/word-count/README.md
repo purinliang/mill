@@ -232,6 +232,18 @@ also requires the merged result to match the local count. This isolates one
 executor Pod failure; PostgreSQL, the Job service, kind node, and object store
 remain healthy.
 
+To delete the original Job-service Pod while tasks are running, use:
+
+```bash
+./scripts/demo-word-count-deployed --job-service-failover
+```
+
+The script first adds a ready Job-service replica, then removes the only Pod
+that existed when the executor established its gRPC connection. It reconnects
+the REST port-forward and requires the executor to reconnect through the
+Service, finish the same leased attempts, and produce the exact 12-task result.
+This does not fail PostgreSQL, the Kubernetes node, or object storage.
+
 ## Crash and restart the executor
 
 Run the process-boundary recovery demonstration with:

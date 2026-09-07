@@ -139,6 +139,12 @@ Delete an active executor Pod and prove fenced takeover by another replica:
 ./scripts/demo-word-count-deployed --executor-failover
 ```
 
+Delete the original Job-service Pod and prove REST/gRPC reconnection:
+
+```bash
+./scripts/demo-word-count-deployed --job-service-failover
+```
+
 The S3 demonstration starts disposable PostgreSQL and S3-compatible SeaweedFS
 processes, submits 12 logical tasks, runs at most three Pods concurrently, and
 verifies the merged S3 results against a local full-input count. It retains its
@@ -149,8 +155,9 @@ The deployed variation runs both Mill services as Pods in unique namespaces,
 captures their diagnostics, and removes only its own namespaces and fixture
 containers after exact result verification. Its failover mode scales the
 executor Deployment to two replicas and proves recovery from one active
-executor Pod deletion. It does not test Job-service, database, storage, node,
-or network failure.
+executor Pod deletion. Its Job-service mode similarly scales that Deployment,
+deletes the original REST/gRPC endpoint, and proves reconnection through the
+Service. Neither mode tests database, storage, node, or network failure.
 
 Run the unit test suite with:
 
@@ -191,6 +198,8 @@ Implemented:
   stable attempt and Kubernetes Job identities;
 - demonstrated active executor Pod deletion and fenced takeover by another
   deployed replica without duplicate attempts or Kubernetes Jobs;
+- demonstrated Job-service Pod deletion with REST/gRPC reconnection and stable
+  durable execution identities;
 - deterministic Kubernetes identity and executor restart reconciliation;
 - durable workload resource classes propagated through gRPC to Kubernetes;
 - trusted workload CLI contract and non-root example images;
@@ -267,8 +276,10 @@ The complete 12-task S3 workload has run through these deployed services with
 exact result verification and bounded parallelism. A single-node test also
 scales the executor to two replicas, deletes the Pod that owns three active
 leases, and proves takeover with new fencing tokens while attempt IDs,
-Kubernetes Job names, and Job UIDs remain unchanged. Job-service Pod failover,
-multi-node replica placement, K3s installation, and database replication remain
+Kubernetes Job names, and Job UIDs remain unchanged. Another single-node test
+deletes the original Job-service Pod and proves the REST client and executor's
+gRPC connection recover through the Service without changing durable work.
+Multi-node replica placement, K3s installation, and database replication remain
 to be built and tested.
 
 Continue with focused reviews after each slice, but defer the overall

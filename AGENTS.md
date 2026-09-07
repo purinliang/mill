@@ -31,7 +31,9 @@ removes only its owned cluster resources and fixture containers while retaining
 diagnostics. Its `--executor-failover` mode scales the executor Deployment to
 two, deletes the active lease owner's Pod, and proves fenced takeover without
 changing attempt or Kubernetes Job identities. `scripts/setup` provides a
-repeatable local kind environment.
+repeatable local kind environment. Its `--job-service-failover` mode separately
+deletes the original REST/gRPC Pod after adding a ready replica and proves both
+client paths reconnect without changing durable execution identity.
 
 The backend-independent execution model and store contract have been extracted
 from `internal/job`. A versioned Protobuf schema and gRPC client/server adapters
@@ -159,6 +161,13 @@ operational and maintenance cost.
   exactly 12 first attempts, restored replica availability, and exact output.
   Do not describe this as Job-service, database, storage, node, or partition
   availability.
+- Preserve `scripts/demo-word-count-deployed --job-service-failover` as the
+  single-node Job-service Pod failure proof. Begin with one endpoint, add and
+  verify a ready standby, delete the original Pod, and require both retrying
+  REST access and the existing executor gRPC client to recover through the
+  Service. Preserve lease owner/token and attempt/Job identities, exactly 12
+  first attempts, restored replica availability, and exact output. Do not
+  describe this as database, storage, node, or partition availability.
 - Do not implement a custom cluster scheduler when Kubernetes provides a
   suitable primitive. Initially map one Mill attempt to one Kubernetes Job so
   its arguments, output, and retry history remain independently observable.

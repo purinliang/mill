@@ -410,6 +410,16 @@ deletion while the Job service, PostgreSQL, Kubernetes API/node, network, and
 object storage stay healthy; it does not prove any of those dependencies are
 available under failure.
 
+The complementary `--job-service-failover` mode starts with one Job-service
+endpoint, scales its Deployment to two ready replicas, and deletes the original
+Pod while attempts are live. A retrying REST client reconnects, and the
+executor's existing gRPC client must reconnect through the ClusterIP Service
+and finish the same leases. Task IDs, attempt IDs, attempt numbers, external
+UIDs, lease owner, fencing tokens, Kubernetes Job names, and Job UIDs remain
+stable. This proves one stateless Job-service Pod failure only while
+PostgreSQL, the executor, Kubernetes API/node, network, and object storage stay
+healthy.
+
 ### Two-laptop replica availability — planned
 
 One laptop runs a K3s server and the other a K3s agent. Two Job-service and two

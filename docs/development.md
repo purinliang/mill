@@ -258,6 +258,26 @@ evidence for executor Pod recovery while the Job service, PostgreSQL,
 Kubernetes control plane/node, network, and object store remain healthy; it is
 not a full high-availability claim.
 
+To test one Job-service Pod failure, run:
+
+```bash
+./scripts/demo-word-count-deployed --job-service-failover
+```
+
+This mode also delays the first three attempts. It records the original
+attempt and Kubernetes Job identities, scales the Job-service Deployment from
+one ready replica to two, and deletes the original Pod—the only gRPC endpoint
+that existed when the executor connected. The external port-forward is
+recreated to model a retrying REST client. The test passes only when the REST
+API becomes reachable, the executor reconnects through the ClusterIP Service,
+the original lease owner and fencing tokens complete the same attempts, all 12
+first attempts finish, and the output remains exact. Its
+`job-service-*.json` and Pod-specific logs provide the failure evidence.
+
+This proves one stateless Job-service Pod may fail while another ready replica,
+PostgreSQL, the executor, Kubernetes node/API, network, and object store remain
+healthy. It does not demonstrate database, node, or partition tolerance.
+
 See [the word-count guide](../examples/word-count/README.md) for tokenization,
 input provenance, deterministic record grouping, and result-merging behavior.
 
