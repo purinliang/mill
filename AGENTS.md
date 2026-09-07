@@ -28,7 +28,10 @@ S3-compatible service and exact local baseline.
 `scripts/demo-word-count-deployed` proves the same 12-task flow through
 deployed Job-service and executor Pods in unique temporary namespaces, then
 removes only its owned cluster resources and fixture containers while retaining
-diagnostics. `scripts/setup` provides a repeatable local kind environment.
+diagnostics. Its `--executor-failover` mode scales the executor Deployment to
+two, deletes the active lease owner's Pod, and proves fenced takeover without
+changing attempt or Kubernetes Job identities. `scripts/setup` provides a
+repeatable local kind environment.
 
 The backend-independent execution model and store contract have been extracted
 from `internal/job`. A versioned Protobuf schema and gRPC client/server adapters
@@ -148,6 +151,14 @@ operational and maintenance cost.
   PostgreSQL credentials, execute exactly 12 S3-backed tasks with bounded
   parallelism, reject hostPath/node placement, compare exact output, retain
   diagnostics, and remove only resources created by that run.
+- Preserve `scripts/demo-word-count-deployed --executor-failover` as the
+  single-node executor Pod failure proof. The standby must first respect live
+  leases; deletion must target the Pod whose instance owns the initial leases;
+  takeover must replace lease owners and fencing tokens while preserving task,
+  attempt, external UID, Kubernetes Job name, and Job UID identities. Require
+  exactly 12 first attempts, restored replica availability, and exact output.
+  Do not describe this as Job-service, database, storage, node, or partition
+  availability.
 - Do not implement a custom cluster scheduler when Kubernetes provides a
   suitable primitive. Initially map one Mill attempt to one Kubernetes Job so
   its arguments, output, and retry history remain independently observable.

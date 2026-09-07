@@ -217,6 +217,21 @@ removes its unique namespaces and containers on exit and retains diagnostics in
 the printed run directory. This proves the deployed service path, not high
 availability.
 
+To scale the executor Deployment to two replicas and delete the replica that
+owns the first three task leases, run:
+
+```bash
+./scripts/demo-word-count-deployed --executor-failover
+```
+
+The deterministic delay wrapper creates time to identify the active and
+standby executor Pods. The script verifies that the standby respects live
+leases, deletes the owner, observes takeover with new fencing tokens, and
+requires the same attempts and Kubernetes Jobs to finish all 12 outputs. It
+also requires the merged result to match the local count. This isolates one
+executor Pod failure; PostgreSQL, the Job service, kind node, and object store
+remain healthy.
+
 ## Crash and restart the executor
 
 Run the process-boundary recovery demonstration with:

@@ -399,6 +399,17 @@ gRPC and executor Pods, observes 12 S3-backed Kubernetes Jobs at bounded
 parallelism three, and verifies the merged result exactly. This extends the
 deployment claim to end-to-end correctness, but not availability.
 
+Its `--executor-failover` mode is the first narrow availability proof. On the
+same kind node, it scales the executor Deployment to two replicas, proves the
+standby cannot acquire valid leases, deletes the active owner Pod, and waits for
+lease takeover. Recovery is valid only when fencing tokens and the owning
+executor change while task IDs, attempt IDs, attempt numbers, external UIDs,
+Kubernetes Job names, and Job UIDs remain stable. The batch must finish with no
+second attempts and exact output. This proves tolerance of one executor Pod
+deletion while the Job service, PostgreSQL, Kubernetes API/node, network, and
+object storage stay healthy; it does not prove any of those dependencies are
+available under failure.
+
 ### Two-laptop replica availability — planned
 
 One laptop runs a K3s server and the other a K3s agent. Two Job-service and two

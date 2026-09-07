@@ -133,6 +133,12 @@ Run the same 12-task S3 workload with both Mill services deployed as Pods:
 ./scripts/demo-word-count-deployed
 ```
 
+Delete an active executor Pod and prove fenced takeover by another replica:
+
+```bash
+./scripts/demo-word-count-deployed --executor-failover
+```
+
 The S3 demonstration starts disposable PostgreSQL and S3-compatible SeaweedFS
 processes, submits 12 logical tasks, runs at most three Pods concurrently, and
 verifies the merged S3 results against a local full-input count. It retains its
@@ -141,8 +147,10 @@ temporary credentials and storage container.
 
 The deployed variation runs both Mill services as Pods in unique namespaces,
 captures their diagnostics, and removes only its own namespaces and fixture
-containers after exact result verification. It is an end-to-end deployment
-test, not an availability test.
+containers after exact result verification. Its failover mode scales the
+executor Deployment to two replicas and proves recovery from one active
+executor Pod deletion. It does not test Job-service, database, storage, node,
+or network failure.
 
 Run the unit test suite with:
 
@@ -181,6 +189,8 @@ Implemented:
   live executor replicas;
 - demonstrated executor-process failover with lease-token replacement and
   stable attempt and Kubernetes Job identities;
+- demonstrated active executor Pod deletion and fenced takeover by another
+  deployed replica without duplicate attempts or Kubernetes Jobs;
 - deterministic Kubernetes identity and executor restart reconciliation;
 - durable workload resource classes propagated through gRPC to Kubernetes;
 - trusted workload CLI contract and non-root example images;
@@ -191,7 +201,7 @@ Implemented:
 Not implemented:
 
 - service authentication for the internal gRPC boundary;
-- a packaged Kubernetes multi-replica deployment;
+- multi-node replica placement and anti-affinity configuration;
 - replicated PostgreSQL or multi-node K3s deployment;
 - network-partition or physical-node failure tests;
 - generic aggregation or validation of arbitrary workload outputs;
@@ -254,9 +264,12 @@ The single-node prerequisite is implemented: both packaged services run as
 one-replica Deployments, communicate through a ClusterIP Service, and isolate
 workload Jobs in a namespace where the executor may only create and get Jobs.
 The complete 12-task S3 workload has run through these deployed services with
-exact result verification and bounded parallelism.
-Multi-replica placement, K3s installation, and database replication remain to
-be built and tested.
+exact result verification and bounded parallelism. A single-node test also
+scales the executor to two replicas, deletes the Pod that owns three active
+leases, and proves takeover with new fencing tokens while attempt IDs,
+Kubernetes Job names, and Job UIDs remain unchanged. Job-service Pod failover,
+multi-node replica placement, K3s installation, and database replication remain
+to be built and tested.
 
 Continue with focused reviews after each slice, but defer the overall
 architecture and code-ownership refactor until after Milestone 8.

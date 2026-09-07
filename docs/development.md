@@ -235,6 +235,29 @@ not overwritten. The disposable database and object store are correctness
 fixtures; this test demonstrates a fully deployed control plane, not service,
 node, database, or storage availability.
 
+To test one executor Pod failure on the same single-node cluster, run:
+
+```bash
+./scripts/demo-word-count-deployed --executor-failover
+```
+
+This mode uses a deterministic 15-second delay for the first three workload
+attempts. It waits until one executor owns all three leases, scales the
+Deployment from one replica to two, and verifies that the standby neither
+steals the live leases nor creates replacement Jobs. It then records the owner
+and standby logs, deletes the owning Pod, waits for that Pod to disappear, and
+accepts takeover only when another running executor holds new fencing tokens
+for the same task IDs, attempt IDs, attempt numbers, external UIDs, Kubernetes
+Job names, and Job UIDs.
+
+The run must still finish with exactly 12 first attempts, two available
+executor replicas, peak workload parallelism three, and output identical to
+the local baseline. The printed directory retains `failover-attempts-*.json`,
+`failover-kubernetes-*.json`, and the executor logs around the failure. This is
+evidence for executor Pod recovery while the Job service, PostgreSQL,
+Kubernetes control plane/node, network, and object store remain healthy; it is
+not a full high-availability claim.
+
 See [the word-count guide](../examples/word-count/README.md) for tokenization,
 input provenance, deterministic record grouping, and result-merging behavior.
 
