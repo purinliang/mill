@@ -231,6 +231,64 @@ Both images contain only a statically linked service binary and CA
 certificates. Building them does not load them into kind or create Kubernetes
 resources.
 
+## Local control-plane deployment
+
+The first deployment baseline runs one Job-service Pod and one executor Pod in
+kind. It requires an existing PostgreSQL database that is already migrated and
+reachable from Pods, plus an `s3://` output root. It does not deploy PostgreSQL
+or object storage.
+
+```bash
+export MILL_DATABASE_URL='postgresql://mill:password@pod-reachable-host:5432/mill'
+export MILL_OUTPUT_ROOT_URI='s3://mill-output'
+export AWS_REGION='us-east-1'
+
+# Optional for a local S3-compatible endpoint:
+export MILL_S3_ENDPOINT='http://storage-address:8333'
+export MILL_WORKLOAD_S3_ENDPOINT="$MILL_S3_ENDPOINT"
+export AWS_ACCESS_KEY_ID='local-access-key'
+export AWS_SECRET_ACCESS_KEY='local-secret-key'
+
+./scripts/deploy-local-control-plane
+```
+
+Do not use `127.0.0.1` for PostgreSQL or an S3 endpoint unless that service is
+inside the same Pod: inside a container it refers to that container. The script
+builds and loads both service images, creates `mill-system` and
+`mill-workloads`, applies configuration as Kubernetes Secrets, restarts the
+Deployments, and waits for both rollouts. Re-running it updates the local
+deployment without deleting its namespaces.
+
+The Job-service Pod receives the database URL and control-plane S3 credentials.
+The executor Pod does not receive them. Its service account may only create and
+get Jobs in `mill-workloads`; it cannot list or delete Jobs, read Pods, or read
+Secrets. When static AWS credentials are supplied for this local setup, a
+separate `mill-workload-storage` Secret is created in the workload namespace and
+referenced by workload Pods without granting the executor permission to read
+it.
+
+The checked-in manifests are kind-specific: they use local `:dev` images with
+`imagePullPolicy: Never`, one replica per service, plaintext cluster-internal
+gRPC, and no database or object-store deployment. They establish a runnable
+Pod/RBAC baseline but provide no replica, node, database, or storage
+availability.
+
+Inspect the deployment and API:
+
+```bash
+kubectl --context kind-mill -n mill-system get deployments,pods,service
+kubectl --context kind-mill -n mill-system logs deployment/mill-executor
+kubectl --context kind-mill -n mill-system port-forward service/mill-job 8080:8080
+curl http://127.0.0.1:8080/readyz
+```
+
+Remove only these local Mill namespaces when finished, then stop separately
+managed PostgreSQL or object-storage processes yourself:
+
+```bash
+kubectl --context kind-mill delete namespace mill-system mill-workloads
+```
+
 ## Configuration
 
 Job-process variables:
@@ -347,6 +405,9 @@ cmd/mill/
 cmd/mill-executor/
   Dockerfile                      minimal non-root executor image
   main.go                         standalone gRPC-to-Kubernetes coordinator
+deploy/kubernetes/local/
+  namespaces-rbac.yaml            local namespaces and executor Job permissions
+  control-plane.yaml              one-replica kind service Deployments
 api/proto/mill/execution/v1/
   execution.proto                 versioned internal lease/state RPC schema
 docs/
@@ -390,6 +451,7 @@ migrations/                       ordered PostgreSQL schema and lease history
 scripts/
   setup                           pinned local kind/kubectl preparation
   build-control-plane-images      build and inspect both Mill service images
+  deploy-local-control-plane      build, configure, and roll out services in kind
   demo-word-count-single-task     one manual Kubernetes task
   demo-word-count-batch           complete node-local control-plane batch
   demo-word-count-s3              complete shared-storage batch

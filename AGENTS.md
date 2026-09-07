@@ -46,13 +46,15 @@ preserving attempt and Kubernetes Job identities.
 
 Minimal non-root OCI images package the Job service and executor. The executor
 supports mutually exclusive explicit kubeconfig-context and in-cluster
-service-account modes, but no Kubernetes deployment or RBAC exists for the
-services yet. Workload image inspection, generic output
-verification/aggregation, wider fault recovery, PostgreSQL replication, and
-multi-node availability remain planned. Add implementation only in small,
-explicitly requested increments. Do not add more Dockerfiles, Kubernetes
-manifests, CI workflows, Terraform, or unrelated infrastructure unless a later
-task requires them.
+service-account modes. A local kind manifest runs one replica of each service,
+separates control-plane and workload namespaces, and limits the executor to
+creating and getting Jobs. It depends on externally managed, Pod-reachable
+PostgreSQL and S3-compatible storage and makes no availability claim. Workload
+image inspection, generic output verification/aggregation, wider fault
+recovery, PostgreSQL replication, and multi-node availability remain planned.
+Add implementation only in small, explicitly requested increments. Do not add
+more Dockerfiles, Kubernetes manifests, CI workflows, Terraform, or unrelated
+infrastructure unless a later task requires them.
 
 `scripts/demo-word-count-single-task` runs one manual word-count Job with staged
 node-local input and verifies its output against a local run. It uses
@@ -217,6 +219,16 @@ job, task, shard, attempt, or state-transition semantics.
   service-account configuration inside it; do not silently fall back between
   clusters. Keep namespace selection explicit in both modes, and grant only the
   RBAC operations the executor actually uses.
+- Keep the local deployment's Mill services in `mill-system` and generated Jobs
+  in `mill-workloads`. The Job service must not mount a service-account token.
+  The executor Role remains namespace-scoped to `create` and `get` Jobs unless
+  a concrete implemented operation requires another verb or resource. Never
+  give the executor PostgreSQL credentials or permission to read workload
+  Secrets.
+- Treat `deploy/kubernetes/local` as a kind-only, single-replica baseline. It
+  uses preloaded development images and external PostgreSQL/S3; do not reuse it
+  to claim K3s, database, node, or object-storage availability. Keep secret
+  values out of manifests and Git.
 - Keep executor-facing attempt types, sentinel domain failures, and the
   transport-independent store contract in `internal/execution`. Coordinator
   and Kubernetes packages must not import `internal/job`.

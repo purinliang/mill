@@ -88,6 +88,20 @@ Build the two Mill control-plane images and verify their runtime identities:
 This produces `mill/job-service:dev` and `mill/executor:dev`. No Kubernetes
 deployment is created by this command.
 
+After preparing a Pod-reachable, migrated PostgreSQL database and shared S3
+storage, deploy the single-replica local control plane with:
+
+```bash
+export MILL_DATABASE_URL='postgresql://mill:password@pod-reachable-host:5432/mill'
+export MILL_OUTPUT_ROOT_URI='s3://mill-output'
+export AWS_REGION='us-east-1'
+./scripts/deploy-local-control-plane
+```
+
+This local deployment is a Milestone 7 baseline, not an HA configuration. See
+[Development](docs/development.md) for its storage, credential, and cleanup
+requirements.
+
 Run the complete batch demonstration with node-local files:
 
 ```bash
@@ -149,6 +163,9 @@ Implemented:
 - minimal non-root OCI images for the Job service and executor;
 - explicit executor support for either a kubeconfig context or in-cluster
   service-account credentials;
+- a single-node kind deployment with separate control-plane/workload
+  namespaces, health probes, resource bounds, and namespace-scoped executor
+  RBAC;
 - demonstrated 12-task split-process execution through one Job service and two
   live executor replicas;
 - demonstrated executor-process failover with lease-token replacement and
@@ -214,7 +231,7 @@ failover proof are implemented. Optional named `small`, `medium`, and `large`
 workload classes persist their resolved CPU and memory resources so retries
 remain stable if server profiles change later.
 
-### 7 — Two-laptop replica availability — planned
+### 7 — Two-laptop replica availability — in progress
 
 Use one K3s server and one K3s agent. Spread two Job-service replicas and two
 executor replicas across the laptops. Run a CloudNativePG primary and standby
@@ -222,9 +239,11 @@ with availability-oriented synchronous replication. Demonstrate individual
 Mill Pod failure and controlled PostgreSQL Pod promotion. This stage will not
 claim whole-laptop or network-partition tolerance.
 
-The two service images and executor in-cluster client mode are implemented.
-Service-account RBAC, manifests, replica placement, and database replication
-remain to be built.
+The single-node prerequisite is implemented: both packaged services run as
+one-replica Deployments, communicate through a ClusterIP Service, and isolate
+workload Jobs in a namespace where the executor may only create and get Jobs.
+Multi-replica placement, K3s installation, and database replication remain to
+be built and tested.
 
 After this milestone, pause feature work for the first major architecture and
 code-ownership review. Refactor only issues demonstrated by the runnable

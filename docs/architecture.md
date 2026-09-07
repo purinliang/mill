@@ -378,6 +378,28 @@ instance. These are planned starting measurements, not capacity guarantees.
 
 Availability statements name the exact failure being tested.
 
+### Local single-node deployment baseline — implemented
+
+The first packaged deployment creates `mill-system` for the Job service and
+executor, and `mill-workloads` for generated Kubernetes Jobs. One ClusterIP
+Service exposes the Job service's REST and plaintext internal gRPC ports. The
+Job-service Pod does not mount a Kubernetes service-account token. The executor
+uses an in-cluster token and a Role in `mill-workloads` limited to `create` and
+`get` on `batch/jobs`; it cannot read Pods or Secrets, list or delete Jobs, or
+access resources cluster-wide.
+
+The Job service alone receives the PostgreSQL URL and its object-store
+credentials. The executor receives only the Job-service address, target
+namespace, and workload object-store routing. Static local workload credentials
+live in a separate Secret in `mill-workloads`; referencing that Secret in a Job
+does not grant the executor permission to read it.
+
+Both Deployments have one replica and depend on externally managed PostgreSQL
+and S3-compatible storage. The kind-specific images use `imagePullPolicy:
+Never`. This baseline proves Pod startup, PostgreSQL-backed readiness, service
+discovery, in-cluster configuration, and the RBAC boundary. It makes no
+availability claim.
+
 ### Two-laptop replica availability — planned
 
 One laptop runs a K3s server and the other a K3s agent. Two Job-service and two
