@@ -314,6 +314,10 @@ availability if its standby disappears; the three-node profile favors
 acknowledged-write durability and stops rather than promoting an unsafe
 minority.
 
+Machine installation, firewall requirements, profile deployment, and the
+evidence checklist are maintained in the
+[Availability runbook](availability-runbook.md).
+
 See [the word-count guide](../examples/word-count/README.md) for tokenization,
 input provenance, deterministic record grouping, and result-merging behavior.
 

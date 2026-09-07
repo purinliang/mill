@@ -51,7 +51,8 @@ to take over an expired lease while preserving the attempt and Kubernetes Job
 identity. For S3-backed jobs, Pods need no hostPath volume or fixed-node selector
 and can use shared object storage from any eligible node. See
 [Architecture](docs/architecture.md) for the domain model, correctness rules,
-resource-class policy, and availability design.
+resource-class policy, and availability design. The physical-node procedure
+and required evidence are in the [Availability runbook](docs/availability-runbook.md).
 
 ## V1 scope
 

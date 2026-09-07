@@ -73,6 +73,14 @@ failure domains. Do not weaken anti-affinity to make an undersized cluster
 appear available, and do not claim either profile has passed until its runtime
 evidence exists.
 
+Preserve `scripts/install-k3s-node` as an explicit role-based installer. Keep
+the K3s version and tagged installer digest pinned together; never accept a
+join token as a command-line argument or commit it. Preserve
+`scripts/deploy-availability` checks for distinct ready hostname domains,
+alternative database profiles, URL-safe database credentials, externally
+reachable images/storage, migration-before-control-plane ordering, and Secret
+redaction.
+
 `scripts/demo-word-count-single-task` runs one manual word-count Job with staged
 node-local input and verifies its output against a local run. It uses
 `examples/word-count/job.yaml.template`; it does not claim or transition
