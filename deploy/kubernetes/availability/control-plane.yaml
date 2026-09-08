@@ -28,6 +28,11 @@ metadata:
 spec:
   replicas: 2
   revisionHistoryLimit: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: mill-job-service
@@ -120,6 +125,11 @@ metadata:
 spec:
   replicas: 2
   revisionHistoryLimit: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: mill-executor
