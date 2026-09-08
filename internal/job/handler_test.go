@@ -173,7 +173,7 @@ func TestCreateJobValidation(t *testing.T) {
 		},
 		{
 			name: "unsupported input scheme",
-			body: `{"executable":{"image":"mill/example:dev"},"input":{"uri":"s3://bucket/records.jsonl"}}`,
+			body: `{"executable":{"image":"mill/example:dev"},"input":{"uri":"https://example.com/records.jsonl"}}`,
 			headers: map[string]string{
 				"Content-Type":    "application/json",
 				"Idempotency-Key": "request-001",

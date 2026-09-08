@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/purinliang/mill/internal/job"
+	"github.com/purinliang/mill/internal/objectstore"
 )
 
 const (
@@ -35,6 +36,7 @@ func main() {
 	if err := run(
 		ctx,
 		os.Getenv("MILL_HTTP_ADDR"),
+		os.Getenv("MILL_GRPC_ADDR"),
 		os.Getenv("MILL_DATABASE_URL"),
 		os.Getenv("MILL_OUTPUT_ROOT_URI"),
 		os.Getenv("MILL_PARALLELISM"),
@@ -43,11 +45,9 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, address, databaseURL, outputRootURI, parallelismValue string) error {
-	ctx, cancelRun := context.WithCancel(ctx)
-	defer cancelRun()
-	if address == "" {
-		address = defaultHTTPAddress
+func run(ctx context.Context, httpAddress, grpcAddress, databaseURL, outputRootURI, parallelismValue string) error {
+	if httpAddress == "" {
+		httpAddress = defaultHTTPAddress
 	}
 	if databaseURL == "" {
 		return errors.New("MILL_DATABASE_URL is required")
@@ -70,59 +70,56 @@ func run(ctx context.Context, address, databaseURL, outputRootURI, parallelismVa
 	if err != nil {
 		return err
 	}
-	jobService, err := job.NewService(jobRepository, job.JSONLPartitioner{}, parallelism)
+	objects, err := objectstore.New(ctx, objectstore.Config{
+		Region: os.Getenv("AWS_REGION"), Endpoint: os.Getenv("MILL_S3_ENDPOINT"),
+	})
+	if err != nil {
+		return err
+	}
+	jobService, err := job.NewService(jobRepository, job.NewJSONLPartitioner(objects), parallelism)
 	if err != nil {
 		return err
 	}
 	jobHandler := job.NewHandler(jobService, log.Default())
-	executionLoop, err := configureExecution(ctx, databaseURL, jobRepository)
-	if err != nil {
-		return err
-	}
-	if executionLoop != nil {
-		defer executionLoop.close()
-	}
 
 	server := &http.Server{
-		Addr:              address,
+		Addr:              httpAddress,
 		Handler:           newHandler(database.Ping, jobHandler),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	listener, err := net.Listen("tcp", address)
+	listener, err := net.Listen("tcp", httpAddress)
 	if err != nil {
 		return fmt.Errorf("listen HTTP: %w", err)
+	}
+	executionRPC, err := startExecutionRPC(grpcAddress, jobRepository)
+	if err != nil {
+		_ = listener.Close()
+		return err
+	}
+	if executionRPC != nil {
+		defer executionRPC.stop()
 	}
 	serveErrors := make(chan error, 1)
 	go func() {
 		serveErrors <- server.Serve(listener)
 	}()
-	executionErrors := make(chan error, 1)
-	if executionLoop != nil {
-		executionDone := make(chan struct{})
-		go func() {
-			defer close(executionDone)
-			executionErrors <- executionLoop.run(ctx)
-		}()
-		defer func() {
-			cancelRun()
-			<-executionDone
-		}()
-	}
 	defer server.Close()
 
 	log.Printf("Mill HTTP server listening on %s", listener.Addr())
+	var executionRPCErrors <-chan error
+	if executionRPC != nil {
+		executionRPCErrors = executionRPC.errors
+	}
 
 	select {
-	case err := <-executionErrors:
-		if ctx.Err() == nil {
-			return fmt.Errorf("execution coordinator stopped: %w", err)
-		}
 	case err := <-serveErrors:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
 		return fmt.Errorf("serve HTTP: %w", err)
+	case err := <-executionRPCErrors:
+		return executionRPCServeError(err)
 	case <-ctx.Done():
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
@@ -131,8 +128,18 @@ func run(ctx context.Context, address, databaseURL, outputRootURI, parallelismVa
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("shut down HTTP server: %w", err)
 	}
+	if executionRPC != nil {
+		if err := executionRPC.shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("shut down execution gRPC server: %w", err)
+		}
+	}
 	if err := <-serveErrors; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("serve HTTP: %w", err)
+	}
+	if executionRPC != nil {
+		if err := executionRPCServeError(<-executionRPCErrors); err != nil {
+			return err
+		}
 	}
 	return nil
 }

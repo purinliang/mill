@@ -10,9 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
-	"os"
 	"strings"
+
+	"github.com/purinliang/mill/internal/objectstore"
 )
 
 const (
@@ -33,9 +33,19 @@ type LogicalShard struct {
 	EndByte   int64
 }
 
-type JSONLPartitioner struct{}
+type inputOpener interface {
+	Open(context.Context, string) (io.ReadCloser, error)
+}
 
-func (JSONLPartitioner) Plan(ctx context.Context, inputURI string, parallelism int) (PartitionPlan, error) {
+type JSONLPartitioner struct {
+	objects inputOpener
+}
+
+func NewJSONLPartitioner(objects inputOpener) JSONLPartitioner {
+	return JSONLPartitioner{objects: objects}
+}
+
+func (p JSONLPartitioner) Plan(ctx context.Context, inputURI string, parallelism int) (PartitionPlan, error) {
 	if parallelism < 1 || parallelism > maxParallelism {
 		return PartitionPlan{}, &ValidationError{Field: "parallelism", Problem: "must be between 1 and 10000"}
 	}
@@ -43,12 +53,13 @@ func (JSONLPartitioner) Plan(ctx context.Context, inputURI string, parallelism i
 	if err != nil {
 		return PartitionPlan{}, &ValidationError{Field: "input.uri", Problem: err.Error()}
 	}
-	filename, err := localFilePath(normalizedURI)
-	if err != nil {
-		return PartitionPlan{}, err
+	objects := p.objects
+	if objects == nil {
+		// Preserve the useful zero value for file-based unit tests and local use.
+		objects = &objectstore.Store{}
 	}
 
-	firstScan, err := scanJSONL(ctx, filename, nil)
+	firstScan, err := scanJSONL(ctx, objects, normalizedURI, nil)
 	if err != nil {
 		return PartitionPlan{}, err
 	}
@@ -64,7 +75,7 @@ func (JSONLPartitioner) Plan(ctx context.Context, inputURI string, parallelism i
 	shards := make([]LogicalShard, 0, targetShards)
 	var shardStart, lastRecordEnd int64
 	var recordsInShard int64
-	secondScan, err := scanJSONL(ctx, filename, func(_, _, recordEnd int64) {
+	secondScan, err := scanJSONL(ctx, objects, normalizedURI, func(_, _, recordEnd int64) {
 		recordsInShard++
 		lastRecordEnd = recordEnd
 		if recordsInShard == recordsPerShard {
@@ -95,23 +106,15 @@ type jsonlScan struct {
 	recordCount int64
 }
 
-func scanJSONL(ctx context.Context, filename string, visit func(int64, int64, int64)) (jsonlScan, error) {
-	file, err := os.Open(filename)
+func scanJSONL(ctx context.Context, objects inputOpener, inputURI string, visit func(int64, int64, int64)) (jsonlScan, error) {
+	input, err := objects.Open(ctx, inputURI)
 	if err != nil {
-		return jsonlScan{}, &ValidationError{Field: "input.uri", Problem: "cannot be opened"}
+		return jsonlScan{}, &ValidationError{Field: "input.uri", Problem: "cannot be opened: " + err.Error()}
 	}
-	defer file.Close()
-
-	info, err := file.Stat()
-	if err != nil {
-		return jsonlScan{}, fmt.Errorf("inspect JSONL input: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return jsonlScan{}, &ValidationError{Field: "input.uri", Problem: "must refer to a regular file"}
-	}
+	defer input.Close()
 
 	hash := sha256.New()
-	reader := bufio.NewReader(file)
+	reader := bufio.NewReader(input)
 	var offset, recordCount int64
 	for {
 		if err := ctx.Err(); err != nil {
@@ -153,18 +156,6 @@ func scanJSONL(ctx context.Context, filename string, visit func(int64, int64, in
 		return jsonlScan{}, &ValidationError{Field: "input.uri", Problem: "must contain at least one JSONL record"}
 	}
 	return jsonlScan{sha256: hex.EncodeToString(hash.Sum(nil)), recordCount: recordCount}, nil
-}
-
-func localFilePath(inputURI string) (string, error) {
-	parsed, err := url.Parse(inputURI)
-	if err != nil {
-		return "", fmt.Errorf("parse normalized input URI: %w", err)
-	}
-	filename, err := url.PathUnescape(parsed.EscapedPath())
-	if err != nil {
-		return "", &ValidationError{Field: "input.uri", Problem: "contains an invalid escaped path"}
-	}
-	return filename, nil
 }
 
 func validatePartitionPlan(plan PartitionPlan) error {

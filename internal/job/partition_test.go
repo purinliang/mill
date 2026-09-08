@@ -1,16 +1,26 @@
 package job
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+type memoryInput struct {
+	contents []byte
+}
+
+func (m memoryInput) Open(context.Context, string) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(m.contents)), nil
+}
 
 func TestJSONLPartitionerCreatesContiguousLogicalShards(t *testing.T) {
 	filename := filepath.Join(t.TempDir(), "records with spaces.jsonl")
@@ -73,6 +83,18 @@ func TestJSONLPartitionerUsesAtMostOneShardPerRecord(t *testing.T) {
 	}
 	if len(plan.Shards) != 2 {
 		t.Errorf("shard count = %d, want 2", len(plan.Shards))
+	}
+}
+
+func TestJSONLPartitionerPlansS3ObjectThroughConfiguredStore(t *testing.T) {
+	contents := []byte("{\"record\":1}\n{\"record\":2}\n")
+	partitioner := NewJSONLPartitioner(memoryInput{contents: contents})
+	plan, err := partitioner.Plan(context.Background(), "s3://mill-input/records.jsonl", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.RecordCount != 2 || len(plan.Shards) != 2 || plan.Shards[1].EndByte != int64(len(contents)) {
+		t.Fatalf("plan = %+v", plan)
 	}
 }
 

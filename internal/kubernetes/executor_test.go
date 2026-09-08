@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/purinliang/mill/internal/job"
+	"github.com/purinliang/mill/internal/execution"
 	"github.com/purinliang/mill/internal/workload"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -17,11 +17,13 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-func testClaim() job.ClaimedAttempt {
-	return job.ClaimedAttempt{Attempt: job.Attempt{ID: "attempt-1", JobID: "job-1", TaskID: "task-1", State: job.AttemptStateStarting},
-		Executable: job.Executable{Image: "mill/word-count:dev", Args: []string{"--user-arg"}}, ShardIndex: 2,
+func testClaim() execution.ClaimedAttempt {
+	return execution.ClaimedAttempt{Attempt: execution.Attempt{ID: "attempt-1", JobID: "job-1", TaskID: "task-1", State: execution.AttemptStateStarting},
+		Executable: execution.Executable{Image: "mill/word-count:dev", Args: []string{"--user-arg"}}, ShardIndex: 2,
 		InputURI: "file:///local/input/records.jsonl", InputStartByte: 100, InputEndByte: 200,
-		OutputURI: "file:///local/output/job-1/tasks/2/attempts/attempt-1/result.jsonl"}
+		OutputURI: "file:///local/output/job-1/tasks/2/attempts/attempt-1/result.jsonl",
+		Resources: execution.Resources{CPURequestMillis: 100, CPULimitMillis: 1000,
+			MemoryRequestBytes: 128 << 20, MemoryLimitBytes: 128 << 20}}
 }
 
 func testConfig() Config {
@@ -52,6 +54,57 @@ func TestManifestPreservesRangeAndSeparatesMounts(t *testing.T) {
 	if *m.Spec.BackoffLimit != 0 || *m.Spec.Parallelism != 1 || spec.RestartPolicy != corev1.RestartPolicyNever {
 		t.Fatal("unexpected native retries/parallelism")
 	}
+	if spec.Containers[0].ImagePullPolicy != corev1.PullIfNotPresent {
+		t.Fatalf("image pull policy = %q, want %q", spec.Containers[0].ImagePullPolicy, corev1.PullIfNotPresent)
+	}
+	resources := spec.Containers[0].Resources
+	if resources.Requests.Cpu().MilliValue() != 100 || resources.Limits.Cpu().MilliValue() != 1000 ||
+		resources.Requests.Memory().Value() != 128<<20 || resources.Limits.Memory().Value() != 128<<20 {
+		t.Fatalf("workload resources = %+v", resources)
+	}
+}
+
+func TestManifestRejectsInvalidResources(t *testing.T) {
+	claim := testClaim()
+	claim.Resources.MemoryLimitBytes = claim.Resources.MemoryRequestBytes - 1
+	if _, err := (&Executor{config: testConfig()}).manifest(claim); err == nil {
+		t.Fatal("manifest accepted a memory limit below its request")
+	}
+}
+
+func TestS3ManifestUsesSharedStorageWithoutNodePinOrVolumes(t *testing.T) {
+	config := Config{
+		Context: "kind-mill", Namespace: "default", S3Region: "us-east-1",
+		S3Endpoint: "http://172.18.0.8:9000", S3CredentialsSecret: "mill-s3-demo",
+	}
+	claim := testClaim()
+	claim.InputURI = "s3://mill-input/records.jsonl"
+	claim.OutputURI = "s3://mill-output/jobs/job-1/tasks/2/result.jsonl"
+	m, err := (&Executor{config: config}).manifest(claim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := m.Spec.Template.Spec
+	invocation, err := workload.ParseArgs(pod.Containers[0].Args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if invocation.InputURI != claim.InputURI || invocation.OutputURI != claim.OutputURI {
+		t.Fatalf("invocation = %+v", invocation)
+	}
+	if len(pod.NodeSelector) != 0 || len(pod.Volumes) != 0 || len(pod.Containers[0].VolumeMounts) != 0 {
+		t.Fatalf("S3 pod retained local placement: %+v", pod)
+	}
+	if len(pod.Containers[0].EnvFrom) != 1 || pod.Containers[0].EnvFrom[0].SecretRef.Name != "mill-s3-demo" {
+		t.Fatalf("credential source = %+v", pod.Containers[0].EnvFrom)
+	}
+	environment := map[string]string{}
+	for _, variable := range pod.Containers[0].Env {
+		environment[variable.Name] = variable.Value
+	}
+	if environment["AWS_REGION"] != "us-east-1" || environment["MILL_S3_ENDPOINT"] != "http://172.18.0.8:9000" {
+		t.Fatalf("environment = %+v", environment)
+	}
 }
 
 func TestRejectPathsOutsideConfiguredRoots(t *testing.T) {
@@ -65,6 +118,28 @@ func TestRejectPathsOutsideConfiguredRoots(t *testing.T) {
 	c.NodeRoot = "/"
 	if c.validate() == nil {
 		t.Fatal("accepted root filesystem mount")
+	}
+}
+
+func TestConfigRequiresExactlyOneKubernetesClientMode(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		context   string
+		inCluster bool
+		wantError bool
+	}{
+		{name: "kubeconfig context", context: "kind-mill"},
+		{name: "in cluster", inCluster: true},
+		{name: "neither", wantError: true},
+		{name: "both", context: "kind-mill", inCluster: true, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config := Config{Context: test.context, InCluster: test.inCluster, Namespace: "default"}
+			err := config.validate()
+			if gotError := err != nil; gotError != test.wantError {
+				t.Fatalf("validate() error = %v, want error %v", err, test.wantError)
+			}
+		})
 	}
 }
 
@@ -105,7 +180,7 @@ func TestRecoverLostCreateResponseAndObserveTerminalCondition(t *testing.T) {
 	if err != nil || observed.ExternalID != "uid-1" || creates != 1 {
 		t.Fatalf("recovery=%+v err=%v creates=%d", observed, err, creates)
 	}
-	claim.Attempt.State = job.AttemptStateRunning
+	claim.Attempt.State = execution.AttemptStateRunning
 	claim.Attempt.ExternalID = "uid-1"
 	// An early success signal must not free the slot while Pods terminate.
 	stored.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobSuccessCriteriaMet, Status: corev1.ConditionTrue}}

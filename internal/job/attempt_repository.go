@@ -10,13 +10,20 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/purinliang/mill/internal/execution"
 )
 
 var (
-	ErrNoTaskAvailable          = errors.New("no task is available for execution")
-	ErrAttemptNotFound          = errors.New("attempt not found")
-	ErrInvalidAttemptTransition = errors.New("invalid attempt state transition")
+	ErrNoTaskAvailable          = execution.ErrNoTaskAvailable
+	ErrAttemptNotFound          = execution.ErrAttemptNotFound
+	ErrAttemptLeaseLost         = execution.ErrAttemptLeaseLost
+	ErrInvalidAttemptTransition = execution.ErrInvalidAttemptTransition
 )
+
+// Fixed prototype policy: three total attempts, not three extra retries.
+const MaxTaskAttempts = 3
+const TaskRetryDelay = 5 * time.Second
 
 const attemptSelectByID = `
 	SELECT
@@ -31,13 +38,20 @@ const attemptSelectByID = `
 		a.created_at,
 		a.started_at,
 		a.finished_at,
-		a.updated_at
+		a.updated_at,
+		a.lease_owner,
+		a.lease_token::text,
+		a.lease_expires_at
 	FROM public.attempts AS a
 	JOIN public.tasks AS t ON t.id = a.task_id
 	WHERE a.id = $1::uuid`
 
-func (r *Repository) ClaimNextAttempt(ctx context.Context, executor string) (ClaimedAttempt, error) {
+func (r *Repository) ClaimNextAttempt(ctx context.Context, executor, leaseOwner string, leaseDuration time.Duration) (ClaimedAttempt, error) {
 	if err := validateExecutor(executor); err != nil {
+		return ClaimedAttempt{}, err
+	}
+	leaseSeconds, err := validateLease(leaseOwner, leaseDuration)
+	if err != nil {
 		return ClaimedAttempt{}, err
 	}
 
@@ -57,6 +71,7 @@ func (r *Repository) ClaimNextAttempt(ctx context.Context, executor string) (Cla
 				FROM public.tasks AS pending
 				WHERE pending.job_id = j.id
 					AND pending.state = 'pending'
+					AND pending.available_at <= now()
 					AND pending.input_start_byte IS NOT NULL
 					AND pending.input_end_byte IS NOT NULL
 			)
@@ -88,11 +103,16 @@ func (r *Repository) ClaimNextAttempt(ctx context.Context, executor string) (Cla
 			j.executable_image_ref,
 			j.executable_args,
 			j.input_uri,
-			j.output_root_uri
+			j.output_root_uri,
+			j.workload_cpu_request_millis,
+			j.workload_cpu_limit_millis,
+			j.workload_memory_request_bytes,
+			j.workload_memory_limit_bytes
 		FROM public.tasks AS t
 		JOIN public.jobs AS j ON j.id = t.job_id
 		WHERE t.job_id = $1::uuid
 			AND t.state = 'pending'
+			AND t.available_at <= now()
 			AND t.input_start_byte IS NOT NULL
 			AND t.input_end_byte IS NOT NULL
 		ORDER BY t.shard_index
@@ -107,6 +127,10 @@ func (r *Repository) ClaimNextAttempt(ctx context.Context, executor string) (Cla
 		&claimed.Executable.Args,
 		&claimed.InputURI,
 		&claimed.OutputURI,
+		&claimed.Resources.CPURequestMillis,
+		&claimed.Resources.CPULimitMillis,
+		&claimed.Resources.MemoryRequestBytes,
+		&claimed.Resources.MemoryLimitBytes,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ClaimedAttempt{}, ErrNoTaskAvailable
@@ -119,12 +143,16 @@ func (r *Repository) ClaimNextAttempt(ctx context.Context, executor string) (Cla
 	}
 
 	err = tx.QueryRow(ctx, `
-		INSERT INTO public.attempts (task_id, attempt_number, executor)
-		SELECT $1::uuid, COALESCE(max(attempt_number), 0) + 1, $2
+		INSERT INTO public.attempts (
+			task_id, attempt_number, executor,
+			lease_owner, lease_token, lease_expires_at
+		)
+		SELECT $1::uuid, COALESCE(max(attempt_number), 0) + 1, $2,
+			$3, uuidv7(), clock_timestamp() + $4 * interval '1 second'
 		FROM public.attempts
 		WHERE task_id = $1::uuid
 		RETURNING id::text
-	`, claimed.Attempt.TaskID, executor).Scan(&claimed.Attempt.ID)
+	`, claimed.Attempt.TaskID, executor, leaseOwner, leaseSeconds).Scan(&claimed.Attempt.ID)
 	if err != nil {
 		return ClaimedAttempt{}, fmt.Errorf("create task attempt: %w", err)
 	}
@@ -175,9 +203,12 @@ func (r *Repository) GetAttempt(ctx context.Context, id string) (Attempt, error)
 	return attempt, nil
 }
 
-func (r *Repository) MarkAttemptRunning(ctx context.Context, id, externalID string) (Attempt, error) {
+func (r *Repository) MarkAttemptRunning(ctx context.Context, id, leaseToken, externalID string) (Attempt, error) {
 	if !validJobID(id) {
 		return Attempt{}, &ValidationError{Field: "attempt ID", Problem: "must be a UUID"}
+	}
+	if !validJobID(leaseToken) {
+		return Attempt{}, &ValidationError{Field: "lease token", Problem: "must be a UUID"}
 	}
 	if externalID == "" || externalID != strings.TrimSpace(externalID) || len(externalID) > 255 {
 		return Attempt{}, &ValidationError{Field: "external execution ID", Problem: "must be 1 to 255 bytes with no surrounding whitespace"}
@@ -189,7 +220,7 @@ func (r *Repository) MarkAttemptRunning(ctx context.Context, id, externalID stri
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	attempt, err := lockAttempt(ctx, tx, id)
+	attempt, leaseActive, err := lockAttemptForLease(ctx, tx, id, leaseToken)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Attempt{}, ErrAttemptNotFound
 	}
@@ -201,6 +232,9 @@ func (r *Repository) MarkAttemptRunning(ctx context.Context, id, externalID stri
 			return Attempt{}, fmt.Errorf("commit running attempt replay: %w", err)
 		}
 		return attempt, nil
+	}
+	if !leaseActive {
+		return Attempt{}, ErrAttemptLeaseLost
 	}
 	if attempt.State != AttemptStateStarting {
 		return Attempt{}, invalidAttemptTransition(attempt.State, AttemptStateRunning)
@@ -223,20 +257,23 @@ func (r *Repository) MarkAttemptRunning(ctx context.Context, id, externalID stri
 	return attempt, nil
 }
 
-func (r *Repository) CompleteAttempt(ctx context.Context, id string) (Attempt, error) {
-	return r.finishAttempt(ctx, id, AttemptStateCompleted, "")
+func (r *Repository) CompleteAttempt(ctx context.Context, id, leaseToken string) (Attempt, error) {
+	return r.finishAttempt(ctx, id, leaseToken, AttemptStateCompleted, "")
 }
 
-func (r *Repository) FailAttempt(ctx context.Context, id, failureMessage string) (Attempt, error) {
+func (r *Repository) FailAttempt(ctx context.Context, id, leaseToken, failureMessage string) (Attempt, error) {
 	if failureMessage == "" || strings.TrimSpace(failureMessage) == "" || len(failureMessage) > 4096 {
 		return Attempt{}, &ValidationError{Field: "failure message", Problem: "must be 1 to 4096 bytes and not blank"}
 	}
-	return r.finishAttempt(ctx, id, AttemptStateFailed, failureMessage)
+	return r.finishAttempt(ctx, id, leaseToken, AttemptStateFailed, failureMessage)
 }
 
-func (r *Repository) finishAttempt(ctx context.Context, id string, target AttemptState, failureMessage string) (Attempt, error) {
+func (r *Repository) finishAttempt(ctx context.Context, id, leaseToken string, target AttemptState, failureMessage string) (Attempt, error) {
 	if !validJobID(id) {
 		return Attempt{}, &ValidationError{Field: "attempt ID", Problem: "must be a UUID"}
+	}
+	if !validJobID(leaseToken) {
+		return Attempt{}, &ValidationError{Field: "lease token", Problem: "must be a UUID"}
 	}
 
 	tx, err := r.database.Begin(ctx)
@@ -245,7 +282,7 @@ func (r *Repository) finishAttempt(ctx context.Context, id string, target Attemp
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	attempt, err := lockAttempt(ctx, tx, id)
+	attempt, leaseActive, err := lockAttemptForLease(ctx, tx, id, leaseToken)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Attempt{}, ErrAttemptNotFound
 	}
@@ -258,16 +295,19 @@ func (r *Repository) finishAttempt(ctx context.Context, id string, target Attemp
 		}
 		return attempt, nil
 	}
+	if !leaseActive {
+		return Attempt{}, ErrAttemptLeaseLost
+	}
 	if target == AttemptStateCompleted && attempt.State != AttemptStateRunning {
 		return Attempt{}, invalidAttemptTransition(attempt.State, target)
 	}
 	if target == AttemptStateFailed && attempt.State != AttemptStateStarting && attempt.State != AttemptStateRunning {
 		return Attempt{}, invalidAttemptTransition(attempt.State, target)
 	}
-	var lockedJobID string
+	var jobState State
 	if err := tx.QueryRow(ctx, `
-		SELECT id::text FROM public.jobs WHERE id = $1::uuid FOR UPDATE
-	`, attempt.JobID).Scan(&lockedJobID); err != nil {
+		SELECT state FROM public.jobs WHERE id = $1::uuid FOR UPDATE
+	`, attempt.JobID).Scan(&jobState); err != nil {
 		return Attempt{}, fmt.Errorf("lock job while finishing attempt: %w", err)
 	}
 
@@ -278,19 +318,27 @@ func (r *Repository) finishAttempt(ctx context.Context, id string, target Attemp
 	`, id, target, failureMessage); err != nil {
 		return Attempt{}, fmt.Errorf("mark attempt %s: %w", target, err)
 	}
+	taskState := string(target)
+	if target == AttemptStateFailed && jobState == StateRunning && attempt.Number < MaxTaskAttempts {
+		taskState = "pending"
+	}
+	// The failed attempt stays terminal. Only its logical task returns to pending;
+	// the timestamp and state commit together, so restart cannot lose the delay.
 	command, err := tx.Exec(ctx, `
 		UPDATE public.tasks
-		SET state = $2, updated_at = now()
+		SET state = $2, updated_at = now(),
+			available_at = CASE WHEN $2 = 'pending'
+				THEN now() + $3 * interval '1 second' ELSE available_at END
 		WHERE id = $1::uuid AND state = 'running'
-	`, attempt.TaskID, target)
+	`, attempt.TaskID, taskState, int64(TaskRetryDelay/time.Second))
 	if err != nil {
-		return Attempt{}, fmt.Errorf("mark task %s: %w", target, err)
+		return Attempt{}, fmt.Errorf("mark task %s: %w", taskState, err)
 	}
 	if command.RowsAffected() != 1 {
-		return Attempt{}, fmt.Errorf("mark task %s: running task was not updated", target)
+		return Attempt{}, fmt.Errorf("mark task %s: running task was not updated", taskState)
 	}
 
-	if target == AttemptStateFailed {
+	if taskState == "failed" {
 		if _, err := tx.Exec(ctx, `
 			UPDATE public.jobs SET state = 'failed', updated_at = now() WHERE id = $1::uuid
 		`, attempt.JobID); err != nil {
@@ -331,9 +379,28 @@ func lockAttempt(ctx context.Context, tx pgx.Tx, id string) (Attempt, error) {
 	return scanAttempt(tx.QueryRow(ctx, attemptSelectByID+" FOR UPDATE OF a", id))
 }
 
+func lockAttemptForLease(ctx context.Context, tx pgx.Tx, id, leaseToken string) (Attempt, bool, error) {
+	attempt, err := lockAttempt(ctx, tx, id)
+	if err != nil {
+		return Attempt{}, false, err
+	}
+	if attempt.LeaseToken != leaseToken {
+		return Attempt{}, false, ErrAttemptLeaseLost
+	}
+	var active bool
+	if err := tx.QueryRow(ctx, `
+		SELECT lease_expires_at > clock_timestamp()
+		FROM public.attempts
+		WHERE id = $1::uuid
+	`, id).Scan(&active); err != nil {
+		return Attempt{}, false, err
+	}
+	return attempt, active, nil
+}
+
 func scanAttempt(row pgx.Row) (Attempt, error) {
 	var attempt Attempt
-	var externalID, failureMessage *string
+	var externalID, failureMessage, leaseOwner, leaseToken *string
 	if err := row.Scan(
 		&attempt.ID,
 		&attempt.JobID,
@@ -347,6 +414,9 @@ func scanAttempt(row pgx.Row) (Attempt, error) {
 		&attempt.StartedAt,
 		&attempt.FinishedAt,
 		&attempt.UpdatedAt,
+		&leaseOwner,
+		&leaseToken,
+		&attempt.LeaseExpiresAt,
 	); err != nil {
 		return Attempt{}, err
 	}
@@ -356,9 +426,16 @@ func scanAttempt(row pgx.Row) (Attempt, error) {
 	if failureMessage != nil {
 		attempt.FailureMessage = *failureMessage
 	}
+	if leaseOwner != nil {
+		attempt.LeaseOwner = *leaseOwner
+	}
+	if leaseToken != nil {
+		attempt.LeaseToken = *leaseToken
+	}
 	attempt.CreatedAt = attempt.CreatedAt.UTC()
 	attempt.StartedAt = utcTime(attempt.StartedAt)
 	attempt.FinishedAt = utcTime(attempt.FinishedAt)
+	attempt.LeaseExpiresAt = utcTime(attempt.LeaseExpiresAt)
 	attempt.UpdatedAt = attempt.UpdatedAt.UTC()
 	return attempt, nil
 }
@@ -376,6 +453,16 @@ func validateExecutor(executor string) error {
 		return &ValidationError{Field: "executor", Problem: "must be 1 to 63 bytes with no surrounding whitespace"}
 	}
 	return nil
+}
+
+func validateLease(owner string, duration time.Duration) (int64, error) {
+	if owner == "" || owner != strings.TrimSpace(owner) || len(owner) > 255 {
+		return 0, &ValidationError{Field: "lease owner", Problem: "must be 1 to 255 bytes with no surrounding whitespace"}
+	}
+	if duration < time.Second || duration > 5*time.Minute || duration%time.Second != 0 {
+		return 0, &ValidationError{Field: "lease duration", Problem: "must be a whole number of seconds between 1 second and 5 minutes"}
+	}
+	return int64(duration / time.Second), nil
 }
 
 func deriveAttemptOutputURI(outputRootURI string, shardIndex int, attemptID string) (string, error) {

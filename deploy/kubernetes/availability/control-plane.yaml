@@ -1,0 +1,193 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mill-job
+  namespace: mill-system
+  labels:
+    app.kubernetes.io/name: mill-job-service
+    app.kubernetes.io/part-of: mill
+spec:
+  selector:
+    app.kubernetes.io/name: mill-job-service
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+    - name: grpc
+      port: 9090
+      targetPort: grpc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mill-job-service
+  namespace: mill-system
+  labels:
+    app.kubernetes.io/name: mill-job-service
+    app.kubernetes.io/part-of: mill
+spec:
+  replicas: 2
+  revisionHistoryLimit: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mill-job-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mill-job-service
+        app.kubernetes.io/part-of: mill
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 10
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: mill-job-service
+              topologyKey: kubernetes.io/hostname
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: job-service
+          image: mill/job-service:dev
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: mill-job-config
+          env:
+            - name: MILL_HTTP_ADDR
+              value: ":8080"
+            - name: MILL_GRPC_ADDR
+              value: ":9090"
+            - name: MILL_PARALLELISM
+              value: "3"
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: grpc
+              containerPort: 9090
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 1
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 1
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mill-job-service
+  namespace: mill-system
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mill-job-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mill-executor
+  namespace: mill-system
+  labels:
+    app.kubernetes.io/name: mill-executor
+    app.kubernetes.io/part-of: mill
+spec:
+  replicas: 2
+  revisionHistoryLimit: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mill-executor
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mill-executor
+        app.kubernetes.io/part-of: mill
+    spec:
+      serviceAccountName: mill-executor
+      terminationGracePeriodSeconds: 10
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: mill-executor
+              topologyKey: kubernetes.io/hostname
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: executor
+          image: mill/executor:dev
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: mill-executor-config
+          env:
+            - name: MILL_JOB_GRPC_TARGET
+              value: mill-job:9090
+            - name: MILL_KUBE_IN_CLUSTER
+              value: "true"
+            - name: MILL_KUBE_NAMESPACE
+              value: mill-workloads
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mill-executor
+  namespace: mill-system
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mill-executor

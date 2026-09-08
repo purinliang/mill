@@ -130,12 +130,26 @@ independently of the others.
 After completion, job status lists the 12 successful output URIs. The script
 copies the results back, combines them into `counts.jsonl`, and checks that
 they match a local count over the entire input. It prints the fresh output
-directory, final result, and Kubernetes inspection/cleanup commands. Mill and
-the private PostgreSQL server stop when the script exits; all files and
-Kubernetes resources remain for inspection. `server.log` records claims,
-dispatches, completions, and failures; `status.json` contains final API status.
-This is a correctness demonstration, not a throughput benchmark: the input is
-small and Pod startup dominates execution time.
+directory, final result, and Kubernetes inspection/cleanup commands. The Job
+service, executor processes, and private PostgreSQL server stop when the script
+exits; all files and Kubernetes resources remain for inspection. `server.log`
+records Job-service activity, `executor-*.log` records claims and reconciliation,
+and `status.json` contains final API status. This is a correctness demonstration,
+not a throughput benchmark: the input is small and Pod startup dominates
+execution time.
+
+To run the same batch with a second live executor replica:
+
+```bash
+./scripts/demo-word-count-batch --split-process
+```
+
+All batch modes run through one Job service and standalone executors. Executors
+have no PostgreSQL configuration and lease work only through the Job service's
+gRPC API. This mode starts two replicas; one may own all current leases while
+the other stands by. Parallel computation still occurs in the bounded set of
+Kubernetes workload Pods. The script verifies the same 12 outputs against the
+local baseline.
 
 For two active attempts instead:
 
@@ -143,11 +157,228 @@ For two active attempts instead:
 MILL_PARALLELISM=2 ./scripts/demo-word-count-batch
 ```
 
+To run and verify the `medium` workload resource class:
+
+```bash
+MILL_DEMO_RESOURCE_CLASS=medium ./scripts/demo-word-count-batch
+```
+
+Mill persists the resolved profile on the job, sends it to the executor through
+gRPC, and applies `100m`/`1` CPU and `512Mi` memory request/limit to every
+workload Pod.
+
 With this configuration the current planner produces six tasks, each covering
 two of the 12 records. The result still covers the entire input. The demo uses
 the task count returned by Mill rather than choosing its own shards.
 
 The coordinator uses one Job per attempt and preserves durable state across
-process restarts. Native retries are disabled. Automatic Mill retries and
-generic result aggregation remain future work; this script performs only the
+process restarts. Native retries are disabled; Mill owns a three-attempt budget
+per task with a five-second delay between observed failure and retry eligibility.
+Generic result aggregation remains future work; this script performs only the
 word-count-specific merge.
+
+## Run the whole batch through shared object storage
+
+```bash
+./scripts/demo-word-count-s3
+```
+
+This variation starts a temporary S3-compatible SeaweedFS container, uploads
+the same generated input as one `s3://` object, and configures both Mill and the
+workload Pods with endpoints they can reach. Mill plans 12 logical ranges by
+streaming the object, and every mapper performs an S3 byte-range read and writes
+its unique attempt result back to S3.
+
+Unlike the node-local batch, the generated Kubernetes Jobs contain neither
+hostPath volumes nor a fixed-node selector. The script checks that property,
+downloads only the 12 successful output URIs, merges them, and compares the
+result byte-for-byte with a local full-input run. The local S3 server is a
+compatibility fixture rather than an availability or performance claim.
+
+Temporary S3 credentials and the storage container are removed on exit. The
+printed run directory retains inputs, downloaded outputs, logs, final status,
+and storage data. Completed Kubernetes Jobs remain for inspection.
+
+## Run through deployed Mill services
+
+```bash
+./scripts/demo-word-count-deployed
+```
+
+This variation packages both Mill services as Kubernetes Deployments instead of
+running them as laptop processes. It uses unique temporary control-plane and
+workload namespaces, a ClusterIP REST/gRPC Service, in-cluster executor
+credentials, and namespace-scoped Job RBAC.
+
+The same 12 S3-backed mapper tasks run with peak parallelism three and are
+merged and compared with the local full-input count. Disposable PostgreSQL and
+SeaweedFS containers remain test fixtures outside Kubernetes; the script
+removes its unique namespaces and containers on exit and retains diagnostics in
+the printed run directory. This proves the deployed service path, not high
+availability.
+
+To scale the executor Deployment to two replicas and delete the replica that
+owns the first three task leases, run:
+
+```bash
+./scripts/demo-word-count-deployed --executor-failover
+```
+
+The deterministic delay wrapper creates time to identify the active and
+standby executor Pods. The script verifies that the standby respects live
+leases, deletes the owner, observes takeover with new fencing tokens, and
+requires the same attempts and Kubernetes Jobs to finish all 12 outputs. It
+also requires the merged result to match the local count. This isolates one
+executor Pod failure; PostgreSQL, the Job service, kind node, and object store
+remain healthy.
+
+To delete the original Job-service Pod while tasks are running, use:
+
+```bash
+./scripts/demo-word-count-deployed --job-service-failover
+```
+
+The script first adds a ready Job-service replica, then removes the only Pod
+that existed when the executor established its gRPC connection. It reconnects
+the REST port-forward and requires the executor to reconnect through the
+Service, finish the same leased attempts, and produce the exact 12-task result.
+This does not fail PostgreSQL, the Kubernetes node, or object storage.
+
+The multi-node `scripts/demo-availability` exercise uses the same wrapper's
+`availability` mode. It holds shards 0–2 for 120 seconds so executor,
+Job-service, and controlled PostgreSQL-primary failovers can be exercised
+against one active wave. The
+[availability runbook](../../docs/availability-runbook.md) defines the required
+topology and evidence; this longer delay remains test-fixture behavior rather
+than Mill execution policy.
+
+## Crash and restart the executor
+
+Run the process-boundary recovery demonstration with:
+
+```bash
+./scripts/demo-word-count-batch --restart-coordinator
+```
+
+The same test-only wrapper used for failure injection receives `delay` and
+holds shards 0–2 for 15 seconds before delegating to the unchanged mapper. This
+creates a deterministic window in which the first three attempts are running.
+The delay is demonstration behavior, not part of Mill's workload contract.
+
+Once PostgreSQL contains three `running` attempts with Kubernetes UIDs, the
+script saves their identities and the corresponding Job names/UIDs, then sends
+SIGKILL to **only the child executor process**. It immediately verifies the Job
+service and PostgreSQL still answer and the same Kubernetes Jobs still exist.
+It then starts a replacement executor with exactly the same Job-service,
+cluster, namespace, node, and storage configuration.
+
+The restart is accepted only when:
+
+- attempt IDs, task IDs, attempt numbers, and external UIDs are unchanged;
+- Kubernetes Job names and UIDs are unchanged;
+- no duplicate attempts were created;
+- the captured parallelism limit was preserved; and
+- all task outputs still merge to the exact full-input count.
+
+The run directory retains `attempts-before-crash.json`,
+`attempts-after-restart.json`, `kubernetes-before-crash.json`,
+`kubernetes-without-coordinator.json`, and `kubernetes-after-restart.json`.
+`server.log` shows the uninterrupted Job service; `executor-1.log` and
+`executor-2.log` show the killed and replacement executors. `attempts.json` and
+`status.json` show the final state.
+
+This proves the implemented recovery path for loss of the executor process
+while the Job service, PostgreSQL, and Kubernetes remain healthy. It does not
+prove recovery from Job-service or PostgreSQL loss, Kubernetes API partitions,
+node failure, deleted active Jobs, or every possible instruction-level crash
+window.
+
+## Run two executor replicas and kill one
+
+Run the concurrent-process failover demonstration with:
+
+```bash
+./scripts/demo-word-count-batch --replica-failover
+```
+
+The script starts the primary executor, waits for three delayed attempts, and
+then starts a second executor against the same Job-service gRPC endpoint.
+Before failure, it verifies that both executors are healthy while the second
+cannot steal unexpired leases or create duplicate Jobs. It kills the primary
+and accepts takeover only when the survivor replaces every fencing token while
+preserving the original task IDs, attempt IDs, external UIDs, and Kubernetes
+Jobs. The Job service remains alive, and the final 12 outputs must still match
+the local baseline.
+
+This proves process-level coordination and failover on one machine. It is not a
+multi-node Kubernetes, PostgreSQL failover, or network-partition test.
+
+## Inject a failure and observe retries
+
+Start with the recoverable case:
+
+```bash
+./scripts/demo-word-count-batch --failure once
+```
+
+The script builds `mill/word-count-fault:dev`, a separate image containing the
+normal mapper and `cmd/fault-injection` wrapper. The wrapper receives `once` as
+an executable argument after Mill's `--` separator. **Only shard 0** fails on
+its first invocation; other shards immediately delegate to the normal mapper.
+No randomness is involved, so repeating the demo exercises the same failure.
+
+The wrapper uses an atomic directory creation at
+`/output/.mill-faults/<job-id>/<task-id>` to remember the first invocation across
+replacement Pods. On its first invocation it leaves a deliberately incorrect
+partial result at the assigned attempt output URI and exits 1. The next
+invocation sees the marker and runs word-count normally with unchanged Mill
+arguments and no test-only arguments. The marker is specific to this local
+shared-filesystem test: **Mill does not read it or use it to decide retries**.
+Fresh demo jobs have distinct IDs and cannot inherit a previous job's marker.
+
+Mill observes the failed Kubernetes Job, retains attempt 1 as `failed`, and
+returns its task to `pending` with a durable five-second delay. Another pending
+task can use the freed slot. When eligible and capacity is available, the same
+task gets attempt 2 with a new Kubernetes Job and output URI. A failed attempt
+does not count as a failed task while retries remain.
+
+With the default parallelism 3, the expected history is:
+
+| Shard | Attempt 1 | Attempt 2 | Final task state |
+| --- | --- | --- | --- |
+| 0 | failed | completed | completed |
+| 1–11 | completed | not needed | completed |
+
+There are 12 logical tasks, 13 attempts, and at most three active attempts.
+The script merges only the 12 successful output URIs listed by Mill and checks
+the exact full-input result. This also proves the failed attempt's deliberately
+wrong partial result was excluded.
+
+Then check exhaustion:
+
+```bash
+./scripts/demo-word-count-batch --failure always
+```
+
+Here shard 0 exits 1 on every invocation. Mill stops after three total attempts
+(two retries) and marks the task and job failed. Pending tasks stop dispatching;
+already active attempts are still observed until terminal. The demo expects
+this failure and prints `PASS` only when the limit and absence of successful
+job results are verified. Other tasks may already have produced valid outputs,
+but the script does not publish a merged result for a failed job.
+
+Both modes check persisted retry delays and observed parallelism, verify failed
+Pod logs contain the injected error, and save `attempts.json` alongside
+`status.json`, `server.log`, and `failure-<attempt-id>.log`. The printed attempt
+table distinguishes attempt state from final task state. The private database
+stops at exit, so these snapshots remain readable without restarting it.
+
+To inspect the recoverable case after the script prints its run directory:
+
+```bash
+jq '.[] | select(.shard_index == 0)' /tmp/mill-batch.<run>/attempts.json
+```
+
+Replace `<run>` with the actual suffix. The demo retains Kubernetes resources,
+node files, and local files as before. These cases test terminal workload
+failure, not coordinator crashes, network partitions, or deleted running Jobs.

@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -ne 0 ]]; then
+	printf 'Usage: %s\n' "$0" >&2
+	exit 1
+fi
+cd "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+: "${MILL_AVAILABILITY_PROFILE:?MILL_AVAILABILITY_PROFILE must be two-node or three-node}"
+case "${MILL_AVAILABILITY_PROFILE}" in
+two-node) required_nodes=2; postgres_manifest=postgres-two-node.yaml ;;
+three-node) required_nodes=3; postgres_manifest=postgres-three-node.yaml ;;
+*) printf 'MILL_AVAILABILITY_PROFILE must be two-node or three-node.\n' >&2; exit 1 ;;
+esac
+: "${MILL_DATABASE_PASSWORD:?MILL_DATABASE_PASSWORD is required}"
+: "${MILL_JOB_IMAGE:?MILL_JOB_IMAGE must be reachable from every node}"
+: "${MILL_EXECUTOR_IMAGE:?MILL_EXECUTOR_IMAGE must be reachable from every node}"
+: "${MILL_OUTPUT_ROOT_URI:?MILL_OUTPUT_ROOT_URI is required}"
+: "${AWS_REGION:?AWS_REGION is required}"
+[[ "${MILL_OUTPUT_ROOT_URI}" == s3://* ]] || { printf 'MILL_OUTPUT_ROOT_URI must use s3://.\n' >&2; exit 1; }
+[[ "${MILL_DATABASE_PASSWORD}" =~ ^[A-Za-z0-9._~-]{16,128}$ ]] || {
+	printf 'MILL_DATABASE_PASSWORD must be 16-128 URL-safe characters.\n' >&2; exit 1;
+}
+for image in "${MILL_JOB_IMAGE}" "${MILL_EXECUTOR_IMAGE}"; do
+	[[ "${image}" =~ ^[A-Za-z0-9][A-Za-z0-9._/:@-]+$ ]] || {
+		printf 'Image references must contain no whitespace or YAML control characters.\n' >&2; exit 1;
+	}
+done
+if [[ -n "${AWS_ACCESS_KEY_ID:-}" || -n "${AWS_SECRET_ACCESS_KEY:-}" || -n "${AWS_SESSION_TOKEN:-}" ]]; then
+	[[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" ]] || {
+		printf 'AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be configured together.\n' >&2; exit 1;
+	}
+fi
+
+readonly context="${MILL_KUBE_CONTEXT:-k3s-default}"
+readonly local_database_port="${MILL_DATABASE_LOCAL_PORT:-15433}"
+[[ "${local_database_port}" =~ ^[0-9]+$ ]] && (( local_database_port > 1024 && local_database_port < 65536 )) || {
+	printf 'MILL_DATABASE_LOCAL_PORT must be between 1025 and 65535.\n' >&2; exit 1;
+}
+for required in awk basename grep jq kubectl psql mktemp sha256sum; do
+	command -v "${required}" >/dev/null || { printf 'Missing command: %s\n' "${required}" >&2; exit 1; }
+done
+
+temporary_directory="$(mktemp -d)"
+port_forward_pid=""
+cleanup() {
+	if [[ -n "${port_forward_pid}" ]]; then
+		kill -TERM "${port_forward_pid}" 2>/dev/null || true
+		wait "${port_forward_pid}" 2>/dev/null || true
+	fi
+	rm -rf -- "${temporary_directory}"
+}
+trap cleanup EXIT
+
+node_count="$(kubectl --context "${context}" get nodes -o json | jq '
+	[.items[]
+		| select(any(.status.conditions[]; .type == "Ready" and .status == "True"))
+		| .metadata.labels["kubernetes.io/hostname"]]
+	| unique | length')"
+(( node_count >= required_nodes )) || {
+	printf 'Profile %s requires at least %s Kubernetes nodes; found %s.\n' \
+		"${MILL_AVAILABILITY_PROFILE}" "${required_nodes}" "${node_count}" >&2
+	exit 1
+}
+server_count="$(kubectl --context "${context}" get nodes -o json | jq '
+	[.items[]
+		| select(any(.status.conditions[]; .type == "Ready" and .status == "True"))
+		| select(.metadata.labels["node-role.kubernetes.io/control-plane"] != null)]
+	| length')"
+(( server_count >= 1 )) || { printf 'No ready Kubernetes control-plane node found.\n' >&2; exit 1; }
+if [[ "${MILL_AVAILABILITY_PROFILE}" == three-node ]]; then
+	voter_count="$(kubectl --context "${context}" get nodes -o json | jq '
+		[.items[]
+			| select(any(.status.conditions[]; .type == "Ready" and .status == "True"))
+			| select(.metadata.labels["node-role.kubernetes.io/control-plane"] != null)
+			| select(.metadata.labels["node-role.kubernetes.io/etcd"] != null)]
+		| length')"
+	(( voter_count >= 3 )) || {
+		printf 'Profile three-node requires 3 ready control-plane/etcd voters; found %s.\n' "${voter_count}" >&2
+		exit 1
+	}
+fi
+kubectl --context "${context}" get customresourcedefinition clusters.postgresql.cnpg.io >/dev/null || {
+	printf 'CloudNativePG is not installed; run scripts/install-cloudnative-pg first.\n' >&2; exit 1;
+}
+
+kubectl --context "${context}" apply -f deploy/kubernetes/availability/namespaces-rbac.yaml >/dev/null
+printf 'mill' > "${temporary_directory}/username"
+printf '%s' "${MILL_DATABASE_PASSWORD}" > "${temporary_directory}/password"
+kubectl --context "${context}" -n mill-database create secret generic mill-database-credentials \
+	--type=kubernetes.io/basic-auth \
+	--from-file="username=${temporary_directory}/username" \
+	--from-file="password=${temporary_directory}/password" \
+	--dry-run=client -o yaml | kubectl --context "${context}" apply -f - >/dev/null
+kubectl --context "${context}" apply \
+	-f "deploy/kubernetes/availability/${postgres_manifest}" >/dev/null
+kubectl --context "${context}" -n mill-database wait --for=condition=Ready \
+	cluster/mill-postgres --timeout=600s
+
+kubectl --context "${context}" -n mill-database port-forward service/mill-postgres-rw \
+	"${local_database_port}:5432" > "${temporary_directory}/database-port-forward.log" 2>&1 &
+port_forward_pid=$!
+# kubectl already protects the host-to-Pod tunnel with the Kubernetes API's
+# TLS. Keep this client connection compatible with PostgreSQL tools built
+# without libssl; in-cluster Mill connections still require PostgreSQL TLS.
+host_database_url="postgresql://mill@127.0.0.1:${local_database_port}/mill?sslmode=disable"
+ready=false
+for _ in {1..120}; do
+	if PGPASSWORD="${MILL_DATABASE_PASSWORD}" psql "${host_database_url}" -XAt -c 'SELECT 1' >/dev/null 2>&1; then
+		ready=true
+		break
+	fi
+	sleep 0.5
+done
+[[ "${ready}" == true ]] || { printf 'PostgreSQL writer service did not become reachable.\n' >&2; exit 1; }
+PGPASSWORD="${MILL_DATABASE_PASSWORD}" psql "${host_database_url}" -X -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+CREATE TABLE IF NOT EXISTS public.schema_migrations (
+    version text PRIMARY KEY,
+    checksum text NOT NULL CHECK (checksum ~ '^[0-9a-f]{64}$'),
+    applied_at timestamptz NOT NULL DEFAULT now()
+);
+SQL
+for migration in migrations/*.sql; do
+	version="$(basename "${migration}" .sql)"
+	[[ "${version}" =~ ^[0-9]{6}_[a-z0-9_]+$ ]] || {
+		printf 'Invalid migration filename: %s\n' "${migration}" >&2; exit 1;
+	}
+	checksum="$(sha256sum "${migration}")"
+	checksum="${checksum%% *}"
+	applied_checksum="$(PGPASSWORD="${MILL_DATABASE_PASSWORD}" psql "${host_database_url}" \
+		-XAt -v ON_ERROR_STOP=1 \
+		-c "SELECT checksum FROM public.schema_migrations WHERE version = '${version}';")"
+	if [[ -n "${applied_checksum}" ]]; then
+		[[ "${applied_checksum}" == "${checksum}" ]] || {
+			printf 'Applied migration %s has been modified.\n' "${version}" >&2; exit 1;
+		}
+		continue
+	fi
+	migration_transaction="${temporary_directory}/${version}.sql"
+	awk '$0 != "BEGIN;" && $0 != "COMMIT;" { print }' "${migration}" > "${migration_transaction}"
+	printf "\nINSERT INTO public.schema_migrations (version, checksum) VALUES ('%s', '%s');\n" \
+		"${version}" "${checksum}" >> "${migration_transaction}"
+	PGPASSWORD="${MILL_DATABASE_PASSWORD}" psql "${host_database_url}" -X -v ON_ERROR_STOP=1 \
+		--single-transaction -f "${migration_transaction}" >/dev/null
+done
+
+write_environment_file() {
+	local destination="$1"
+	shift
+	: > "${destination}"
+	while (( $# > 0 )); do
+		[[ "$2" != *$'\n'* ]] || { printf '%s cannot contain a newline.\n' "$1" >&2; exit 1; }
+		printf '%s=%s\n' "$1" "$2" >> "${destination}"
+		shift 2
+	done
+}
+apply_environment_secret() {
+	local namespace="$1" name="$2" source="$3"
+	kubectl --context "${context}" -n "${namespace}" create secret generic "${name}" \
+		--from-env-file="${source}" --dry-run=client -o yaml |
+		kubectl --context "${context}" apply -f - >/dev/null
+}
+
+pod_database_url="postgresql://mill:${MILL_DATABASE_PASSWORD}@mill-postgres-rw.mill-database.svc.cluster.local:5432/mill?sslmode=require"
+write_environment_file "${temporary_directory}/job.env" \
+	MILL_DATABASE_URL "${pod_database_url}" \
+	MILL_OUTPUT_ROOT_URI "${MILL_OUTPUT_ROOT_URI}" \
+	AWS_REGION "${AWS_REGION}" \
+	MILL_S3_ENDPOINT "${MILL_S3_ENDPOINT:-}" \
+	AWS_ACCESS_KEY_ID "${AWS_ACCESS_KEY_ID:-}" \
+	AWS_SECRET_ACCESS_KEY "${AWS_SECRET_ACCESS_KEY:-}" \
+	AWS_SESSION_TOKEN "${AWS_SESSION_TOKEN:-}"
+apply_environment_secret mill-system mill-job-config "${temporary_directory}/job.env"
+
+credentials_secret=""
+if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
+	credentials_secret=mill-workload-storage
+	write_environment_file "${temporary_directory}/workload.env" \
+		AWS_ACCESS_KEY_ID "${AWS_ACCESS_KEY_ID}" \
+		AWS_SECRET_ACCESS_KEY "${AWS_SECRET_ACCESS_KEY}" \
+		AWS_SESSION_TOKEN "${AWS_SESSION_TOKEN:-}"
+	apply_environment_secret mill-workloads "${credentials_secret}" "${temporary_directory}/workload.env"
+fi
+write_environment_file "${temporary_directory}/executor.env" \
+	MILL_WORKLOAD_S3_REGION "${MILL_WORKLOAD_S3_REGION:-${AWS_REGION}}" \
+	MILL_WORKLOAD_S3_ENDPOINT "${MILL_WORKLOAD_S3_ENDPOINT:-${MILL_S3_ENDPOINT:-}}" \
+	MILL_WORKLOAD_S3_CREDENTIALS_SECRET "${credentials_secret}"
+apply_environment_secret mill-system mill-executor-config "${temporary_directory}/executor.env"
+
+rendered_control_plane="${temporary_directory}/control-plane.yaml"
+awk -v job_image="${MILL_JOB_IMAGE}" -v executor_image="${MILL_EXECUTOR_IMAGE}" '
+	$0 ~ /^[[:space:]]*image: mill\/job-service:dev[[:space:]]*$/ {
+		sub(/image: mill\/job-service:dev/, "image: " job_image)
+	}
+	$0 ~ /^[[:space:]]*image: mill\/executor:dev[[:space:]]*$/ {
+		sub(/image: mill\/executor:dev/, "image: " executor_image)
+	}
+	{ print }
+' deploy/kubernetes/availability/control-plane.yaml > "${rendered_control_plane}"
+[[ "$(grep -cF "image: ${MILL_JOB_IMAGE}" "${rendered_control_plane}")" == 1 && \
+	"$(grep -cF "image: ${MILL_EXECUTOR_IMAGE}" "${rendered_control_plane}")" == 1 ]] || {
+	printf 'Failed to render requested control-plane images.\n' >&2; exit 1;
+}
+kubectl --context "${context}" apply -f "${rendered_control_plane}" >/dev/null
+kubectl --context "${context}" -n mill-system rollout status deployment/mill-job-service --timeout=300s
+kubectl --context "${context}" -n mill-system rollout status deployment/mill-executor --timeout=300s
+
+printf '\nMill %s availability profile is ready in context %s.\n' "${MILL_AVAILABILITY_PROFILE}" "${context}"
+kubectl --context "${context}" get pods -n mill-database -o wide
+kubectl --context "${context}" get pods -n mill-system -o wide

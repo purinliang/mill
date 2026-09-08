@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -8,6 +11,20 @@ import (
 
 	"github.com/purinliang/mill/internal/workload"
 )
+
+type memoryObjects struct {
+	input  []byte
+	output bytes.Buffer
+}
+
+func (m *memoryObjects) OpenRange(_ context.Context, uri string, start, end int64) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(m.input[start:end])), nil
+}
+
+func (m *memoryObjects) Put(_ context.Context, uri string, body io.ReadSeeker) error {
+	_, err := io.Copy(&m.output, body)
+	return err
+}
 
 func TestRunCountsOnlyAssignedLogicalShard(t *testing.T) {
 	directory := t.TempDir()
@@ -73,6 +90,22 @@ func TestRunRejectsInvalidInputAndExecutableArguments(t *testing.T) {
 	invocation.ExecutableArgs = []string{"--unexpected"}
 	if err := run(commandArguments(t, invocation)); err == nil {
 		t.Fatal("run with executable arguments succeeded, want an error")
+	}
+}
+
+func TestRunWithStoreUsesS3ObjectURIs(t *testing.T) {
+	objects := &memoryObjects{input: []byte("{\"text\":\"ignored\"}\n{\"text\":\"Shared storage\"}\n")}
+	start := int64(len("{\"text\":\"ignored\"}\n"))
+	arguments := commandArguments(t, workload.Invocation{
+		JobID: "job-001", TaskID: "task-001", ShardIndex: 1,
+		InputURI: "s3://mill-input/records.jsonl", InputStartByte: start, InputEndByte: int64(len(objects.input)),
+		OutputURI: "s3://mill-output/result.jsonl", ExecutableArgs: []string{},
+	})
+	if err := runWithStore(context.Background(), arguments, objects); err != nil {
+		t.Fatal(err)
+	}
+	if objects.output.String() != "{\"word\":\"shared\",\"count\":1}\n{\"word\":\"storage\",\"count\":1}\n" {
+		t.Fatalf("output = %q", objects.output.String())
 	}
 }
 

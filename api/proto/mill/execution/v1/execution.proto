@@ -1,0 +1,105 @@
+syntax = "proto3";
+
+package mill.execution.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/purinliang/mill/internal/executionrpc/v1;executionv1";
+
+// ExecutionService is the internal boundary through which executor replicas
+// lease work and report guarded state transitions to the Job service.
+service ExecutionService {
+  rpc LeaseActiveAttempts(LeaseActiveAttemptsRequest) returns (LeaseActiveAttemptsResponse);
+  rpc ClaimNextAttempt(ClaimNextAttemptRequest) returns (ClaimNextAttemptResponse);
+  rpc MarkAttemptRunning(MarkAttemptRunningRequest) returns (AttemptResponse);
+  rpc CompleteAttempt(CompleteAttemptRequest) returns (AttemptResponse);
+  rpc FailAttempt(FailAttemptRequest) returns (AttemptResponse);
+}
+
+message LeaseActiveAttemptsRequest {
+  string executor = 1;
+  string lease_owner = 2;
+}
+
+message LeaseActiveAttemptsResponse {
+  repeated ClaimedAttempt attempts = 1;
+}
+
+message ClaimNextAttemptRequest {
+  string executor = 1;
+  string lease_owner = 2;
+}
+
+message ClaimNextAttemptResponse {
+  ClaimedAttempt attempt = 1;
+}
+
+message MarkAttemptRunningRequest {
+  string attempt_id = 1;
+  string lease_token = 2;
+  string external_id = 3;
+}
+
+message CompleteAttemptRequest {
+  string attempt_id = 1;
+  string lease_token = 2;
+}
+
+message FailAttemptRequest {
+  string attempt_id = 1;
+  string lease_token = 2;
+  string failure_message = 3;
+}
+
+message AttemptResponse {
+  Attempt attempt = 1;
+}
+
+message ClaimedAttempt {
+  Attempt attempt = 1;
+  Executable executable = 2;
+  int32 shard_index = 3;
+  string input_uri = 4;
+  int64 input_start_byte = 5;
+  int64 input_end_byte = 6;
+  string output_uri = 7;
+  Resources resources = 8;
+}
+
+message Resources {
+  int64 cpu_request_millis = 1;
+  int64 cpu_limit_millis = 2;
+  int64 memory_request_bytes = 3;
+  int64 memory_limit_bytes = 4;
+}
+
+message Executable {
+  string image = 1;
+  repeated string args = 2;
+}
+
+message Attempt {
+  string id = 1;
+  string job_id = 2;
+  string task_id = 3;
+  int32 number = 4;
+  string executor = 5;
+  AttemptState state = 6;
+  string external_id = 7;
+  string failure_message = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp started_at = 10;
+  google.protobuf.Timestamp finished_at = 11;
+  google.protobuf.Timestamp updated_at = 12;
+  string lease_owner = 13;
+  string lease_token = 14;
+  google.protobuf.Timestamp lease_expires_at = 15;
+}
+
+enum AttemptState {
+  ATTEMPT_STATE_UNSPECIFIED = 0;
+  ATTEMPT_STATE_STARTING = 1;
+  ATTEMPT_STATE_RUNNING = 2;
+  ATTEMPT_STATE_COMPLETED = 3;
+  ATTEMPT_STATE_FAILED = 4;
+}

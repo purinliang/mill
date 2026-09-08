@@ -6,6 +6,7 @@ WORKDIR /src
 ENV CGO_ENABLED=0 GOTOOLCHAIN=local
 
 COPY go.mod go.sum ./
+COPY internal/objectstore/ ./internal/objectstore/
 COPY internal/workload/ ./internal/workload/
 COPY examples/word-count/wordcount.go ./examples/word-count/wordcount.go
 COPY examples/word-count/cmd/word-count/ ./examples/word-count/cmd/word-count/
@@ -14,6 +15,7 @@ RUN go build -trimpath -ldflags="-s -w" -o /out/mill-word-count ./examples/word-
 
 FROM scratch
 
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build --chown=65532:65532 /out/mill-word-count /mill-word-count
 
 USER 65532:65532
