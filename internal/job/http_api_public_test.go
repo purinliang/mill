@@ -82,6 +82,19 @@ func TestGetCompletedJobPreservesThePublicJSONContract(t *testing.T) {
 	}
 }
 
+func TestHandlerUsesDefaultLoggerWhenNoneIsProvided(t *testing.T) {
+	store := publicJobStore{get: func(context.Context, string) (job.Job, error) {
+		return job.Job{ID: publicTestJobID, State: job.StateRunning}, nil
+	}}
+	mux := http.NewServeMux()
+	job.NewHandler(store, nil).RegisterRoutes(mux)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/jobs/"+publicTestJobID, nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
 func TestCreateRejectsDuplicateIdempotencyHeaders(t *testing.T) {
 	store := publicJobStore{
 		create: func(context.Context, string, job.Submission) (job.Job, bool, error) {
