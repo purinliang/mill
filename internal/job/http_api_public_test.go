@@ -101,6 +101,16 @@ func TestCreateRejectsDuplicateIdempotencyHeaders(t *testing.T) {
 	assertPublicAPIError(t, response, http.StatusBadRequest, "missing_idempotency_key")
 }
 
+func TestJobResourceRejectsUnsupportedMethods(t *testing.T) {
+	store := publicJobStore{}
+	response := servePublicJobRequest(t, store, http.MethodPost, "/jobs/"+publicTestJobID, "", nil)
+
+	assertPublicAPIError(t, response, http.StatusMethodNotAllowed, "method_not_allowed")
+	if response.Header().Get("Allow") != http.MethodGet {
+		t.Fatalf("Allow = %q, want GET", response.Header().Get("Allow"))
+	}
+}
+
 func TestHTTPAPIHidesUnexpectedStoreErrors(t *testing.T) {
 	backendFailure := errors.New("postgresql://admin:secret@database/mill")
 	tests := []struct {
