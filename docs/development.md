@@ -517,6 +517,11 @@ verifies liveness and readiness, submits and replays a job through HTTP,
 retrieves its status, and requires graceful SIGTERM shutdown. Its assertions
 use the public HTTP contract; direct database access is limited to removing its
 fixture afterward.
+The hermetic suite separately builds and launches the real executor executable
+against in-memory gRPC and Kubernetes HTTP test servers. It verifies a claimed
+attempt becomes a correctly addressed Kubernetes Job and that the executor
+reports the returned Job UID before shutting down cleanly; no cluster is
+required for this process-boundary test.
 Kubernetes demonstrations are explicit scripts rather than part of the normal
 unit suite.
 
