@@ -244,6 +244,14 @@ the REST port-forward and requires the executor to reconnect through the
 Service, finish the same leased attempts, and produce the exact 12-task result.
 This does not fail PostgreSQL, the Kubernetes node, or object storage.
 
+The multi-node `scripts/demo-availability` exercise uses the same wrapper's
+`availability` mode. It holds shards 0–2 for 120 seconds so executor,
+Job-service, and controlled PostgreSQL-primary failovers can be exercised
+against one active wave. The
+[availability runbook](../../docs/availability-runbook.md) defines the required
+topology and evidence; this longer delay remains test-fixture behavior rather
+than Mill execution policy.
+
 ## Crash and restart the executor
 
 Run the process-boundary recovery demonstration with:

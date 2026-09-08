@@ -304,8 +304,9 @@ The PostgreSQL profiles have the same resource name and are alternatives; do
 not apply both. Each requires a `kubernetes.io/basic-auth` Secret named
 `mill-database-credentials` in `mill-database`, and each uses K3s's
 `local-path` storage class. The control-plane manifest similarly expects its
-configuration Secrets and node-reachable images. A deployment script will
-create these inputs in the next slice.
+configuration Secrets and node-reachable images. `scripts/deploy-availability`
+validates the topology, creates the Secrets, applies migrations, and rolls out
+the services.
 
 Required anti-affinity intentionally leaves replicas Pending when the cluster
 has too few distinct hostnames. Weakening it to make a one-node test green

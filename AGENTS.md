@@ -79,7 +79,22 @@ join token as a command-line argument or commit it. Preserve
 `scripts/deploy-availability` checks for distinct ready hostname domains,
 alternative database profiles, URL-safe database credentials, externally
 reachable images/storage, migration-before-control-plane ordering, and Secret
-redaction.
+redaction. Render requested images before creating Pods; required anti-affinity
+must not deadlock a fresh deployment or rolling update. Preserve the
+checksum-verified migration ledger and single-transaction application rather
+than making historical DDL silently repeatable.
+
+Preserve `scripts/demo-availability` as the destructive two-node acceptance
+proof. It must refuse fewer than two hostname failure domains, require all
+three replica pairs to be ready and anti-affined before mutation, and retain
+evidence. Executor, Job-service, and PostgreSQL primary Pod deletion must occur
+against one active 12-task batch. Require fenced takeover, a changed database
+primary, stable attempt and Kubernetes Job identities, exactly one attempt per
+task, restored replicas, synchronous streaming, and exact merged output. Do
+not describe this as node, partition, or object-storage tolerance.
+The database shutdown bounds intentionally favor a short demonstration RTO;
+keep that tradeoff explicit and do not present the values as production
+defaults.
 
 `scripts/demo-word-count-single-task` runs one manual word-count Job with staged
 node-local input and verifies its output against a local run. It uses

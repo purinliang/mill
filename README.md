@@ -281,11 +281,17 @@ Kubernetes Job names, and Job UIDs remain unchanged. Another single-node test
 deletes the original Job-service Pod and proves the REST client and executor's
 gRPC connection recover through the Service without changing durable work.
 Multi-node replica placement, K3s installation, and database replication remain
-to be exercised. The first deployable manifests are now defined under
+to be exercised. Pinned role-based K3s installation, profile deployment, and a
+destructive two-node acceptance runner are implemented but have not yet been
+run on two physical laptops. A two-node kind simulation has passed executor
+and Job-service Pod deletion, synchronous standby promotion, connection
+recovery, stable execution identities, and byte-exact 12-task output. This is
+runtime evidence for the manifests, not a physical-laptop failure-domain claim.
+The deployable manifests are defined under
 `deploy/kubernetes/availability`: two Mill replicas per service, required
 hostname anti-affinity, disruption budgets, and distinct two- and three-node
 CloudNativePG profiles. Both profiles pass Kubernetes and CloudNativePG 1.30.0
-admission validation; neither has yet been run on multiple nodes.
+admission validation; the three-node profile has not yet been run.
 
 Continue with focused reviews after each slice, but defer the overall
 architecture and code-ownership refactor until after Milestone 8.
