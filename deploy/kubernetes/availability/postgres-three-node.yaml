@@ -9,6 +9,9 @@ metadata:
 spec:
   instances: 3
   failoverDelay: 5
+  stopDelay: 30
+  smartShutdownTimeout: 15
+  switchoverDelay: 30
   bootstrap:
     initdb:
       database: mill

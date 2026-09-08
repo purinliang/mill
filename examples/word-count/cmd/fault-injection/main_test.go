@@ -112,6 +112,29 @@ func TestDelayHoldsOnlyTheInitialWaveThenDelegates(t *testing.T) {
 	}
 }
 
+func TestAvailabilityDelayKeepsInitialWaveActive(t *testing.T) {
+	root := t.TempDir()
+	for shard := 0; shard < 5; shard++ {
+		inv := testInvocation(t, root, "availability")
+		inv.ShardIndex = shard
+		args, err := inv.CommandArgs()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var pauses []time.Duration
+		if err := run(args, root, func(delay time.Duration) { pauses = append(pauses, delay) }, func([]string) error { return nil }); err != nil {
+			t.Fatal(err)
+		}
+		if shard < 3 {
+			if len(pauses) != 1 || pauses[0] != 120*time.Second {
+				t.Fatalf("shard %d pauses = %v, want [2m0s]", shard, pauses)
+			}
+		} else if len(pauses) != 0 {
+			t.Fatalf("shard %d unexpectedly paused: %v", shard, pauses)
+		}
+	}
+}
+
 func testInvocation(t *testing.T, root, mode string) workload.Invocation {
 	t.Helper()
 	return workload.Invocation{JobID: "job", TaskID: "task", ShardIndex: 0,

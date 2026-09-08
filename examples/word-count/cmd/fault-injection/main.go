@@ -32,14 +32,19 @@ func run(args []string, markerRoot string, pause func(time.Duration), execute fu
 	if err != nil {
 		return err
 	}
-	if len(invocation.ExecutableArgs) != 1 || (invocation.ExecutableArgs[0] != "once" && invocation.ExecutableArgs[0] != "always" && invocation.ExecutableArgs[0] != "delay") {
-		return errors.New("fault-injection expects -- once, -- always, or -- delay")
+	if len(invocation.ExecutableArgs) != 1 || (invocation.ExecutableArgs[0] != "once" && invocation.ExecutableArgs[0] != "always" && invocation.ExecutableArgs[0] != "delay" && invocation.ExecutableArgs[0] != "availability") {
+		return errors.New("fault-injection expects -- once, -- always, -- delay, or -- availability")
 	}
 	mode := invocation.ExecutableArgs[0]
 	// Keep the initial wave alive long enough for the restart demo to kill and
 	// replace the coordinator. Later shards run normally to keep the demo short.
 	if mode == "delay" && invocation.ShardIndex < 3 {
 		pause(15 * time.Second)
+	}
+	// The multi-node acceptance exercise performs executor, Job-service, and
+	// database failovers against the same active wave.
+	if mode == "availability" && invocation.ShardIndex < 3 {
+		pause(120 * time.Second)
 	}
 	if invocation.ShardIndex == 0 {
 		fail := mode == "always"
