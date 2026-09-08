@@ -235,10 +235,11 @@ observation and never accesses Mill tables directly. A separate planner service
 is unjustified while planning is a bounded streaming operation inside the Job
 workflow.
 
-`internal/execution` now owns the backend-independent attempt model and the
-store contract consumed by the coordinator and Kubernetes adapter. HTTP
-submission, JSONL planning, and PostgreSQL implementation remain in
-`internal/job`; file count was not by itself a reason to split them.
+`internal/job` owns the job model, policy, workflow, and the ports required by
+that workflow. HTTP submission, JSONL planning, and job PostgreSQL persistence
+live in adapter subpackages. `internal/execution` owns the backend-independent
+attempt model and store contract; its PostgreSQL adapter owns durable attempt
+transitions, retries, fencing, and lease takeover.
 
 The versioned gRPC API is defined in
 `api/proto/mill/execution/v1/execution.proto`. It exposes the implemented lease
@@ -305,12 +306,12 @@ package refactor:
    Kubernetes Jobs being created.
 
 After step 5, the two-service system was reviewed before further feature work.
-The dependency direction and package ownership remained cohesive, so no broad
-refactor was justified. The review traced one submitted job through REST,
-planning, PostgreSQL, gRPC, reconciliation, Kubernetes, and output publication,
-then retained the existing boundaries. Do not split the planner, HTTP handling,
-or PostgreSQL repositories out of `internal/job` merely because the package
-contains several files.
+The review traced one submitted job through REST, planning, PostgreSQL, gRPC,
+reconciliation, Kubernetes, and output publication. A first learning-oriented
+refactor then made those boundaries visible in the package tree: the job core
+depends on `Store` and `Planner` ports, while HTTP, JSONL, and PostgreSQL remain
+adapters. Attempt persistence moved beside the execution domain. These package
+boundaries do not create additional deployed services.
 
 This checkpoint demonstrates execution-process availability and a real service
 boundary. It does not demonstrate complete infrastructure availability. A Job
@@ -320,10 +321,11 @@ Single-node kind remains a node-level failure point until the multi-node stage.
 
 ### Refactor checkpoint
 
-Perform one overall architecture and code-ownership refactor after the
-three-node quorum milestone. Waiting until Milestone 8 provides evidence from
-process failure, deployed Pods, controlled primary/standby promotion, physical
-node loss, and minority isolation before reshaping the code.
+The first refactor checkpoint follows the Milestone 7 test expansion and makes
+existing service boundaries easier to learn. Perform a second overall review
+after the three-node quorum milestone. Milestone 8 should provide evidence from
+process failure, controlled database promotion, physical node loss, and
+minority isolation before another broad reshaping of the code.
 
 Begin with a package/dependency inventory and an end-to-end walkthrough.
 Review service composition, lifecycle and shutdown, package ownership,

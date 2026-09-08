@@ -15,15 +15,6 @@ const (
 	StateFailed    State = "failed"
 )
 
-type AttemptState = execution.AttemptState
-
-const (
-	AttemptStateStarting  = execution.AttemptStateStarting
-	AttemptStateRunning   = execution.AttemptStateRunning
-	AttemptStateCompleted = execution.AttemptStateCompleted
-	AttemptStateFailed    = execution.AttemptStateFailed
-)
-
 type Executable = execution.Executable
 
 type InputSpec struct {
@@ -75,7 +66,3 @@ type Result struct {
 	AttemptID  string `json:"attempt_id"`
 	URI        string `json:"uri"`
 }
-
-type Attempt = execution.Attempt
-
-type ClaimedAttempt = execution.ClaimedAttempt

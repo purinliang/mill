@@ -1,4 +1,4 @@
-package job
+package httpapi
 
 import (
 	"context"
@@ -9,27 +9,29 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/purinliang/mill/internal/job"
 	"time"
 )
 
 const testJobID = "0198b7c9-1d24-7000-8000-000000000001"
 
 type fakeStore struct {
-	create func(context.Context, string, Submission) (Job, bool, error)
-	get    func(context.Context, string) (Job, error)
+	create func(context.Context, string, job.Submission) (job.Job, bool, error)
+	get    func(context.Context, string) (job.Job, error)
 }
 
-func (s fakeStore) Create(ctx context.Context, key string, submission Submission) (Job, bool, error) {
+func (s fakeStore) Create(ctx context.Context, key string, submission job.Submission) (job.Job, bool, error) {
 	return s.create(ctx, key, submission)
 }
 
-func (s fakeStore) Get(ctx context.Context, id string) (Job, error) {
+func (s fakeStore) Get(ctx context.Context, id string) (job.Job, error) {
 	return s.get(ctx, id)
 }
 
 func TestCreateJob(t *testing.T) {
 	store := fakeStore{
-		create: func(_ context.Context, key string, submission Submission) (Job, bool, error) {
+		create: func(_ context.Context, key string, submission job.Submission) (job.Job, bool, error) {
 			if key != "request-001" {
 				t.Errorf("idempotency key = %q, want %q", key, "request-001")
 			}
@@ -58,7 +60,7 @@ func TestCreateJob(t *testing.T) {
 		t.Errorf("Location = %q, want %q", location, "/jobs/"+testJobID)
 	}
 
-	var got Job
+	var got job.Job
 	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -72,7 +74,7 @@ func TestCreateJob(t *testing.T) {
 
 func TestCreateJobReplay(t *testing.T) {
 	store := fakeStore{
-		create: func(context.Context, string, Submission) (Job, bool, error) {
+		create: func(context.Context, string, job.Submission) (job.Job, bool, error) {
 			return exampleJob(), false, nil
 		},
 	}
@@ -89,8 +91,8 @@ func TestCreateJobReplay(t *testing.T) {
 
 func TestCreateJobConflict(t *testing.T) {
 	store := fakeStore{
-		create: func(context.Context, string, Submission) (Job, bool, error) {
-			return Job{}, false, ErrIdempotencyConflict
+		create: func(context.Context, string, job.Submission) (job.Job, bool, error) {
+			return job.Job{}, false, job.ErrIdempotencyConflict
 		},
 	}
 
@@ -102,8 +104,8 @@ func TestCreateJobConflict(t *testing.T) {
 func TestCreateJobInputErrors(t *testing.T) {
 	t.Run("invalid input", func(t *testing.T) {
 		store := fakeStore{
-			create: func(context.Context, string, Submission) (Job, bool, error) {
-				return Job{}, false, &ValidationError{Field: "input record 0", Problem: "must be valid JSON"}
+			create: func(context.Context, string, job.Submission) (job.Job, bool, error) {
+				return job.Job{}, false, &job.ValidationError{Field: "input record 0", Problem: "must be valid JSON"}
 			},
 		}
 		response := serveValidCreate(store)
@@ -112,8 +114,8 @@ func TestCreateJobInputErrors(t *testing.T) {
 
 	t.Run("input changed after planning", func(t *testing.T) {
 		store := fakeStore{
-			create: func(context.Context, string, Submission) (Job, bool, error) {
-				return Job{}, false, ErrInputConflict
+			create: func(context.Context, string, job.Submission) (job.Job, bool, error) {
+				return job.Job{}, false, job.ErrInputConflict
 			},
 		}
 		response := serveValidCreate(store)
@@ -123,9 +125,9 @@ func TestCreateJobInputErrors(t *testing.T) {
 
 func TestCreateJobValidation(t *testing.T) {
 	unusedStore := fakeStore{
-		create: func(context.Context, string, Submission) (Job, bool, error) {
+		create: func(context.Context, string, job.Submission) (job.Job, bool, error) {
 			t.Fatal("store was called for an invalid request")
-			return Job{}, false, nil
+			return job.Job{}, false, nil
 		},
 	}
 
@@ -203,7 +205,7 @@ func TestCreateJobValidation(t *testing.T) {
 
 func TestGetJob(t *testing.T) {
 	store := fakeStore{
-		get: func(_ context.Context, id string) (Job, error) {
+		get: func(_ context.Context, id string) (job.Job, error) {
 			if id != testJobID {
 				t.Errorf("job ID = %q, want %q", id, testJobID)
 			}
@@ -220,17 +222,17 @@ func TestGetJob(t *testing.T) {
 
 func TestGetJobErrors(t *testing.T) {
 	t.Run("invalid ID", func(t *testing.T) {
-		store := fakeStore{get: func(context.Context, string) (Job, error) {
+		store := fakeStore{get: func(context.Context, string) (job.Job, error) {
 			t.Fatal("store was called for an invalid ID")
-			return Job{}, nil
+			return job.Job{}, nil
 		}}
 		response := serveRequest(store, http.MethodGet, "/jobs/not-a-uuid", "", nil)
 		assertErrorResponse(t, response, http.StatusBadRequest, "invalid_job_id")
 	})
 
 	t.Run("not found", func(t *testing.T) {
-		store := fakeStore{get: func(context.Context, string) (Job, error) {
-			return Job{}, ErrNotFound
+		store := fakeStore{get: func(context.Context, string) (job.Job, error) {
+			return job.Job{}, job.ErrNotFound
 		}}
 		response := serveRequest(store, http.MethodGet, "/jobs/"+testJobID, "", nil)
 		assertErrorResponse(t, response, http.StatusNotFound, "job_not_found")
@@ -288,17 +290,17 @@ func assertErrorResponse(t *testing.T, response *httptest.ResponseRecorder, stat
 	}
 }
 
-func exampleJob() Job {
+func exampleJob() job.Job {
 	timestamp := time.Date(2026, time.September, 4, 2, 0, 0, 0, time.UTC)
-	return Job{
+	return job.Job{
 		ID:    testJobID,
-		State: StatePreparing,
-		Executable: Executable{
+		State: job.StatePreparing,
+		Executable: job.Executable{
 			Image: "mill/example:dev",
 			Args:  []string{},
 		},
-		Input:       Input{URI: "file:///data/records.jsonl"},
-		Output:      Output{URI: "file:///var/lib/mill/output/jobs/" + testJobID + "/"},
+		Input:       job.Input{URI: "file:///data/records.jsonl"},
+		Output:      job.Output{URI: "file:///var/lib/mill/output/jobs/" + testJobID + "/"},
 		Parallelism: 3,
 		CreatedAt:   timestamp,
 		UpdatedAt:   timestamp,

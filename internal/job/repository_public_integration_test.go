@@ -11,7 +11,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/purinliang/mill/internal/execution"
+	executionpostgres "github.com/purinliang/mill/internal/execution/postgres"
 	"github.com/purinliang/mill/internal/job"
+	"github.com/purinliang/mill/internal/job/jsonl"
+	jobpostgres "github.com/purinliang/mill/internal/job/postgres"
 )
 
 const (
@@ -162,7 +166,7 @@ func TestPublicRepositoryValidationContracts(t *testing.T) {
 			requireInvalidArgument(t, operation())
 		})
 	}
-	if _, err := job.NewRepository(pool, "s3://mill-output"); err != nil {
+	if _, err := jobpostgres.NewRepository(pool, "s3://mill-output"); err != nil {
 		t.Fatalf("NewRepository rejected an S3 bucket output root: %v", err)
 	}
 }
@@ -195,16 +199,16 @@ func TestPublicRepositoryNotFoundAndSubmissionLookup(t *testing.T) {
 	if _, err := repository.Materialize(ctx, missingUUID, publicPlan()); !errors.Is(err, job.ErrNotFound) {
 		t.Fatalf("Materialize missing error = %v", err)
 	}
-	if _, err := repository.GetAttempt(ctx, missingUUID); !errors.Is(err, job.ErrAttemptNotFound) {
+	if _, err := repository.GetAttempt(ctx, missingUUID); !errors.Is(err, execution.ErrAttemptNotFound) {
 		t.Fatalf("GetAttempt missing error = %v", err)
 	}
-	if _, err := repository.MarkAttemptRunning(ctx, missingUUID, missingUUID, "job-uid"); !errors.Is(err, job.ErrAttemptNotFound) {
+	if _, err := repository.MarkAttemptRunning(ctx, missingUUID, missingUUID, "job-uid"); !errors.Is(err, execution.ErrAttemptNotFound) {
 		t.Fatalf("MarkAttemptRunning missing error = %v", err)
 	}
-	if _, err := repository.CompleteAttempt(ctx, missingUUID, missingUUID); !errors.Is(err, job.ErrAttemptNotFound) {
+	if _, err := repository.CompleteAttempt(ctx, missingUUID, missingUUID); !errors.Is(err, execution.ErrAttemptNotFound) {
 		t.Fatalf("CompleteAttempt missing error = %v", err)
 	}
-	if _, err := repository.FailAttempt(ctx, missingUUID, missingUUID, "failed"); !errors.Is(err, job.ErrAttemptNotFound) {
+	if _, err := repository.FailAttempt(ctx, missingUUID, missingUUID, "failed"); !errors.Is(err, execution.ErrAttemptNotFound) {
 		t.Fatalf("FailAttempt missing error = %v", err)
 	}
 	results, err := repository.CompletedResults(ctx, missingUUID)
@@ -219,12 +223,12 @@ func TestPublicRepositorySurfacesDatabaseUnavailability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repository, err := job.NewRepository(pool, "file:///tmp/mill-public-output")
+	repository, err := newPublicRepositories(pool)
 	if err != nil {
 		pool.Close()
 		t.Fatal(err)
 	}
-	service, err := job.NewService(repository, job.JSONLPartitioner{}, 1)
+	service, err := job.NewService(repository, jsonl.Planner{}, 1)
 	if err != nil {
 		pool.Close()
 		t.Fatal(err)
@@ -307,10 +311,10 @@ func TestPublicAttemptLeaseExpiryAndStartingTransition(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(1100 * time.Millisecond)
-	if _, err := repository.MarkAttemptRunning(ctx, claimed.Attempt.ID, claimed.Attempt.LeaseToken, "job-uid"); !errors.Is(err, job.ErrAttemptLeaseLost) {
+	if _, err := repository.MarkAttemptRunning(ctx, claimed.Attempt.ID, claimed.Attempt.LeaseToken, "job-uid"); !errors.Is(err, execution.ErrAttemptLeaseLost) {
 		t.Fatalf("MarkAttemptRunning after expiry error = %v", err)
 	}
-	if _, err := repository.CompleteAttempt(ctx, claimed.Attempt.ID, claimed.Attempt.LeaseToken); !errors.Is(err, job.ErrAttemptLeaseLost) {
+	if _, err := repository.CompleteAttempt(ctx, claimed.Attempt.ID, claimed.Attempt.LeaseToken); !errors.Is(err, execution.ErrAttemptLeaseLost) {
 		t.Fatalf("CompleteAttempt after expiry error = %v", err)
 	}
 
@@ -318,7 +322,7 @@ func TestPublicAttemptLeaseExpiryAndStartingTransition(t *testing.T) {
 	if err != nil || len(renewed) != 1 {
 		t.Fatalf("LeaseActiveAttempts = %+v, %v", renewed, err)
 	}
-	if _, err := repository.CompleteAttempt(ctx, renewed[0].Attempt.ID, renewed[0].Attempt.LeaseToken); !errors.Is(err, job.ErrInvalidAttemptTransition) {
+	if _, err := repository.CompleteAttempt(ctx, renewed[0].Attempt.ID, renewed[0].Attempt.LeaseToken); !errors.Is(err, execution.ErrInvalidAttemptTransition) {
 		t.Fatalf("CompleteAttempt from starting error = %v", err)
 	}
 	if _, err := repository.FailAttempt(ctx, renewed[0].Attempt.ID, renewed[0].Attempt.LeaseToken, "creation failed"); err != nil {
@@ -343,7 +347,7 @@ func TestPublicMaterializationReplayRejectsChangedShardCount(t *testing.T) {
 	}
 }
 
-func newPublicRepository(t *testing.T) (*job.Repository, *pgxpool.Pool, string) {
+func newPublicRepository(t *testing.T) (*publicRepositories, *pgxpool.Pool, string) {
 	t.Helper()
 	pool, err := pgxpool.New(context.Background(), publicDatabaseURL(t))
 	if err != nil {
@@ -360,11 +364,120 @@ func newPublicRepository(t *testing.T) (*job.Repository, *pgxpool.Pool, string) 
 			t.Errorf("delete test job: %v", err)
 		}
 	})
-	repository, err := job.NewRepository(pool, "file:///tmp/mill-public-output")
+	repository, err := newPublicRepositories(pool)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return repository, pool, key
+}
+
+type publicRepositories struct {
+	jobs      *jobpostgres.Repository
+	execution *executionpostgres.Repository
+}
+
+func newPublicRepositories(pool *pgxpool.Pool) (*publicRepositories, error) {
+	jobs, err := jobpostgres.NewRepository(
+		pool,
+		"file:///tmp/mill-public-output",
+	)
+	if err != nil {
+		return nil, err
+	}
+	attempts, err := executionpostgres.NewRepository(pool)
+	if err != nil {
+		return nil, err
+	}
+	return &publicRepositories{jobs: jobs, execution: attempts}, nil
+}
+
+func (r *publicRepositories) FindSubmission(
+	ctx context.Context,
+	key string,
+	submission job.Submission,
+) (job.Job, bool, error) {
+	return r.jobs.FindSubmission(ctx, key, submission)
+}
+
+func (r *publicRepositories) Create(
+	ctx context.Context,
+	key string,
+	submission job.Submission,
+	digest string,
+	recordCount int64,
+	parallelism int,
+) (job.Job, bool, error) {
+	return r.jobs.Create(
+		ctx,
+		key,
+		submission,
+		digest,
+		recordCount,
+		parallelism,
+	)
+}
+
+func (r *publicRepositories) Materialize(
+	ctx context.Context,
+	id string,
+	plan job.PartitionPlan,
+) (job.Job, error) {
+	return r.jobs.Materialize(ctx, id, plan)
+}
+
+func (r *publicRepositories) Get(ctx context.Context, id string) (job.Job, error) {
+	return r.jobs.Get(ctx, id)
+}
+
+func (r *publicRepositories) CompletedResults(
+	ctx context.Context,
+	id string,
+) ([]job.Result, error) {
+	return r.jobs.CompletedResults(ctx, id)
+}
+
+func (r *publicRepositories) ClaimNextAttempt(
+	ctx context.Context,
+	executor, owner string,
+	duration time.Duration,
+) (execution.ClaimedAttempt, error) {
+	return r.execution.ClaimNextAttempt(ctx, executor, owner, duration)
+}
+
+func (r *publicRepositories) GetAttempt(
+	ctx context.Context,
+	id string,
+) (execution.Attempt, error) {
+	return r.execution.GetAttempt(ctx, id)
+}
+
+func (r *publicRepositories) MarkAttemptRunning(
+	ctx context.Context,
+	id, token, externalID string,
+) (execution.Attempt, error) {
+	return r.execution.MarkAttemptRunning(ctx, id, token, externalID)
+}
+
+func (r *publicRepositories) CompleteAttempt(
+	ctx context.Context,
+	id, token string,
+) (execution.Attempt, error) {
+	return r.execution.CompleteAttempt(ctx, id, token)
+}
+
+func (r *publicRepositories) FailAttempt(
+	ctx context.Context,
+	id, token, message string,
+) (execution.Attempt, error) {
+	return r.execution.FailAttempt(ctx, id, token, message)
+}
+
+func (r *publicRepositories) LeaseActiveAttempts(
+	ctx context.Context,
+	executor, owner string,
+	duration time.Duration,
+) ([]execution.ClaimedAttempt, error) {
+	return r.execution.LeaseActiveAttempts(ctx, executor, owner, duration)
 }
 
 func publicDatabaseURL(t *testing.T) string {
@@ -393,9 +506,11 @@ func publicPlan() job.PartitionPlan {
 
 func requireInvalidArgument(t *testing.T, err error) {
 	t.Helper()
-	var validationError *job.ValidationError
+	var validationError interface {
+		InvalidArgument() bool
+	}
 	if !errors.As(err, &validationError) {
-		t.Fatalf("error = %v (%T), want *job.ValidationError", err, err)
+		t.Fatalf("error = %v (%T), want invalid-argument error", err, err)
 	}
 	if !validationError.InvalidArgument() {
 		t.Fatal("ValidationError did not classify itself as an invalid argument")

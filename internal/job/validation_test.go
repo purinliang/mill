@@ -6,7 +6,7 @@ import (
 )
 
 func TestNormalizeSubmission(t *testing.T) {
-	submission, err := normalizeSubmission(Submission{
+	submission, err := NormalizeSubmission(Submission{
 		Executable: Executable{Image: "mill/example:dev"},
 		Input:      InputSpec{URI: "file:///data/example/../records.jsonl"},
 	})
@@ -72,7 +72,7 @@ func TestNormalizeSubmissionRejectsInvalidFields(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := normalizeSubmission(test.submission); err == nil {
+			if _, err := NormalizeSubmission(test.submission); err == nil {
 				t.Fatal("normalize submission succeeded, want an error")
 			}
 		})
@@ -81,18 +81,18 @@ func TestNormalizeSubmissionRejectsInvalidFields(t *testing.T) {
 
 func TestValidateIdempotencyKey(t *testing.T) {
 	for _, key := range []string{"", " key", "key ", strings.Repeat("x", maxIdempotencyKeyBytes+1)} {
-		if err := validateIdempotencyKey(key); err == nil {
-			t.Errorf("validateIdempotencyKey(%q) succeeded, want an error", key)
+		if err := ValidateIdempotencyKey(key); err == nil {
+			t.Errorf("ValidateIdempotencyKey(%q) succeeded, want an error", key)
 		}
 	}
 
-	if err := validateIdempotencyKey("client-request:001"); err != nil {
+	if err := ValidateIdempotencyKey("client-request:001"); err != nil {
 		t.Fatalf("validate valid key: %v", err)
 	}
 }
 
 func TestNormalizeOutputRootAndDeriveOutputURI(t *testing.T) {
-	root, err := normalizeOutputRootURI("file:///var/lib/mill/output/")
+	root, err := NormalizeOutputRootURI("file:///var/lib/mill/output/")
 	if err != nil {
 		t.Fatalf("normalize output root: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestNormalizeOutputRootAndDeriveOutputURI(t *testing.T) {
 		t.Fatalf("root = %q, want %q", root, "file:///var/lib/mill/output")
 	}
 
-	outputURI, err := deriveOutputRootURI(root, "0198b7c9-1d24-7000-8000-000000000001")
+	outputURI, err := DeriveOutputRootURI(root, "0198b7c9-1d24-7000-8000-000000000001")
 	if err != nil {
 		t.Fatalf("derive output URI: %v", err)
 	}
@@ -109,14 +109,14 @@ func TestNormalizeOutputRootAndDeriveOutputURI(t *testing.T) {
 		t.Fatalf("output URI = %q, want %q", outputURI, want)
 	}
 
-	s3Root, err := normalizeOutputRootURI("s3://mill-results/prefix/")
+	s3Root, err := NormalizeOutputRootURI("s3://mill-results/prefix/")
 	if err != nil {
 		t.Fatalf("normalize S3 output root: %v", err)
 	}
 	if s3Root != "s3://mill-results/prefix" {
 		t.Fatalf("S3 root = %q", s3Root)
 	}
-	s3Output, err := deriveOutputRootURI(s3Root, "0198b7c9-1d24-7000-8000-000000000001")
+	s3Output, err := DeriveOutputRootURI(s3Root, "0198b7c9-1d24-7000-8000-000000000001")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestNormalizeOutputRootRejectsUnsafeLocations(t *testing.T) {
 		"file:///output?mode=test",
 	} {
 		t.Run(uri, func(t *testing.T) {
-			if _, err := normalizeOutputRootURI(uri); err == nil {
+			if _, err := NormalizeOutputRootURI(uri); err == nil {
 				t.Fatal("normalize output root succeeded, want an error")
 			}
 		})
@@ -142,11 +142,11 @@ func TestNormalizeOutputRootRejectsUnsafeLocations(t *testing.T) {
 }
 
 func TestValidJobID(t *testing.T) {
-	if !validJobID("0198b7c9-1d24-7000-8000-000000000001") {
+	if !ValidID("0198b7c9-1d24-7000-8000-000000000001") {
 		t.Fatal("valid UUID was rejected")
 	}
 	for _, id := range []string{"", "not-a-uuid", "0198b7c91d2470008000000000000001"} {
-		if validJobID(id) {
+		if ValidID(id) {
 			t.Errorf("invalid UUID %q was accepted", id)
 		}
 	}

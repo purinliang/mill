@@ -1,4 +1,4 @@
-package job_test
+package httpapi_test
 
 import (
 	"context"
@@ -15,6 +15,7 @@ import (
 
 	"github.com/purinliang/mill/internal/execution"
 	"github.com/purinliang/mill/internal/job"
+	"github.com/purinliang/mill/internal/job/httpapi"
 )
 
 const publicTestJobID = "0199c123-4567-7000-8000-000000000001"
@@ -87,7 +88,7 @@ func TestHandlerUsesDefaultLoggerWhenNoneIsProvided(t *testing.T) {
 		return job.Job{ID: publicTestJobID, State: job.StateRunning}, nil
 	}}
 	mux := http.NewServeMux()
-	job.NewHandler(store, nil).RegisterRoutes(mux)
+	httpapi.NewHandler(store, nil).RegisterRoutes(mux)
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/jobs/"+publicTestJobID, nil))
 	if response.Code != http.StatusOK {
@@ -167,7 +168,7 @@ func TestHTTPAPIHidesUnexpectedStoreErrors(t *testing.T) {
 	}
 }
 
-func servePublicJobRequest(t *testing.T, store job.Store, method, target, body string, headers map[string]string) *httptest.ResponseRecorder {
+func servePublicJobRequest(t *testing.T, store httpapi.Store, method, target, body string, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 	request := httptest.NewRequest(method, target, strings.NewReader(body))
 	for name, value := range headers {
@@ -176,10 +177,10 @@ func servePublicJobRequest(t *testing.T, store job.Store, method, target, body s
 	return servePublicJobHTTP(t, store, request)
 }
 
-func servePublicJobHTTP(t *testing.T, store job.Store, request *http.Request) *httptest.ResponseRecorder {
+func servePublicJobHTTP(t *testing.T, store httpapi.Store, request *http.Request) *httptest.ResponseRecorder {
 	t.Helper()
 	mux := http.NewServeMux()
-	job.NewHandler(store, log.New(io.Discard, "", 0)).RegisterRoutes(mux)
+	httpapi.NewHandler(store, log.New(io.Discard, "", 0)).RegisterRoutes(mux)
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, request)
 	return response

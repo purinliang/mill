@@ -1,12 +1,22 @@
-package job
+package postgres
 
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/url"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	jobmodel "github.com/purinliang/mill/internal/job"
+	"github.com/purinliang/mill/internal/job/jsonl"
+	jobpostgres "github.com/purinliang/mill/internal/job/postgres"
 )
 
 const testLeaseOwner = "test-executor"
@@ -37,7 +47,7 @@ func TestAttemptSuccessfulLifecycle(t *testing.T) {
 	}
 
 	progress := getAttemptTestJob(t, repository, job.ID)
-	if progress.Progress != (Progress{Total: 1, Running: 1}) {
+	if progress.Progress != (jobmodel.Progress{Total: 1, Running: 1}) {
 		t.Errorf("claimed progress = %+v, want one running task", progress.Progress)
 	}
 	if _, err := repository.ClaimNextAttempt(context.Background(), "docker", testLeaseOwner, testLeaseDuration); !errors.Is(err, ErrNoTaskAvailable) {
@@ -73,7 +83,7 @@ func TestAttemptSuccessfulLifecycle(t *testing.T) {
 	}
 
 	finishedJob := getAttemptTestJob(t, repository, job.ID)
-	if finishedJob.State != StateCompleted || finishedJob.Progress != (Progress{Total: 1, Completed: 1}) {
+	if finishedJob.State != jobmodel.StateCompleted || finishedJob.Progress != (jobmodel.Progress{Total: 1, Completed: 1}) {
 		t.Errorf("finished job = state %q progress %+v, want completed", finishedJob.State, finishedJob.Progress)
 	}
 }
@@ -97,7 +107,7 @@ func TestAttemptCanFailBeforeExternalExecutionStarts(t *testing.T) {
 	}
 
 	failedJob := getAttemptTestJob(t, repository, job.ID)
-	if failedJob.State != StateRunning || failedJob.Progress != (Progress{Total: 1, Pending: 1}) {
+	if failedJob.State != jobmodel.StateRunning || failedJob.Progress != (jobmodel.Progress{Total: 1, Pending: 1}) {
 		t.Errorf("job after attempt failure = state %q progress %+v, want running with pending retry", failedJob.State, failedJob.Progress)
 	}
 	if _, err := repository.MarkAttemptRunning(context.Background(), failed.ID, failed.LeaseToken, "container-001"); !errors.Is(err, ErrInvalidAttemptTransition) {
@@ -181,12 +191,33 @@ func TestConcurrentAttemptCompletionFinalizesJob(t *testing.T) {
 	}
 
 	finishedJob := getAttemptTestJob(t, repository, job.ID)
-	if finishedJob.State != StateCompleted || finishedJob.Progress != (Progress{Total: 2, Completed: 2}) {
+	if finishedJob.State != jobmodel.StateCompleted || finishedJob.Progress != (jobmodel.Progress{Total: 2, Completed: 2}) {
 		t.Errorf("finished job = state %q progress %+v, want two completed tasks", finishedJob.State, finishedJob.Progress)
 	}
 }
 
-func createAttemptTestJob(t *testing.T, key string, records, parallelism int) (*Repository, Job) {
+type testRepositories struct {
+	*Repository
+	database *pgxpool.Pool
+	jobs     *jobpostgres.Repository
+}
+
+func (r *testRepositories) Get(ctx context.Context, id string) (jobmodel.Job, error) {
+	return r.jobs.Get(ctx, id)
+}
+
+func (r *testRepositories) CompletedResults(
+	ctx context.Context,
+	id string,
+) ([]jobmodel.Result, error) {
+	return r.jobs.CompletedResults(ctx, id)
+}
+
+func createAttemptTestJob(
+	t *testing.T,
+	key string,
+	records, parallelism int,
+) (*testRepositories, jobmodel.Job) {
 	t.Helper()
 	pool := openIntegrationDatabase(t, integrationDatabaseURL(t))
 	t.Cleanup(pool.Close)
@@ -195,17 +226,24 @@ func createAttemptTestJob(t *testing.T, key string, records, parallelism int) (*
 
 	inputFilename := filepath.Join(t.TempDir(), "records.jsonl")
 	writeTestJSONL(t, inputFilename, records)
-	repository, err := NewRepository(pool, "file:///tmp/mill-attempt-output")
+	jobStore, err := jobpostgres.NewRepository(
+		pool,
+		"file:///tmp/mill-attempt-output",
+	)
 	if err != nil {
-		t.Fatalf("create repository: %v", err)
+		t.Fatalf("create job repository: %v", err)
 	}
-	service, err := NewService(repository, JSONLPartitioner{}, parallelism)
+	executionStore, err := NewRepository(pool)
 	if err != nil {
-		t.Fatalf("create service: %v", err)
+		t.Fatalf("create execution repository: %v", err)
 	}
-	createdJob, created, err := service.Create(context.Background(), key, Submission{
-		Executable: Executable{Image: "mill/jsonl-copy:dev"},
-		Input:      InputSpec{URI: fileURI(inputFilename)},
+	service, err := jobmodel.NewService(jobStore, jsonl.Planner{}, parallelism)
+	if err != nil {
+		t.Fatalf("create job service: %v", err)
+	}
+	createdJob, created, err := service.Create(context.Background(), key, jobmodel.Submission{
+		Executable: jobmodel.Executable{Image: "mill/jsonl-copy:dev"},
+		Input:      jobmodel.InputSpec{URI: fileURI(inputFilename)},
 	})
 	if err != nil {
 		t.Fatalf("create materialized job: %v", err)
@@ -213,14 +251,73 @@ func createAttemptTestJob(t *testing.T, key string, records, parallelism int) (*
 	if !created {
 		t.Fatal("created = false, want true")
 	}
-	return repository, createdJob
+	return &testRepositories{
+		Repository: executionStore,
+		database:   pool,
+		jobs:       jobStore,
+	}, createdJob
 }
 
-func getAttemptTestJob(t *testing.T, repository *Repository, jobID string) Job {
+func getAttemptTestJob(
+	t *testing.T,
+	repository *testRepositories,
+	jobID string,
+) jobmodel.Job {
 	t.Helper()
 	job, err := repository.Get(context.Background(), jobID)
 	if err != nil {
 		t.Fatalf("get job: %v", err)
 	}
 	return job
+}
+
+func integrationDatabaseURL(t *testing.T) string {
+	t.Helper()
+	databaseURL := os.Getenv("MILL_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("MILL_TEST_DATABASE_URL is not set")
+	}
+	return databaseURL
+}
+
+func openIntegrationDatabase(t *testing.T, databaseURL string) *pgxpool.Pool {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("create integration database pool: %v", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		t.Fatalf("ping integration database: %v", err)
+	}
+	return pool
+}
+
+func deleteJobByKey(t *testing.T, pool *pgxpool.Pool, key string) {
+	t.Helper()
+	if _, err := pool.Exec(
+		context.Background(),
+		"DELETE FROM public.jobs WHERE idempotency_key = $1",
+		key,
+	); err != nil {
+		t.Fatalf("delete integration test job: %v", err)
+	}
+}
+
+func writeTestJSONL(t *testing.T, filename string, records int) {
+	t.Helper()
+	var contents strings.Builder
+	for index := range records {
+		fmt.Fprintf(&contents, `{"record":%d}`+"\n", index)
+	}
+	if err := os.WriteFile(filename, []byte(contents.String()), 0o600); err != nil {
+		t.Fatalf("write test JSONL: %v", err)
+	}
+}
+
+func fileURI(filename string) string {
+	return (&url.URL{Scheme: "file", Path: filename}).String()
 }

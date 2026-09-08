@@ -574,13 +574,15 @@ examples/word-count/
   record-config.json              deterministic grouping configuration
   job.yaml.template               manual single-task manifest template
 internal/job/
-  model.go                        public job/submission model
-  validation.go                   submission and URI normalization
-  partition.go                    streaming JSONL logical-shard planner
-  repository.go                   PostgreSQL job/task persistence
-  attempt_repository.go           claims, fenced transitions, and retry policy
-  execution_repository.go         lease renewal/takeover and successful results
-  handler.go                      HTTP transport
+  model.go                        public job and submission model
+  ports.go                        job storage and dataset-planning boundaries
+  service.go                      job creation and status workflow
+  validation.go                   submission and URI rules
+  httpapi/handler.go              REST submission and status adapter
+  jsonl/planner.go                streaming logical-shard planner
+  postgres/repository.go          job repository construction
+  postgres/jobs.go                durable job and task persistence
+  postgres/results.go             successful output queries
 internal/execution/
   model.go                        runtime-neutral attempt and executable model
   store.go                        durable execution-state contract
@@ -588,6 +590,10 @@ internal/execution/
     coordinator.go                observe active attempts and fill free slots
   kubernetes/
     runtime.go                    create and observe native Kubernetes Jobs
+  postgres/
+    repository.go                 execution repository construction
+    attempts.go                   claims, transitions, and retry policy
+    attempt_ownership.go          lease renewal and fenced takeover
   rpc/
     client.go                     deadline-bound execution Store client
     server.go                     Job-side backend and gRPC status mapping

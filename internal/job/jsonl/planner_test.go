@@ -1,4 +1,4 @@
-package job
+package jsonl
 
 import (
 	"bytes"
@@ -22,7 +22,7 @@ func (m memoryInput) Open(context.Context, string) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(m.contents)), nil
 }
 
-func TestJSONLPartitionerCreatesContiguousLogicalShards(t *testing.T) {
+func TestPlannerCreatesContiguousLogicalShards(t *testing.T) {
 	filename := filepath.Join(t.TempDir(), "records with spaces.jsonl")
 	var input strings.Builder
 	for index := range 100 {
@@ -33,7 +33,7 @@ func TestJSONLPartitionerCreatesContiguousLogicalShards(t *testing.T) {
 		t.Fatalf("write JSONL input: %v", err)
 	}
 
-	plan, err := (JSONLPartitioner{}).Plan(context.Background(), fileURI(filename), 3)
+	plan, err := (Planner{}).Plan(context.Background(), fileURI(filename), 3)
 	if err != nil {
 		t.Fatalf("plan logical shards: %v", err)
 	}
@@ -72,12 +72,12 @@ func TestJSONLPartitionerCreatesContiguousLogicalShards(t *testing.T) {
 	}
 }
 
-func TestJSONLPartitionerUsesAtMostOneShardPerRecord(t *testing.T) {
+func TestPlannerUsesAtMostOneShardPerRecord(t *testing.T) {
 	filename := filepath.Join(t.TempDir(), "small.jsonl")
 	if err := os.WriteFile(filename, []byte("1\n2\n"), 0o600); err != nil {
 		t.Fatalf("write JSONL input: %v", err)
 	}
-	plan, err := (JSONLPartitioner{}).Plan(context.Background(), fileURI(filename), 3)
+	plan, err := (Planner{}).Plan(context.Background(), fileURI(filename), 3)
 	if err != nil {
 		t.Fatalf("plan logical shards: %v", err)
 	}
@@ -86,9 +86,9 @@ func TestJSONLPartitionerUsesAtMostOneShardPerRecord(t *testing.T) {
 	}
 }
 
-func TestJSONLPartitionerPlansS3ObjectThroughConfiguredStore(t *testing.T) {
+func TestPlannerPlansS3ObjectThroughConfiguredStore(t *testing.T) {
 	contents := []byte("{\"record\":1}\n{\"record\":2}\n")
-	partitioner := NewJSONLPartitioner(memoryInput{contents: contents})
+	partitioner := NewPlanner(memoryInput{contents: contents})
 	plan, err := partitioner.Plan(context.Background(), "s3://mill-input/records.jsonl", 1)
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestJSONLPartitionerPlansS3ObjectThroughConfiguredStore(t *testing.T) {
 	}
 }
 
-func TestJSONLPartitionerRejectsInvalidInput(t *testing.T) {
+func TestPlannerRejectsInvalidInput(t *testing.T) {
 	tests := map[string]string{
 		"empty file":   "",
 		"invalid JSON": "{\n",
@@ -111,15 +111,15 @@ func TestJSONLPartitionerRejectsInvalidInput(t *testing.T) {
 			if err := os.WriteFile(filename, []byte(contents), 0o600); err != nil {
 				t.Fatalf("write JSONL input: %v", err)
 			}
-			if _, err := (JSONLPartitioner{}).Plan(context.Background(), fileURI(filename), 3); err == nil {
+			if _, err := (Planner{}).Plan(context.Background(), fileURI(filename), 3); err == nil {
 				t.Fatal("plan logical shards succeeded, want an error")
 			}
 		})
 	}
 }
 
-func TestJSONLPartitionerRejectsInvalidLocationAndParallelism(t *testing.T) {
-	partitioner := JSONLPartitioner{}
+func TestPlannerRejectsInvalidLocationAndParallelism(t *testing.T) {
+	partitioner := Planner{}
 	for _, inputURI := range []string{
 		"file:///definitely/not/present/input.jsonl",
 		"s3://bucket/input.jsonl",

@@ -1,4 +1,4 @@
-package job_test
+package jsonl_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/purinliang/mill/internal/job"
+	"github.com/purinliang/mill/internal/job/jsonl"
 )
 
 type changingInput struct {
@@ -37,7 +38,7 @@ func TestPartitionPlanRejectsInputChangedBetweenScans(t *testing.T) {
 		"{\"record\":1}\n{\"record\":2}\n",
 		"{\"record\":1}\n{\"record\":3}\n",
 	}}
-	partitioner := job.NewJSONLPartitioner(input)
+	partitioner := jsonl.NewPlanner(input)
 
 	_, err := partitioner.Plan(context.Background(), "s3://mill-input/records.jsonl", 2)
 	if err == nil {
@@ -58,7 +59,7 @@ func TestPartitionPlanRejectsInputChangedBetweenScans(t *testing.T) {
 func TestPartitionPlanReportsSecondScanAndCancellationFailures(t *testing.T) {
 	t.Run("second open fails", func(t *testing.T) {
 		input := &changingThenFailingInput{contents: "{\"record\":1}\n"}
-		partitioner := job.NewJSONLPartitioner(input)
+		partitioner := jsonl.NewPlanner(input)
 
 		_, err := partitioner.Plan(context.Background(), "s3://mill-input/records.jsonl", 1)
 		if err == nil || !strings.Contains(err.Error(), "second scan failed") {
@@ -72,7 +73,7 @@ func TestPartitionPlanReportsSecondScanAndCancellationFailures(t *testing.T) {
 	t.Run("context already cancelled", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		partitioner := job.NewJSONLPartitioner(&changingInput{contents: []string{"{\"record\":1}\n"}})
+		partitioner := jsonl.NewPlanner(&changingInput{contents: []string{"{\"record\":1}\n"}})
 
 		_, err := partitioner.Plan(ctx, "s3://mill-input/records.jsonl", 1)
 		if !errors.Is(err, context.Canceled) {
@@ -81,7 +82,7 @@ func TestPartitionPlanReportsSecondScanAndCancellationFailures(t *testing.T) {
 	})
 
 	t.Run("input cannot be opened", func(t *testing.T) {
-		partitioner := job.NewJSONLPartitioner(failingInput{err: errors.New("storage unavailable")})
+		partitioner := jsonl.NewPlanner(failingInput{err: errors.New("storage unavailable")})
 
 		_, err := partitioner.Plan(context.Background(), "s3://mill-input/records.jsonl", 1)
 		if err == nil || !strings.Contains(err.Error(), "storage unavailable") {

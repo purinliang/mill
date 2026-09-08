@@ -1,4 +1,4 @@
-package job
+package postgres
 
 import (
 	"context"
@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	jobmodel "github.com/purinliang/mill/internal/job"
+	"github.com/purinliang/mill/internal/job/jsonl"
 )
 
 func TestAttemptLeaseRenewalAndFencedTakeover(t *testing.T) {
@@ -115,7 +118,7 @@ func TestCompletedJobStatusIncludesResults(t *testing.T) {
 	if _, err := repository.CompleteAttempt(ctx, a.Attempt.ID, a.Attempt.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
-	service, err := NewService(repository, JSONLPartitioner{}, 1)
+	service, err := jobmodel.NewService(repository.jobs, jsonl.Planner{}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +126,7 @@ func TestCompletedJobStatusIncludesResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.State != StateCompleted || len(status.Results) != 1 || !strings.Contains(status.Results[0].URI, a.Attempt.ID) {
+	if status.State != jobmodel.StateCompleted || len(status.Results) != 1 || !strings.Contains(status.Results[0].URI, a.Attempt.ID) {
 		t.Fatalf("status=%+v", status)
 	}
 }

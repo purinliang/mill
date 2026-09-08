@@ -262,15 +262,16 @@ job, task, shard, attempt, or state-transition semantics.
   dependency construction, route assembly, process lifecycle, and shutdown
   belong there. Do not put job or execution policy in `main.go`.
 - Organize `internal` by cohesive capability, not by generic technical layers.
-  The current `internal/job` package may contain its model, validation, HTTP
-  handler, and PostgreSQL repository while that keeps the job behavior easy to
-  understand in one place.
+  Keep job policy and ports in `internal/job`, then place concrete adapters in
+  `internal/job/httpapi`, `internal/job/jsonl`, and `internal/job/postgres`.
+  Keep attempt persistence in `internal/execution/postgres`, beside the
+  execution domain whose transitions and ownership rules it implements.
 - Introduce a new package only for a concrete boundary with a distinct purpose,
   such as a Kubernetes adapter or object-storage adapter. Do not pre-create
   empty packages or speculative `common`, `util`, `service`, or `manager`
   layers.
-- Keep local JSONL partition planning in `internal/job/partition.go` while it is
-  part of the cohesive job-creation workflow. Logical shard boundaries must be
+- Keep local JSONL partition planning in `internal/job/jsonl`. It implements
+  the planner port owned by the job workflow. Logical shard boundaries must be
   contiguous, non-empty, and aligned to complete JSONL records.
 - Keep `internal/objectstore` limited to file and S3-compatible access. A custom
   endpoint is a local-development concern; use normal AWS SDK endpoint and
@@ -295,9 +296,10 @@ job, task, shard, attempt, or state-transition semantics.
   uses preloaded development images and external PostgreSQL/S3; do not reuse it
   to claim K3s, database, node, or object-storage availability. Keep secret
   values out of manifests and Git.
-- Defer the broad architecture/code-ownership refactor until Milestone 8 is
-  complete. Continue focused per-slice review and fix demonstrated correctness
-  issues immediately; deferral is not permission to accumulate known defects.
+- Preserve the first boundary refactor completed after Milestone 7: domain
+  packages own policy and interfaces, while HTTP, JSONL, PostgreSQL, gRPC, and
+  Kubernetes packages implement adapters. Defer another broad architecture
+  refactor until Milestone 8 provides new failure evidence.
 - Keep execution-facing attempt types, sentinel domain failures, and the
   transport-independent store contract in `internal/execution`. Coordinator
   and Kubernetes packages must not import `internal/job`.

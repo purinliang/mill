@@ -12,7 +12,7 @@ func TestResolveResources(t *testing.T) {
 		{ResourceClassLarge, 2048},
 	}
 	for _, test := range tests {
-		resources, valid := resolveResources(test.class)
+		resources, valid := ResolveResources(test.class)
 		if !valid {
 			t.Fatalf("class %q is invalid", test.class)
 		}
@@ -22,7 +22,7 @@ func TestResolveResources(t *testing.T) {
 			t.Errorf("class %q resources = %+v", test.class, resources)
 		}
 	}
-	if _, valid := resolveResources("unknown"); valid {
+	if _, valid := ResolveResources("unknown"); valid {
 		t.Fatal("unknown class resolved successfully")
 	}
 }

@@ -1,7 +1,8 @@
-package job
+package postgres
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -10,15 +11,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-
-	"github.com/purinliang/mill/internal/execution"
-)
-
-var (
-	ErrNoTaskAvailable          = execution.ErrNoTaskAvailable
-	ErrAttemptNotFound          = execution.ErrAttemptNotFound
-	ErrAttemptLeaseLost         = execution.ErrAttemptLeaseLost
-	ErrInvalidAttemptTransition = execution.ErrInvalidAttemptTransition
 )
 
 // Fixed prototype policy: three total attempts, not three extra retries.
@@ -46,7 +38,11 @@ const attemptSelectByID = `
 	JOIN public.tasks AS t ON t.id = a.task_id
 	WHERE a.id = $1::uuid`
 
-func (r *Repository) ClaimNextAttempt(ctx context.Context, executor, leaseOwner string, leaseDuration time.Duration) (ClaimedAttempt, error) {
+func (r *Repository) ClaimNextAttempt(
+	ctx context.Context,
+	executor, leaseOwner string,
+	leaseDuration time.Duration,
+) (ClaimedAttempt, error) {
 	if err := validateExecutor(executor); err != nil {
 		return ClaimedAttempt{}, err
 	}
@@ -173,7 +169,11 @@ func (r *Repository) ClaimNextAttempt(ctx context.Context, executor, leaseOwner 
 	if err != nil {
 		return ClaimedAttempt{}, fmt.Errorf("read claimed attempt: %w", err)
 	}
-	claimed.OutputURI, err = deriveAttemptOutputURI(claimed.OutputURI, claimed.ShardIndex, claimed.Attempt.ID)
+	claimed.OutputURI, err = deriveAttemptOutputURI(
+		claimed.OutputURI,
+		claimed.ShardIndex,
+		claimed.Attempt.ID,
+	)
 	if err != nil {
 		return ClaimedAttempt{}, err
 	}
@@ -190,7 +190,7 @@ func (r *Repository) ClaimNextAttempt(ctx context.Context, executor, leaseOwner 
 }
 
 func (r *Repository) GetAttempt(ctx context.Context, id string) (Attempt, error) {
-	if !validJobID(id) {
+	if !validID(id) {
 		return Attempt{}, &ValidationError{Field: "attempt ID", Problem: "must be a UUID"}
 	}
 	attempt, err := queryAttempt(ctx, r.database, id)
@@ -203,15 +203,21 @@ func (r *Repository) GetAttempt(ctx context.Context, id string) (Attempt, error)
 	return attempt, nil
 }
 
-func (r *Repository) MarkAttemptRunning(ctx context.Context, id, leaseToken, externalID string) (Attempt, error) {
-	if !validJobID(id) {
+func (r *Repository) MarkAttemptRunning(
+	ctx context.Context,
+	id, leaseToken, externalID string,
+) (Attempt, error) {
+	if !validID(id) {
 		return Attempt{}, &ValidationError{Field: "attempt ID", Problem: "must be a UUID"}
 	}
-	if !validJobID(leaseToken) {
+	if !validID(leaseToken) {
 		return Attempt{}, &ValidationError{Field: "lease token", Problem: "must be a UUID"}
 	}
 	if externalID == "" || externalID != strings.TrimSpace(externalID) || len(externalID) > 255 {
-		return Attempt{}, &ValidationError{Field: "external execution ID", Problem: "must be 1 to 255 bytes with no surrounding whitespace"}
+		return Attempt{}, &ValidationError{
+			Field:   "external execution ID",
+			Problem: "must be 1 to 255 bytes with no surrounding whitespace",
+		}
 	}
 
 	tx, err := r.database.Begin(ctx)
@@ -261,18 +267,29 @@ func (r *Repository) CompleteAttempt(ctx context.Context, id, leaseToken string)
 	return r.finishAttempt(ctx, id, leaseToken, AttemptStateCompleted, "")
 }
 
-func (r *Repository) FailAttempt(ctx context.Context, id, leaseToken, failureMessage string) (Attempt, error) {
+func (r *Repository) FailAttempt(
+	ctx context.Context,
+	id, leaseToken, failureMessage string,
+) (Attempt, error) {
 	if failureMessage == "" || strings.TrimSpace(failureMessage) == "" || len(failureMessage) > 4096 {
-		return Attempt{}, &ValidationError{Field: "failure message", Problem: "must be 1 to 4096 bytes and not blank"}
+		return Attempt{}, &ValidationError{
+			Field:   "failure message",
+			Problem: "must be 1 to 4096 bytes and not blank",
+		}
 	}
 	return r.finishAttempt(ctx, id, leaseToken, AttemptStateFailed, failureMessage)
 }
 
-func (r *Repository) finishAttempt(ctx context.Context, id, leaseToken string, target AttemptState, failureMessage string) (Attempt, error) {
-	if !validJobID(id) {
+func (r *Repository) finishAttempt(
+	ctx context.Context,
+	id, leaseToken string,
+	target AttemptState,
+	failureMessage string,
+) (Attempt, error) {
+	if !validID(id) {
 		return Attempt{}, &ValidationError{Field: "attempt ID", Problem: "must be a UUID"}
 	}
-	if !validJobID(leaseToken) {
+	if !validID(leaseToken) {
 		return Attempt{}, &ValidationError{Field: "lease token", Problem: "must be a UUID"}
 	}
 
@@ -301,10 +318,12 @@ func (r *Repository) finishAttempt(ctx context.Context, id, leaseToken string, t
 	if target == AttemptStateCompleted && attempt.State != AttemptStateRunning {
 		return Attempt{}, invalidAttemptTransition(attempt.State, target)
 	}
-	if target == AttemptStateFailed && attempt.State != AttemptStateStarting && attempt.State != AttemptStateRunning {
+	if target == AttemptStateFailed &&
+		attempt.State != AttemptStateStarting &&
+		attempt.State != AttemptStateRunning {
 		return Attempt{}, invalidAttemptTransition(attempt.State, target)
 	}
-	var jobState State
+	var jobState string
 	if err := tx.QueryRow(ctx, `
 		SELECT state FROM public.jobs WHERE id = $1::uuid FOR UPDATE
 	`, attempt.JobID).Scan(&jobState); err != nil {
@@ -319,7 +338,7 @@ func (r *Repository) finishAttempt(ctx context.Context, id, leaseToken string, t
 		return Attempt{}, fmt.Errorf("mark attempt %s: %w", target, err)
 	}
 	taskState := string(target)
-	if target == AttemptStateFailed && jobState == StateRunning && attempt.Number < MaxTaskAttempts {
+	if target == AttemptStateFailed && jobState == "running" && attempt.Number < MaxTaskAttempts {
 		taskState = "pending"
 	}
 	// The failed attempt stays terminal. Only its logical task returns to pending;
@@ -379,7 +398,11 @@ func lockAttempt(ctx context.Context, tx pgx.Tx, id string) (Attempt, error) {
 	return scanAttempt(tx.QueryRow(ctx, attemptSelectByID+" FOR UPDATE OF a", id))
 }
 
-func lockAttemptForLease(ctx context.Context, tx pgx.Tx, id, leaseToken string) (Attempt, bool, error) {
+func lockAttemptForLease(
+	ctx context.Context,
+	tx pgx.Tx,
+	id, leaseToken string,
+) (Attempt, bool, error) {
 	attempt, err := lockAttempt(ctx, tx, id)
 	if err != nil {
 		return Attempt{}, false, err
@@ -450,22 +473,36 @@ func utcTime(value *time.Time) *time.Time {
 
 func validateExecutor(executor string) error {
 	if executor == "" || executor != strings.TrimSpace(executor) || len(executor) > 63 {
-		return &ValidationError{Field: "executor", Problem: "must be 1 to 63 bytes with no surrounding whitespace"}
+		return &ValidationError{
+			Field:   "executor",
+			Problem: "must be 1 to 63 bytes with no surrounding whitespace",
+		}
 	}
 	return nil
 }
 
 func validateLease(owner string, duration time.Duration) (int64, error) {
 	if owner == "" || owner != strings.TrimSpace(owner) || len(owner) > 255 {
-		return 0, &ValidationError{Field: "lease owner", Problem: "must be 1 to 255 bytes with no surrounding whitespace"}
+		return 0, &ValidationError{
+			Field:   "lease owner",
+			Problem: "must be 1 to 255 bytes with no surrounding whitespace",
+		}
 	}
 	if duration < time.Second || duration > 5*time.Minute || duration%time.Second != 0 {
-		return 0, &ValidationError{Field: "lease duration", Problem: "must be a whole number of seconds between 1 second and 5 minutes"}
+		return 0, &ValidationError{
+			Field: "lease duration",
+			Problem: "must be a whole number of seconds between " +
+				"1 second and 5 minutes",
+		}
 	}
 	return int64(duration / time.Second), nil
 }
 
-func deriveAttemptOutputURI(outputRootURI string, shardIndex int, attemptID string) (string, error) {
+func deriveAttemptOutputURI(
+	outputRootURI string,
+	shardIndex int,
+	attemptID string,
+) (string, error) {
 	outputURI, err := url.JoinPath(
 		outputRootURI,
 		"tasks",
@@ -482,4 +519,14 @@ func deriveAttemptOutputURI(outputRootURI string, shardIndex int, attemptID stri
 
 func invalidAttemptTransition(from, to AttemptState) error {
 	return fmt.Errorf("%w: %s to %s", ErrInvalidAttemptTransition, from, to)
+}
+
+func validID(id string) bool {
+	if len(id) != 36 || id[8] != '-' || id[13] != '-' ||
+		id[18] != '-' || id[23] != '-' {
+		return false
+	}
+	compact := id[:8] + id[9:13] + id[14:18] + id[19:23] + id[24:]
+	_, err := hex.DecodeString(compact)
+	return err == nil
 }

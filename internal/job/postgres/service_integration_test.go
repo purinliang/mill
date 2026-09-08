@@ -1,14 +1,18 @@
-package job
+package postgres
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+
+	. "github.com/purinliang/mill/internal/job"
+	"github.com/purinliang/mill/internal/job/jsonl"
 )
 
 func TestServicePlansLogicalShardsAndReplaysWithoutInputFile(t *testing.T) {
@@ -30,7 +34,7 @@ func TestServicePlansLogicalShardsAndReplaysWithoutInputFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create repository: %v", err)
 	}
-	service, err := NewService(repository, JSONLPartitioner{}, 3)
+	service, err := NewService(repository, jsonl.Planner{}, 3)
 	if err != nil {
 		t.Fatalf("create service: %v", err)
 	}
@@ -82,7 +86,7 @@ func TestServiceConcurrentCreateMaterializesOneTaskSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create repository: %v", err)
 	}
-	service, err := NewService(repository, JSONLPartitioner{}, 3)
+	service, err := NewService(repository, jsonl.Planner{}, 3)
 	if err != nil {
 		t.Fatalf("create service: %v", err)
 	}
@@ -155,7 +159,7 @@ func TestServiceRejectsInvalidInputBeforeCreatingJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create repository: %v", err)
 	}
-	service, err := NewService(repository, JSONLPartitioner{}, 3)
+	service, err := NewService(repository, jsonl.Planner{}, 3)
 	if err != nil {
 		t.Fatalf("create service: %v", err)
 	}
@@ -190,7 +194,7 @@ func TestServiceResumesPreparingJobWithStoredParallelism(t *testing.T) {
 		Executable: Executable{Image: "mill/example:dev"},
 		Input:      InputSpec{URI: fileURI(inputFilename)},
 	}
-	plan, err := (JSONLPartitioner{}).Plan(context.Background(), submission.Input.URI, 3)
+	plan, err := (jsonl.Planner{}).Plan(context.Background(), submission.Input.URI, 3)
 	if err != nil {
 		t.Fatalf("plan input: %v", err)
 	}
@@ -212,7 +216,7 @@ func TestServiceResumesPreparingJobWithStoredParallelism(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create restarted repository: %v", err)
 	}
-	restartedService, err := NewService(restartedRepository, JSONLPartitioner{}, 9)
+	restartedService, err := NewService(restartedRepository, jsonl.Planner{}, 9)
 	if err != nil {
 		t.Fatalf("create restarted service: %v", err)
 	}
@@ -244,4 +248,8 @@ func writeTestJSONL(t *testing.T, filename string, records int) {
 	if err := os.WriteFile(filename, []byte(contents.String()), 0o600); err != nil {
 		t.Fatalf("write test JSONL: %v", err)
 	}
+}
+
+func fileURI(filename string) string {
+	return (&url.URL{Scheme: "file", Path: filename}).String()
 }

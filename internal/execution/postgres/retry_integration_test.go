@@ -1,4 +1,4 @@
-package job
+package postgres
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	jobmodel "github.com/purinliang/mill/internal/job"
 )
 
 func TestRetryKeepsHistoryDelayAndSuccessfulOutput(t *testing.T) {
@@ -28,7 +30,7 @@ func TestRetryKeepsHistoryDelayAndSuccessfulOutput(t *testing.T) {
 		t.Fatalf("retry time=%s finished=%v", available, failed.FinishedAt)
 	}
 	status := getAttemptTestJob(t, r, created.ID)
-	if status.State != StateRunning || status.Progress != (Progress{Total: 1, Pending: 1}) {
+	if status.State != jobmodel.StateRunning || status.Progress != (jobmodel.Progress{Total: 1, Pending: 1}) {
 		t.Fatalf("retrying task counted as terminal failure: %+v", status)
 	}
 	if _, err := r.ClaimNextAttempt(ctx, "kubernetes", testLeaseOwner, testLeaseDuration); !errors.Is(err, ErrNoTaskAvailable) {
@@ -46,9 +48,14 @@ func TestRetryKeepsHistoryDelayAndSuccessfulOutput(t *testing.T) {
 	}
 	// Advance the durable deadline instead of sleeping in an integration test.
 	makeRetryAvailable(t, r, first.Attempt.TaskID)
-	restarted, err := NewRepository(r.database, "file:///tmp/mill-attempt-output")
+	restartedStore, err := NewRepository(r.database)
 	if err != nil {
 		t.Fatal(err)
+	}
+	restarted := &testRepositories{
+		Repository: restartedStore,
+		database:   r.database,
+		jobs:       r.jobs,
 	}
 	second := claimRetryTestAttempt(t, restarted)
 	if second.Attempt.Number != 2 || second.Attempt.TaskID != first.Attempt.TaskID || second.OutputURI == first.OutputURI || second.Attempt.ID == first.Attempt.ID {
@@ -72,7 +79,7 @@ func TestRetryKeepsHistoryDelayAndSuccessfulOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	status = getAttemptTestJob(t, r, created.ID)
-	if status.State != StateCompleted || status.Progress.Completed != 1 {
+	if status.State != jobmodel.StateCompleted || status.Progress.Completed != 1 {
 		t.Fatalf("retry did not complete job: %+v", status)
 	}
 	results, err := r.CompletedResults(ctx, created.ID)
@@ -110,7 +117,7 @@ func TestRetryLimitFailsJobAndDrainsActiveWork(t *testing.T) {
 		}
 	}
 	status := getAttemptTestJob(t, r, created.ID)
-	if status.State != StateFailed || status.Progress != (Progress{Total: 3, Failed: 1, Running: 1, Pending: 1}) {
+	if status.State != jobmodel.StateFailed || status.Progress != (jobmodel.Progress{Total: 3, Failed: 1, Running: 1, Pending: 1}) {
 		t.Fatalf("exhausted job=%+v", status)
 	}
 	if _, err := r.ClaimNextAttempt(ctx, "kubernetes", testLeaseOwner, testLeaseDuration); !errors.Is(err, ErrNoTaskAvailable) {
@@ -125,7 +132,7 @@ func TestRetryLimitFailsJobAndDrainsActiveWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	status = getAttemptTestJob(t, r, created.ID)
-	if status.State != StateFailed || status.Progress != (Progress{Total: 3, Failed: 2, Pending: 1}) {
+	if status.State != jobmodel.StateFailed || status.Progress != (jobmodel.Progress{Total: 3, Failed: 2, Pending: 1}) {
 		t.Fatalf("failed job restarted sibling: %+v", status)
 	}
 	var count int
@@ -178,7 +185,7 @@ func TestWaitingRetryAllowsOtherTasksAndConcurrentClaimsStayUnique(t *testing.T)
 	}
 }
 
-func claimRetryTestAttempt(t *testing.T, r *Repository) ClaimedAttempt {
+func claimRetryTestAttempt(t *testing.T, r *testRepositories) ClaimedAttempt {
 	t.Helper()
 	a, err := r.ClaimNextAttempt(context.Background(), "kubernetes", testLeaseOwner, testLeaseDuration)
 	if err != nil {
@@ -187,7 +194,7 @@ func claimRetryTestAttempt(t *testing.T, r *Repository) ClaimedAttempt {
 	return a
 }
 
-func makeRetryAvailable(t *testing.T, r *Repository, taskID string) {
+func makeRetryAvailable(t *testing.T, r *testRepositories, taskID string) {
 	t.Helper()
 	if _, err := r.database.Exec(context.Background(), "UPDATE tasks SET available_at = now() - interval '1 second' WHERE id = $1::uuid", taskID); err != nil {
 		t.Fatal(err)

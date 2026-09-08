@@ -16,7 +16,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	executionpostgres "github.com/purinliang/mill/internal/execution/postgres"
 	"github.com/purinliang/mill/internal/job"
+	"github.com/purinliang/mill/internal/job/httpapi"
+	"github.com/purinliang/mill/internal/job/jsonl"
+	jobpostgres "github.com/purinliang/mill/internal/job/postgres"
 	"github.com/purinliang/mill/internal/objectstore"
 )
 
@@ -45,7 +49,11 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, httpAddress, grpcAddress, databaseURL, outputRootURI, parallelismValue string) error {
+func run(
+	ctx context.Context,
+	httpAddress, grpcAddress string,
+	databaseURL, outputRootURI, parallelismValue string,
+) error {
 	if httpAddress == "" {
 		httpAddress = defaultHTTPAddress
 	}
@@ -66,7 +74,7 @@ func run(ctx context.Context, httpAddress, grpcAddress, databaseURL, outputRootU
 	}
 	defer database.Close()
 
-	jobRepository, err := job.NewRepository(database, outputRootURI)
+	jobRepository, err := jobpostgres.NewRepository(database, outputRootURI)
 	if err != nil {
 		return err
 	}
@@ -76,11 +84,19 @@ func run(ctx context.Context, httpAddress, grpcAddress, databaseURL, outputRootU
 	if err != nil {
 		return err
 	}
-	jobService, err := job.NewService(jobRepository, job.NewJSONLPartitioner(objects), parallelism)
+	jobService, err := job.NewService(
+		jobRepository,
+		jsonl.NewPlanner(objects),
+		parallelism,
+	)
 	if err != nil {
 		return err
 	}
-	jobHandler := job.NewHandler(jobService, log.Default())
+	jobHandler := httpapi.NewHandler(jobService, log.Default())
+	executionRepository, err := executionpostgres.NewRepository(database)
+	if err != nil {
+		return err
+	}
 
 	server := &http.Server{
 		Addr:              httpAddress,
@@ -92,7 +108,7 @@ func run(ctx context.Context, httpAddress, grpcAddress, databaseURL, outputRootU
 	if err != nil {
 		return fmt.Errorf("listen HTTP: %w", err)
 	}
-	executionRPC, err := startExecutionRPC(grpcAddress, jobRepository)
+	executionRPC, err := startExecutionRPC(grpcAddress, executionRepository)
 	if err != nil {
 		_ = listener.Close()
 		return err
@@ -176,7 +192,7 @@ func openDatabase(ctx context.Context, databaseURL string) (*pgxpool.Pool, error
 	return database, nil
 }
 
-func newHandler(checkReady readinessCheck, jobHandler *job.Handler) http.Handler {
+func newHandler(checkReady readinessCheck, jobHandler *httpapi.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleLiveness)
 	mux.HandleFunc("GET /livez", handleLiveness)

@@ -12,7 +12,7 @@ const (
 
 const mebibyte int64 = 1024 * 1024
 
-func resolveResources(class ResourceClass) (execution.Resources, bool) {
+func ResolveResources(class ResourceClass) (execution.Resources, bool) {
 	memory := int64(0)
 	switch class {
 	case ResourceClassSmall:
