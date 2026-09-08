@@ -350,6 +350,9 @@ job, task, shard, attempt, or state-transition semantics.
 
 ## Testing expectations
 
+- Test behavior through exported methods, APIs, and process boundaries. Do not
+  call unexported production functions directly merely to increase coverage;
+  exercise their effects through the public contract instead.
 - Unit-test domain validation, progress calculation, and allowed state
   transitions.
 - Integration-test PostgreSQL behavior and transaction boundaries once
