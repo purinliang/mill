@@ -14,7 +14,7 @@ readonly node=mill-control-plane
 kubectl_command=(kubectl --context kind-mill --namespace default --request-timeout=10s)
 docker info >/dev/null
 [[ "$(docker inspect --format '{{index .Config.Labels "io.x-k8s.kind.cluster"}}' "${node}")" == mill ]] || {
-	printf 'Expected the mill kind cluster; run ./scripts/setup first.\n' >&2
+	printf 'Expected the mill kind cluster; run ./scripts/setup.sh first.\n' >&2
 	exit 1
 }
 "${kubectl_command[@]}" get node "${node}" >/dev/null

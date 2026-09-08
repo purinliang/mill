@@ -16,21 +16,21 @@ are implemented.
 
 The object-storage adapter supports `file://` and `s3://`. S3-backed attempts
 perform ranged reads and publish unique outputs without hostPath mounts or node
-pinning. `scripts/demo-word-count-batch` exercises the complete node-local
+pinning. `scripts/demo-word-count-batch.sh` exercises the complete node-local
 control plane; its failure and restart modes test retry exhaustion and process
 recovery. Per-attempt PostgreSQL leases now provide renewable ownership,
 expired-owner takeover, and fencing tokens for all state mutations.
 The batch demo's `--replica-failover` mode runs two execution processes
 concurrently. It rejects premature lease stealing, kills the primary, and
 verifies fenced takeover of the same attempts and Kubernetes Jobs.
-`scripts/demo-word-count-s3` proves the shared-storage path against a disposable
-S3-compatible service and exact local baseline.
-`scripts/demo-word-count-deployed` proves the same 12-task flow through
+`scripts/demo-word-count-s3.sh` proves the shared-storage path against a
+disposable S3-compatible service and exact local baseline.
+`scripts/demo-word-count-deployed.sh` proves the same 12-task flow through
 deployed Job and execution Pods in unique temporary namespaces, then
 removes only its owned cluster resources and fixture containers while retaining
 diagnostics. Its `--execution-failover` mode scales the execution Deployment to
 two, deletes the active lease owner's Pod, and proves fenced takeover without
-changing attempt or Kubernetes Job identities. `scripts/setup` provides a
+changing attempt or Kubernetes Job identities. `scripts/setup.sh` provides a
 repeatable local kind environment. Its `--job-failover` mode separately
 deletes the original REST/gRPC Pod after adding a ready replica and proves both
 client paths reconnect without changing durable execution identity.
@@ -74,10 +74,10 @@ failure domains. Do not weaken anti-affinity to make an undersized cluster
 appear available, and do not claim either profile has passed until its runtime
 evidence exists.
 
-Preserve `scripts/install-k3s-node` as an explicit role-based installer. Keep
+Preserve `scripts/install-k3s-node.sh` as an explicit role-based installer. Keep
 the K3s version and tagged installer digest pinned together; never accept a
 join token as a command-line argument or commit it. Preserve
-`scripts/deploy-availability` checks for distinct ready hostname domains,
+`scripts/deploy-availability.sh` checks for distinct ready hostname domains,
 alternative database profiles, URL-safe database credentials, externally
 reachable images/storage, migration-before-control-plane ordering, and Secret
 redaction. Render requested images before creating Pods; required anti-affinity
@@ -85,7 +85,7 @@ must not deadlock a fresh deployment or rolling update. Preserve the
 checksum-verified migration ledger and single-transaction application rather
 than making historical DDL silently repeatable.
 
-Preserve `scripts/demo-availability` as the destructive two-node acceptance
+Preserve `scripts/demo-availability.sh` as the destructive two-node acceptance
 proof. It must refuse fewer than two hostname failure domains, require all
 three replica pairs to be ready and anti-affined before mutation, and retain
 evidence. Execution, Job, and PostgreSQL primary Pod deletion must occur
@@ -97,8 +97,8 @@ The database shutdown bounds intentionally favor a short demonstration RTO;
 keep that tradeoff explicit and do not present the values as production
 defaults.
 
-`scripts/demo-word-count-single-task` runs one manual word-count Job with staged
-node-local input and verifies its output against a local run. It uses
+`scripts/demo-word-count-single-task.sh` runs one manual word-count Job with
+staged node-local input and verifies its output against a local run. It uses
 `examples/word-count/job.yaml.template`; it does not claim or transition
 PostgreSQL tasks. Keep this demonstration distinct from the
 control-plane Kubernetes adapter.
@@ -168,25 +168,25 @@ operational and maintenance cost.
   transfers observation ownership of the same attempt; it does not authorize a
   new attempt. Missing running Jobs and identity mismatches require
   investigation; never silently recreate them.
-- Preserve `scripts/demo-word-count-batch --restart-coordinator` as a real
+- Preserve `scripts/demo-word-count-batch.sh --restart-coordinator` as a real
   process-boundary recovery test. It must use SIGKILL only on the child
   execution PID, keep the Job service, PostgreSQL, and Kubernetes alive,
   compare stable attempt IDs and Job UIDs, reject duplicate attempts, and
   still verify the complete workload output.
-- Preserve `scripts/demo-word-count-batch --replica-failover` as the
+- Preserve `scripts/demo-word-count-batch.sh --replica-failover` as the
   simultaneous-process lease test. Both processes must overlap before SIGKILL;
   the standby must not steal live leases, and takeover must change fencing
   tokens without changing attempt IDs, external UIDs, or Kubernetes Jobs.
-- Preserve `scripts/demo-word-count-batch --split-process` as the runtime
+- Preserve `scripts/demo-word-count-batch.sh --split-process` as the runtime
   boundary test. The Job service must not start an in-process coordinator, two
   standalone execution processes must remain live, neither process may receive
   PostgreSQL configuration, and all task outputs must match the local baseline.
-- Preserve `scripts/demo-word-count-deployed` as the packaged control-plane
+- Preserve `scripts/demo-word-count-deployed.sh` as the packaged control-plane
   proof. Each run must use unique namespaces, keep the execution service free of
   PostgreSQL credentials, execute exactly 12 S3-backed tasks with bounded
   parallelism, reject hostPath/node placement, compare exact output, retain
   diagnostics, and remove only resources created by that run.
-- Preserve `scripts/demo-word-count-deployed --execution-failover` as the
+- Preserve `scripts/demo-word-count-deployed.sh --execution-failover` as the
   single-node execution Pod failure proof. The standby must first respect live
   leases; deletion must target the Pod whose instance owns the initial leases;
   takeover must replace lease owners and fencing tokens while preserving task,
@@ -194,7 +194,7 @@ operational and maintenance cost.
   exactly 12 first attempts, restored replica availability, and exact output.
   Do not describe this as Job, database, storage, node, or partition
   availability.
-- Preserve `scripts/demo-word-count-deployed --job-failover` as the
+- Preserve `scripts/demo-word-count-deployed.sh --job-failover` as the
   single-node Job Pod failure proof. Begin with one endpoint, add and
   verify a ready standby, delete the original Pod, and require both retrying
   REST access and the existing execution-service gRPC client to recover through
@@ -243,7 +243,7 @@ When Go implementation begins:
 - follow standard Go project conventions and keep packages cohesive;
 - use `gofmt` on changed Go files;
 - run `go test ./...` before considering a change complete;
-- measure coverage with `scripts/test-coverage`; it excludes generated
+- measure coverage with `scripts/test-coverage.sh`; it excludes generated
   `*.pb.go` statements while retaining those files in compilation and testing;
 - avoid interfaces that do not provide a current testing or substitution need;
 - return errors explicitly and wrap them with useful operational context;
@@ -323,9 +323,9 @@ job, task, shard, attempt, or state-transition semantics.
   tools in the final workload image.
 - Keep each Mill service Dockerfile beside its top-level `cmd` entrypoint. The
   final service images contain only the static binary and CA certificates, run
-  as `65532:65532`, and are built together by
-  `scripts/build-control-plane-images`. Image creation is distinct from loading
-  or deploying an image.
+  as `65532:65532`, and are built together by the
+  `scripts/build-control-plane-images.sh` script. Image creation is distinct
+  from loading or deploying an image.
 - Commit small, stable source fixtures and deterministic generation
   configuration when they explain a demonstration. Do not commit generated
   JSONL inputs, task outputs, or other reproducible artifacts.
@@ -336,7 +336,7 @@ job, task, shard, attempt, or state-transition semantics.
 - Keep numbered SQL migrations in `migrations`. After a migration has been
   shared or applied outside a disposable local database, correct the schema
   with a new migration instead of rewriting history.
-- Keep `scripts/setup` idempotent and non-destructive. It may install pinned
+- Keep `scripts/setup.sh` idempotent and non-destructive. It may install pinned
   user-space development tools and create or reuse the named local cluster, but
   must not silently install Docker, change host permissions, replace clusters,
   or delete resources.
@@ -364,8 +364,8 @@ job, task, shard, attempt, or state-transition semantics.
   of the behavior Mill relies on.
 - Test the workload contract independently of orchestration.
 - Test object storage with a bounded fake S3 endpoint and preserve the live
-  `scripts/demo-word-count-s3` check for ranged reads, output publication, and
-  absence of node-local mounts.
+  `scripts/demo-word-count-s3.sh` check for ranged reads, output publication,
+  and absence of node-local mounts.
 - Add Kubernetes end-to-end tests only when Kubernetes execution is introduced.
 - Cover retries, duplicate reconciliation, partial failure, and restart recovery
   during the reliability milestone.

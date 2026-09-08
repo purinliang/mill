@@ -55,7 +55,7 @@ With Go, Docker, kind, kubectl, and the existing `mill` cluster ready, run from
 the repository root:
 
 ```bash
-./scripts/demo-word-count-single-task
+./scripts/demo-word-count-single-task.sh
 ```
 
 The script generates a fresh input, builds and loads `mill/word-count:dev`,
@@ -112,7 +112,7 @@ state. For the coordinator-driven execution, use the full-batch script below.
 ## Run the whole batch through Mill
 
 ```bash
-./scripts/demo-word-count-batch
+./scripts/demo-word-count-batch.sh
 ```
 
 This requires Go, Docker, kind, kubectl, PostgreSQL 18 tools (`initdb`, `pg_ctl`,
@@ -141,7 +141,7 @@ execution time.
 To run the same batch with a second live execution replica:
 
 ```bash
-./scripts/demo-word-count-batch --split-process
+./scripts/demo-word-count-batch.sh --split-process
 ```
 
 All batch modes run through one Job service and standalone execution services.
@@ -154,13 +154,13 @@ in the bounded set of Kubernetes workload Pods. The script verifies the same
 For two active attempts instead:
 
 ```bash
-MILL_PARALLELISM=2 ./scripts/demo-word-count-batch
+MILL_PARALLELISM=2 ./scripts/demo-word-count-batch.sh
 ```
 
 To run and verify the `medium` workload resource class:
 
 ```bash
-MILL_DEMO_RESOURCE_CLASS=medium ./scripts/demo-word-count-batch
+MILL_DEMO_RESOURCE_CLASS=medium ./scripts/demo-word-count-batch.sh
 ```
 
 Mill persists the resolved profile on the job and sends it to the execution
@@ -180,7 +180,7 @@ word-count-specific merge.
 ## Run the whole batch through shared object storage
 
 ```bash
-./scripts/demo-word-count-s3
+./scripts/demo-word-count-s3.sh
 ```
 
 This variation starts a temporary S3-compatible SeaweedFS container, uploads
@@ -202,7 +202,7 @@ and storage data. Completed Kubernetes Jobs remain for inspection.
 ## Run through deployed Mill services
 
 ```bash
-./scripts/demo-word-count-deployed
+./scripts/demo-word-count-deployed.sh
 ```
 
 This variation packages both Mill services as Kubernetes Deployments instead of
@@ -221,7 +221,7 @@ To scale the execution Deployment to two replicas and delete the replica that
 owns the first three task leases, run:
 
 ```bash
-./scripts/demo-word-count-deployed --execution-failover
+./scripts/demo-word-count-deployed.sh --execution-failover
 ```
 
 The deterministic delay wrapper creates time to identify the active and
@@ -235,7 +235,7 @@ remain healthy.
 To delete the original Job Pod while tasks are running, use:
 
 ```bash
-./scripts/demo-word-count-deployed --job-failover
+./scripts/demo-word-count-deployed.sh --job-failover
 ```
 
 The script first adds a ready Job replica, then removes the only Pod that
@@ -245,7 +245,7 @@ through the Service, finish the same leased attempts, and produce the exact
 12-task result. PostgreSQL, the Kubernetes node, and object storage remain
 healthy throughout this test.
 
-The multi-node `scripts/demo-availability` exercise uses the same wrapper's
+The multi-node `scripts/demo-availability.sh` exercise uses the same wrapper's
 `availability` mode. It holds shards 0–2 for 120 seconds so execution,
 Job, and controlled PostgreSQL-primary failovers can be exercised
 against one active wave. The
@@ -258,7 +258,7 @@ than Mill execution policy.
 Run the process-boundary recovery demonstration with:
 
 ```bash
-./scripts/demo-word-count-batch --restart-coordinator
+./scripts/demo-word-count-batch.sh --restart-coordinator
 ```
 
 The same test-only wrapper used for failure injection receives `delay` and
@@ -299,7 +299,7 @@ window.
 Run the concurrent-process failover demonstration with:
 
 ```bash
-./scripts/demo-word-count-batch --replica-failover
+./scripts/demo-word-count-batch.sh --replica-failover
 ```
 
 The script starts the primary execution process, waits for three delayed
@@ -319,7 +319,7 @@ multi-node Kubernetes, PostgreSQL failover, or network-partition test.
 Start with the recoverable case:
 
 ```bash
-./scripts/demo-word-count-batch --failure once
+./scripts/demo-word-count-batch.sh --failure once
 ```
 
 The script builds `mill/word-count-fault:dev`, a separate image containing the
@@ -358,7 +358,7 @@ wrong partial result was excluded.
 Then check exhaustion:
 
 ```bash
-./scripts/demo-word-count-batch --failure always
+./scripts/demo-word-count-batch.sh --failure always
 ```
 
 Here shard 0 exits 1 on every invocation. Mill stops after three total attempts

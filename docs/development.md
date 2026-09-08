@@ -11,7 +11,7 @@ availability work is described in [Architecture](architecture.md).
 - PostgreSQL 18 client/server tools for local and integration runs;
 - Docker Engine with daemon access;
 - `curl`, `jq`, `openssl`, and ordinary POSIX command-line tools; and
-- kind and kubectl, which `scripts/setup` can install at pinned versions.
+- kind and kubectl, which `scripts/setup.sh` can install at pinned versions.
 
 Docker is a machine-level prerequisite. The setup script does not install the
 daemon, modify group membership, replace an incompatible cluster, or delete
@@ -22,7 +22,7 @@ resources.
 Run:
 
 ```bash
-./scripts/setup
+./scripts/setup.sh
 ```
 
 The script installs pinned kind and kubectl binaries under
@@ -94,7 +94,7 @@ Health endpoints are:
 ### One manually configured task
 
 ```bash
-./scripts/demo-word-count-single-task
+./scripts/demo-word-count-single-task.sh
 ```
 
 This stages one input range in the kind node, renders a Kubernetes Job, and
@@ -103,7 +103,7 @@ compares its output with a local run. It does not use PostgreSQL task claims.
 ### Full node-local batch
 
 ```bash
-./scripts/demo-word-count-batch
+./scripts/demo-word-count-batch.sh
 ```
 
 This starts private temporary PostgreSQL, Job, and standalone execution service
@@ -115,7 +115,7 @@ node.
 Run the same batch with a second live execution replica:
 
 ```bash
-./scripts/demo-word-count-batch --split-process
+./scripts/demo-word-count-batch.sh --split-process
 ```
 
 All modes use the gRPC service boundary. Execution replicas receive no
@@ -130,13 +130,13 @@ workload Pods provide computation parallelism. Override the gRPC port with
 Use two active attempts with:
 
 ```bash
-MILL_PARALLELISM=2 ./scripts/demo-word-count-batch
+MILL_PARALLELISM=2 ./scripts/demo-word-count-batch.sh
 ```
 
 Exercise a workload resource class and verify every generated Pod template:
 
 ```bash
-MILL_DEMO_RESOURCE_CLASS=medium ./scripts/demo-word-count-batch
+MILL_DEMO_RESOURCE_CLASS=medium ./scripts/demo-word-count-batch.sh
 ```
 
 The accepted values are `small`, `medium`, and `large`; omission defaults to
@@ -146,15 +146,15 @@ the Kubernetes CPU and memory requests/limits.
 Exercise deterministic task failure and retry exhaustion:
 
 ```bash
-./scripts/demo-word-count-batch --failure once
-./scripts/demo-word-count-batch --failure always
+./scripts/demo-word-count-batch.sh --failure once
+./scripts/demo-word-count-batch.sh --failure always
 ```
 
 Exercise execution process recovery while the Job service, PostgreSQL, and
 Kubernetes continue:
 
 ```bash
-./scripts/demo-word-count-batch --restart-coordinator
+./scripts/demo-word-count-batch.sh --restart-coordinator
 ```
 
 The replacement execution process waits for the 15-second attempt leases to
@@ -166,7 +166,7 @@ Jobs until the user explicitly removes them.
 Exercise two live execution replicas and survivor takeover:
 
 ```bash
-./scripts/demo-word-count-batch --replica-failover
+./scripts/demo-word-count-batch.sh --replica-failover
 ```
 
 The script first lets one execution process own three delayed attempts, then
@@ -179,7 +179,7 @@ service remains available while the survivor completes the remaining shards.
 ### Full S3-compatible batch
 
 ```bash
-./scripts/demo-word-count-s3
+./scripts/demo-word-count-s3.sh
 ```
 
 This is the shared-storage vertical slice. It:
@@ -213,13 +213,13 @@ deployment or availability claim. Override its HTTP port with
 ### Full batch through deployed Mill services
 
 ```bash
-./scripts/demo-word-count-deployed
+./scripts/demo-word-count-deployed.sh
 ```
 
 This is the single-node deployment proof. It creates unique temporary system
 and workload namespaces, starts disposable PostgreSQL 18 and SeaweedFS
 containers on kind's Docker network, migrates the database, and calls
-`scripts/deploy-local-control-plane`. The API is reached through a temporary
+`scripts/deploy-local-control-plane.sh`. The API is reached through a temporary
 port-forward; override its local port with `MILL_DEMO_PORT`, whose default is
 `18083`.
 
@@ -238,7 +238,7 @@ node, database, or storage availability.
 To test one execution Pod failure on the same single-node cluster, run:
 
 ```bash
-./scripts/demo-word-count-deployed --execution-failover
+./scripts/demo-word-count-deployed.sh --execution-failover
 ```
 
 This mode uses a deterministic 15-second delay for the first three workload
@@ -261,7 +261,7 @@ not a full high-availability claim.
 To test one Job Pod failure, run:
 
 ```bash
-./scripts/demo-word-count-deployed --job-failover
+./scripts/demo-word-count-deployed.sh --job-failover
 ```
 
 This mode also delays the first three attempts. It records the original
@@ -285,7 +285,7 @@ The multi-node profiles live in `deploy/kubernetes/availability`. Install the
 pinned CloudNativePG 1.30.0 operator into the intended context first:
 
 ```bash
-MILL_KUBE_CONTEXT=<context> ./scripts/install-cloudnative-pg
+MILL_KUBE_CONTEXT=<context> ./scripts/install-cloudnative-pg.sh
 ```
 
 The installer downloads the official release manifest, verifies its pinned
@@ -305,9 +305,9 @@ The PostgreSQL profiles have the same resource name and are alternatives; do
 not apply both. Each requires a `kubernetes.io/basic-auth` Secret named
 `mill-database-credentials` in `mill-database`, and each uses K3s's
 `local-path` storage class. The control-plane manifest similarly expects its
-configuration Secrets and node-reachable images. `scripts/deploy-availability`
-validates the topology, creates the Secrets, applies migrations, and rolls out
-the services.
+configuration Secrets and node-reachable images. The
+`scripts/deploy-availability.sh` script validates the topology, creates the
+Secrets, applies migrations, and rolls out the services.
 
 Required anti-affinity intentionally leaves replicas Pending when the cluster
 has too few distinct hostnames. Weakening it to make a one-node test green
@@ -328,7 +328,7 @@ input provenance, deterministic record grouping, and result-merging behavior.
 Build both Mill service images from the repository root:
 
 ```bash
-./scripts/build-control-plane-images
+./scripts/build-control-plane-images.sh
 ```
 
 The script builds `mill/job:dev` from `cmd/mill-job/Dockerfile` and builds
@@ -359,7 +359,7 @@ export MILL_WORKLOAD_S3_ENDPOINT="$MILL_S3_ENDPOINT"
 export AWS_ACCESS_KEY_ID='local-access-key'
 export AWS_SECRET_ACCESS_KEY='local-secret-key'
 
-./scripts/deploy-local-control-plane
+./scripts/deploy-local-control-plane.sh
 ```
 
 Do not use `127.0.0.1` for PostgreSQL or an S3 endpoint unless that service is
@@ -482,7 +482,7 @@ go test ./...
 Report coverage for handwritten Go code with:
 
 ```bash
-./scripts/test-coverage
+./scripts/test-coverage.sh
 ```
 
 This command still compiles and exercises the committed Protobuf bindings
@@ -510,7 +510,7 @@ With the same environment variable set, include PostgreSQL behavior in the
 handwritten coverage report:
 
 ```bash
-MILL_TEST_DATABASE_URL='postgresql:///mill_test' ./scripts/test-coverage
+MILL_TEST_DATABASE_URL='postgresql:///mill_test' ./scripts/test-coverage.sh
 ```
 
 Tests requiring PostgreSQL skip when `MILL_TEST_DATABASE_URL` is absent.
@@ -599,13 +599,13 @@ internal/workload/
   contract.go                     language-neutral CLI protocol implementation
 migrations/                       ordered PostgreSQL schema and lease history
 scripts/
-  setup                           pinned local kind/kubectl preparation
-  build-control-plane-images      build and inspect both Mill service images
-  deploy-local-control-plane      build, configure, and roll out services in kind
-  demo-word-count-deployed        complete S3 batch through deployed Mill Pods
-  demo-word-count-single-task     one manual Kubernetes task
-  demo-word-count-batch           complete node-local control-plane batch
-  demo-word-count-s3              complete shared-storage batch
+  setup.sh                        pinned local kind/kubectl preparation
+  build-control-plane-images.sh   build and inspect Mill service images
+  deploy-local-control-plane.sh   configure and deploy services in kind
+  demo-word-count-deployed.sh     S3 batch through deployed Mill Pods
+  demo-word-count-single-task.sh  one manual Kubernetes task
+  demo-word-count-batch.sh        complete node-local control-plane batch
+  demo-word-count-s3.sh           complete shared-storage batch
 README.md                         concise project entry point and roadmap
 AGENTS.md                         engineering, Git, and agent conventions
 ```

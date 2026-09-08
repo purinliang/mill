@@ -83,7 +83,7 @@ if [[ "${MILL_AVAILABILITY_PROFILE}" == three-node ]]; then
 	}
 fi
 kubectl --context "${context}" get customresourcedefinition clusters.postgresql.cnpg.io >/dev/null || {
-	printf 'CloudNativePG is not installed; run scripts/install-cloudnative-pg first.\n' >&2; exit 1;
+	printf 'CloudNativePG is not installed; run scripts/install-cloudnative-pg.sh first.\n' >&2; exit 1;
 }
 
 kubectl --context "${context}" apply -f deploy/kubernetes/availability/namespaces-rbac.yaml >/dev/null

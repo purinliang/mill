@@ -81,7 +81,7 @@ main() {
 	kubectl --context "${CONTEXT}" get nodes >/dev/null
 
 	MILL_JOB_IMAGE="${JOB_IMAGE}" MILL_EXECUTION_IMAGE="${EXECUTION_IMAGE}" \
-		./scripts/build-control-plane-images
+		./scripts/build-control-plane-images.sh
 	kind load docker-image "${JOB_IMAGE}" "${EXECUTION_IMAGE}" --name "${KIND_CLUSTER}"
 	temporary_directory="$(mktemp -d)"
 	sed -e "s/mill-system/${SYSTEM_NAMESPACE}/g" \

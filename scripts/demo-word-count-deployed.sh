@@ -143,7 +143,7 @@ MILL_KUBE_CONTEXT=kind-mill MILL_KIND_CLUSTER=mill \
 	AWS_REGION="${region}" MILL_S3_ENDPOINT="${pod_endpoint}" \
 	MILL_WORKLOAD_S3_REGION="${region}" MILL_WORKLOAD_S3_ENDPOINT="${pod_endpoint}" \
 	AWS_ACCESS_KEY_ID="${access_key}" AWS_SECRET_ACCESS_KEY="${secret_key}" \
-	./scripts/deploy-local-control-plane > "${run_directory}/deploy.log"
+	./scripts/deploy-local-control-plane.sh > "${run_directory}/deploy.log"
 
 start_port_forward() {
 	if [[ -n "${port_forward_pid}" ]]; then

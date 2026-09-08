@@ -396,7 +396,7 @@ Never`. This baseline proves Pod startup, PostgreSQL-backed readiness, service
 discovery, in-cluster configuration, and the RBAC boundary. It makes no
 availability claim.
 
-`scripts/demo-word-count-deployed` proves the complete boundary using unique
+`scripts/demo-word-count-deployed.sh` proves the complete boundary using unique
 temporary namespaces and disposable PostgreSQL/S3 fixtures. It submits 12
 logical tasks through the deployed REST endpoint, leases them through deployed
 gRPC and execution Pods, observes 12 S3-backed Kubernetes Jobs at bounded

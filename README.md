@@ -80,13 +80,13 @@ Prepare the pinned local kind and kubectl environment after Docker Engine is
 installed and accessible:
 
 ```bash
-./scripts/setup
+./scripts/setup.sh
 ```
 
 Build the two Mill control-plane images and verify their runtime identities:
 
 ```bash
-./scripts/build-control-plane-images
+./scripts/build-control-plane-images.sh
 ```
 
 This produces `mill/job:dev` and `mill/execution:dev`. No Kubernetes
@@ -99,7 +99,7 @@ storage, deploy the single-replica local control plane with:
 export MILL_DATABASE_URL='postgresql://mill:password@pod-reachable-host:5432/mill'
 export MILL_OUTPUT_ROOT_URI='s3://mill-output'
 export AWS_REGION='us-east-1'
-./scripts/deploy-local-control-plane
+./scripts/deploy-local-control-plane.sh
 ```
 
 This local deployment is a Milestone 7 baseline, not an HA configuration. See
@@ -109,44 +109,44 @@ requirements.
 Run the complete batch demonstration with node-local files:
 
 ```bash
-./scripts/demo-word-count-batch
+./scripts/demo-word-count-batch.sh
 ```
 
 Run the same batch through one Job process and two standalone execution
 replicas communicating over gRPC:
 
 ```bash
-./scripts/demo-word-count-batch --split-process
+./scripts/demo-word-count-batch.sh --split-process
 ```
 
 Run two execution replicas and kill the active lease owner:
 
 ```bash
-./scripts/demo-word-count-batch --replica-failover
+./scripts/demo-word-count-batch.sh --replica-failover
 ```
 
 Run the shared-storage demonstration:
 
 ```bash
-./scripts/demo-word-count-s3
+./scripts/demo-word-count-s3.sh
 ```
 
 Run the same 12-task S3 workload with both Mill services deployed as Pods:
 
 ```bash
-./scripts/demo-word-count-deployed
+./scripts/demo-word-count-deployed.sh
 ```
 
 Delete an active execution Pod and prove fenced takeover by another replica:
 
 ```bash
-./scripts/demo-word-count-deployed --execution-failover
+./scripts/demo-word-count-deployed.sh --execution-failover
 ```
 
 Delete the original Job Pod and prove REST/gRPC reconnection:
 
 ```bash
-./scripts/demo-word-count-deployed --job-failover
+./scripts/demo-word-count-deployed.sh --job-failover
 ```
 
 The S3 demonstration starts disposable PostgreSQL and S3-compatible SeaweedFS
