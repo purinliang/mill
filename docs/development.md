@@ -600,7 +600,10 @@ internal/execution/
     convert.go                    domain/Protobuf conversion
     v1/                           generated versioned Go bindings
 internal/objectstore/
-  store.go                        file and S3-compatible object access
+  store.go                        public API and URI-scheme dispatch
+  location.go                     shared URI parsing and validation
+  file.go                         local reads, ranges, and atomic writes
+  s3.go                           AWS client and S3 object operations
 internal/workload/
   contract.go                     language-neutral CLI protocol implementation
 migrations/                       ordered PostgreSQL schema and lease history

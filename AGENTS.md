@@ -277,6 +277,9 @@ job, task, shard, attempt, or state-transition semantics.
   endpoint is a local-development concern; use normal AWS SDK endpoint and
   credential resolution in AWS. Close read bodies and require seekable bodies
   for the current complete-object upload path.
+- Keep the exported object-store API in `internal/objectstore/store.go`.
+  URI parsing and the file and S3 backends belong in separate files with
+  lowercase implementation names. Backends receive only validated locations.
 - Keep backend-independent task observation/claim logic in
   `internal/execution/coordinator`, Kubernetes types and API calls in
   `internal/execution/kubernetes`, and their lifecycle/configuration in
