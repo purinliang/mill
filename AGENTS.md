@@ -357,6 +357,10 @@ job, task, shard, attempt, or state-transition semantics.
   transitions.
 - Integration-test PostgreSQL behavior and transaction boundaries once
   persistence exists.
+- Use small store fakes to test consumers of durable state. Test the PostgreSQL
+  repository itself against real disposable PostgreSQL rather than mocking SQL
+  calls; row locks, constraints, transactions, and concurrent claims are part
+  of the behavior Mill relies on.
 - Test the workload contract independently of orchestration.
 - Test object storage with a bounded fake S3 endpoint and preserve the live
   `scripts/demo-word-count-s3` check for ranged reads, output publication, and

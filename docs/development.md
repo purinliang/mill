@@ -488,6 +488,12 @@ through Mill's RPC tests, but excludes generated `*.pb.go` statements from the
 reported coverage percentage. Test the handwritten RPC client/server adapters
 and domain behavior rather than generated getters and descriptors.
 
+Coverage is weighted by statements, not averaged across files or packages. The
+hermetic run skips PostgreSQL integration tests, so its total does not represent
+coverage of the durable repository. Mill uses small `Store` fakes when testing
+HTTP, coordinator, and transport behavior, but tests repository SQL against a
+real PostgreSQL instance instead of mocking expected SQL calls.
+
 Prepare a disposable migrated database and enable PostgreSQL integration tests:
 
 ```bash
@@ -496,6 +502,13 @@ for migration in migrations/*.sql; do
   psql 'postgresql:///mill_test' -v ON_ERROR_STOP=1 -f "$migration"
 done
 MILL_TEST_DATABASE_URL='postgresql:///mill_test' go test -race ./...
+```
+
+With the same environment variable set, include PostgreSQL behavior in the
+handwritten coverage report:
+
+```bash
+MILL_TEST_DATABASE_URL='postgresql:///mill_test' ./scripts/test-coverage
 ```
 
 Tests requiring PostgreSQL skip when `MILL_TEST_DATABASE_URL` is absent.
