@@ -1,5 +1,5 @@
-// Package objectstore opens Mill inputs and publishes workload outputs by URI.
-// This file defines the public Store API and delegates by URI scheme.
+// Package objectstore opens Mill inputs and publishes workload outputs through
+// absolute file:// and s3:// URIs.
 package objectstore
 
 import (
@@ -8,11 +8,20 @@ import (
 	"io"
 )
 
+// Config configures the optional S3 backend. Its zero value enables only local
+// file access.
 type Config struct {
-	Region   string
+	// Region enables S3 access using the default AWS configuration chain.
+	Region string
+
+	// Endpoint selects an S3-compatible service instead of the AWS endpoint.
+	// It requires Region to be set.
 	Endpoint string
 }
 
+// Store reads inputs and publishes outputs through supported object URIs. A
+// Store is safe for concurrent use, but it does not coordinate writes to the
+// same URI.
 type Store struct {
 	s3 *s3Backend
 }
@@ -26,8 +35,8 @@ func (r *sectionReadCloser) Close() error {
 	return r.closer.Close()
 }
 
-// New creates a file-only store when Region and Endpoint are empty. Setting a
-// region enables S3; Endpoint is only needed by S3-compatible local services.
+// New constructs a Store from config. An empty Region creates a file-only
+// store; a non-empty Region loads the default AWS configuration for S3.
 func New(ctx context.Context, config Config) (*Store, error) {
 	if config.Endpoint != "" && config.Region == "" {
 		return nil, errors.New(
@@ -45,6 +54,8 @@ func New(ctx context.Context, config Config) (*Store, error) {
 	return &Store{s3: s3}, nil
 }
 
+// Open opens the complete object at rawURI. The caller must close the returned
+// reader.
 func (s *Store) Open(
 	ctx context.Context,
 	rawURI string,
@@ -66,6 +77,9 @@ func (s *Store) Open(
 	}
 }
 
+// OpenRange opens the byte range [start, end) from the object at rawURI. The
+// caller must close the returned reader. The range must be non-negative and
+// non-empty.
 func (s *Store) OpenRange(
 	ctx context.Context,
 	rawURI string,
@@ -97,11 +111,10 @@ func (s *Store) OpenRange(
 	}
 }
 
-// Put publishes one complete object at rawURI. It does not coordinate
-// concurrent writers: callers must assign a unique URI to each logical write.
-// If writers target the same URI, a complete later write may replace an
-// earlier one. File writes use atomic rename; S3 publishes after PutObject
-// succeeds.
+// Put atomically publishes one complete object at rawURI from body's current
+// position. It does not coordinate concurrent writers: callers must assign a
+// unique URI to each logical write. If writers target the same URI, a complete
+// later write may replace an earlier one.
 func (s *Store) Put(
 	ctx context.Context,
 	rawURI string,
