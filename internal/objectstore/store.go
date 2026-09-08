@@ -97,8 +97,11 @@ func (s *Store) OpenRange(
 	}
 }
 
-// Put publishes one complete object. File writes use rename for local
-// atomicity; S3 exposes the replacement only after PutObject succeeds.
+// Put publishes one complete object at rawURI. It does not coordinate
+// concurrent writers: callers must assign a unique URI to each logical write.
+// If writers target the same URI, a complete later write may replace an
+// earlier one. File writes use atomic rename; S3 publishes after PutObject
+// succeeds.
 func (s *Store) Put(
 	ctx context.Context,
 	rawURI string,
