@@ -512,6 +512,11 @@ MILL_TEST_DATABASE_URL='postgresql:///mill_test' ./scripts/test-coverage
 ```
 
 Tests requiring PostgreSQL skip when `MILL_TEST_DATABASE_URL` is absent.
+The opt-in suite also builds and launches the real Job-service executable,
+verifies liveness and readiness, submits and replays a job through HTTP,
+retrieves its status, and requires graceful SIGTERM shutdown. Its assertions
+use the public HTTP contract; direct database access is limited to removing its
+fixture afterward.
 Kubernetes demonstrations are explicit scripts rather than part of the normal
 unit suite.
 

@@ -373,6 +373,9 @@ job, task, shard, attempt, or state-transition semantics.
   end-to-end check of stable attempt and Kubernetes identities.
 - Keep tests hermetic where practical, and document any required external
   service or cluster.
+- Test composition roots as child processes through their public transports;
+  do not call private `main`/`run` helpers for coverage. Bound startup and
+  shutdown waits, capture diagnostics, and always terminate child processes.
 
 ## Change review and handoff
 
