@@ -514,9 +514,9 @@ MILL_TEST_DATABASE_URL='postgresql:///mill_test' ./scripts/test-coverage
 Tests requiring PostgreSQL skip when `MILL_TEST_DATABASE_URL` is absent.
 The opt-in suite also builds and launches the real Job-service executable,
 verifies liveness and readiness, submits and replays a job through HTTP,
-retrieves its status, and requires graceful SIGTERM shutdown. Its assertions
-use the public HTTP contract; direct database access is limited to removing its
-fixture afterward.
+claims and transitions an attempt through the public gRPC API, observes the
+durable progress through HTTP, and requires graceful SIGTERM shutdown. Direct
+database access is limited to removing its fixture afterward.
 The hermetic suite separately builds and launches the real executor executable
 against in-memory gRPC and Kubernetes HTTP test servers. It verifies a claimed
 attempt becomes a correctly addressed Kubernetes Job and that the executor

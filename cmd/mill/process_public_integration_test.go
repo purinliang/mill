@@ -18,7 +18,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/purinliang/mill/internal/execution"
+	"github.com/purinliang/mill/internal/executionrpc"
+	executionv1 "github.com/purinliang/mill/internal/executionrpc/v1"
 	"github.com/purinliang/mill/internal/job"
 )
 
@@ -35,6 +40,7 @@ func TestJobServiceProcessServesJobsAndShutsDownGracefully(t *testing.T) {
 	}
 
 	address := reserveLoopbackAddress(t)
+	grpcAddress := reserveLoopbackAddress(t)
 	fixtureDirectory := t.TempDir()
 	inputFilename := filepath.Join(fixtureDirectory, "input.jsonl")
 	if err := os.WriteFile(inputFilename, []byte("{\"record\":1}\n{\"record\":2}\n{\"record\":3}\n"), 0o600); err != nil {
@@ -57,7 +63,7 @@ func TestJobServiceProcessServesJobsAndShutsDownGracefully(t *testing.T) {
 		"MILL_OUTPUT_ROOT_URI": outputRootURI,
 		"MILL_PARALLELISM":     "2",
 		"MILL_HTTP_ADDR":       address,
-		"MILL_GRPC_ADDR":       "",
+		"MILL_GRPC_ADDR":       grpcAddress,
 		"AWS_REGION":           "",
 		"MILL_S3_ENDPOINT":     "",
 	})
@@ -97,6 +103,44 @@ func TestJobServiceProcessServesJobsAndShutsDownGracefully(t *testing.T) {
 	status := getProcessJob(t, client, address, created.ID)
 	if status.ID != created.ID || status.Progress != created.Progress {
 		t.Fatalf("job status = %+v", status)
+	}
+
+	connection, err := grpc.NewClient(grpcAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("create execution gRPC connection: %v", err)
+	}
+	defer connection.Close()
+	executionClient, err := executionrpc.NewClient(executionv1.NewExecutionServiceClient(connection), time.Second)
+	if err != nil {
+		t.Fatalf("create execution client: %v", err)
+	}
+	claimed, err := executionClient.ClaimNextAttempt(context.Background(), "kubernetes", "process-test-executor")
+	if err != nil {
+		t.Fatalf("claim attempt over gRPC: %v", err)
+	}
+	if claimed.Attempt.JobID != created.ID || claimed.ShardIndex != 0 ||
+		claimed.Attempt.State != execution.AttemptStateStarting || claimed.Attempt.LeaseToken == "" {
+		t.Fatalf("claimed attempt = %+v", claimed)
+	}
+	if claimed.InputURI != inputURI || claimed.InputStartByte != 0 || claimed.InputEndByte <= 0 ||
+		!strings.HasPrefix(claimed.OutputURI, created.Output.URI+"tasks/0/attempts/") {
+		t.Fatalf("claimed workload contract = %+v", claimed)
+	}
+	running, err := executionClient.MarkAttemptRunning(context.Background(), claimed.Attempt.ID, claimed.Attempt.LeaseToken, "kubernetes-job-uid-1")
+	if err != nil || running.State != execution.AttemptStateRunning || running.ExternalID != "kubernetes-job-uid-1" {
+		t.Fatalf("mark running = %+v, error = %v", running, err)
+	}
+	status = getProcessJob(t, client, address, created.ID)
+	if status.Progress != (job.Progress{Total: 3, Pending: 2, Running: 1}) {
+		t.Fatalf("running progress = %+v", status.Progress)
+	}
+	completed, err := executionClient.CompleteAttempt(context.Background(), claimed.Attempt.ID, claimed.Attempt.LeaseToken)
+	if err != nil || completed.State != execution.AttemptStateCompleted {
+		t.Fatalf("complete attempt = %+v, error = %v", completed, err)
+	}
+	status = getProcessJob(t, client, address, created.ID)
+	if status.State != job.StateRunning || status.Progress != (job.Progress{Total: 3, Pending: 2, Completed: 1}) {
+		t.Fatalf("partially completed job = state %q progress %+v", status.State, status.Progress)
 	}
 
 	if err := process.Process.Signal(syscall.SIGTERM); err != nil {
