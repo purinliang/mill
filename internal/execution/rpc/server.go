@@ -9,11 +9,11 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/purinliang/mill/internal/execution"
-	executionv1 "github.com/purinliang/mill/internal/executionrpc/v1"
+	executionv1 "github.com/purinliang/mill/internal/execution/rpc/v1"
 )
 
 // Backend is implemented by the Job service's durable metadata repository.
-// The lease duration is supplied by the server so executor replicas cannot
+// The lease duration is supplied by the server so execution replicas cannot
 // choose their own ownership policy.
 type Backend interface {
 	LeaseActiveAttempts(context.Context, string, string, time.Duration) ([]execution.ClaimedAttempt, error)

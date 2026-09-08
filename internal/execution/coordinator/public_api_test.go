@@ -8,8 +8,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/purinliang/mill/internal/coordinator"
 	"github.com/purinliang/mill/internal/execution"
+	"github.com/purinliang/mill/internal/execution/coordinator"
 )
 
 type publicStore struct {
@@ -73,7 +73,7 @@ func TestTickRecordsFastCompletionInValidTransitionOrder(t *testing.T) {
 		Store:      store,
 		LeaseOwner: "executor-a",
 		Logger:     log.New(io.Discard, "", 0),
-		Executor: publicExecutor(func(context.Context, execution.ClaimedAttempt) (coordinator.Observation, error) {
+		Runtime: publicExecutor(func(context.Context, execution.ClaimedAttempt) (coordinator.Observation, error) {
 			return coordinator.Observation{ExternalID: "kubernetes-job-uid", Completed: true}, nil
 		}),
 	}
@@ -105,7 +105,7 @@ func TestTickObservesEveryActiveAttemptBeforeReturningErrors(t *testing.T) {
 		Store:      store,
 		LeaseOwner: "executor-a",
 		Logger:     log.New(io.Discard, "", 0),
-		Executor: publicExecutor(func(_ context.Context, attempt execution.ClaimedAttempt) (coordinator.Observation, error) {
+		Runtime: publicExecutor(func(_ context.Context, attempt execution.ClaimedAttempt) (coordinator.Observation, error) {
 			observed = append(observed, attempt.Attempt.ID)
 			if attempt.Attempt.ID == "attempt-1" {
 				return coordinator.Observation{}, firstFailure
@@ -129,17 +129,17 @@ func TestTickObservesEveryActiveAttemptBeforeReturningErrors(t *testing.T) {
 func TestTickReturnsLeaseFailureWithoutClaimingOrExecuting(t *testing.T) {
 	leaseFailure := errors.New("lease active attempts failed")
 	store := &publicStore{leaseError: leaseFailure}
-	executorCalls := 0
+	runtimeCalls := 0
 	runner := newPublicCoordinator(store, func(context.Context, execution.ClaimedAttempt) (coordinator.Observation, error) {
-		executorCalls++
+		runtimeCalls++
 		return coordinator.Observation{}, nil
 	})
 
 	if err := runner.Tick(context.Background()); !errors.Is(err, leaseFailure) {
 		t.Fatalf("Tick error = %v, want lease failure", err)
 	}
-	if store.claimCalls != 0 || executorCalls != 0 {
-		t.Fatalf("claim calls = %d, executor calls = %d", store.claimCalls, executorCalls)
+	if store.claimCalls != 0 || runtimeCalls != 0 {
+		t.Fatalf("claim calls = %d, runtime calls = %d", store.claimCalls, runtimeCalls)
 	}
 }
 
@@ -147,7 +147,7 @@ func TestTickReturnsUnexpectedClaimFailure(t *testing.T) {
 	claimFailure := errors.New("claim failed")
 	store := &publicStore{claimError: claimFailure}
 	runner := newPublicCoordinator(store, func(context.Context, execution.ClaimedAttempt) (coordinator.Observation, error) {
-		t.Fatal("executor called without a claimed attempt")
+		t.Fatal("runtime called without a claimed attempt")
 		return coordinator.Observation{}, nil
 	})
 
@@ -161,17 +161,17 @@ func TestTickReturnsUnexpectedClaimFailure(t *testing.T) {
 
 func TestTickBoundsNewClaimsToOneHundredPerPass(t *testing.T) {
 	store := &publicStore{claimsRemaining: 101}
-	executorCalls := 0
+	runtimeCalls := 0
 	runner := newPublicCoordinator(store, func(context.Context, execution.ClaimedAttempt) (coordinator.Observation, error) {
-		executorCalls++
+		runtimeCalls++
 		return coordinator.Observation{}, nil
 	})
 
 	if err := runner.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
-	if store.claimCalls != 100 || executorCalls != 100 || store.claimsRemaining != 1 {
-		t.Fatalf("claim calls = %d, executor calls = %d, remaining = %d", store.claimCalls, executorCalls, store.claimsRemaining)
+	if store.claimCalls != 100 || runtimeCalls != 100 || store.claimsRemaining != 1 {
+		t.Fatalf("claim calls = %d, runtime calls = %d, remaining = %d", store.claimCalls, runtimeCalls, store.claimsRemaining)
 	}
 }
 
@@ -197,7 +197,7 @@ func TestTickReturnsRunningTransitionFailure(t *testing.T) {
 
 func newPublicCoordinator(store execution.Store, execute publicExecutor) *coordinator.Coordinator {
 	return &coordinator.Coordinator{
-		Store: store, Executor: execute, LeaseOwner: "executor-a",
+		Store: store, Runtime: execute, LeaseOwner: "executor-a",
 		Logger: log.New(io.Discard, "", 0),
 	}
 }

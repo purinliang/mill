@@ -16,10 +16,10 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/purinliang/mill/internal/coordinator"
-	"github.com/purinliang/mill/internal/executionrpc"
-	executionv1 "github.com/purinliang/mill/internal/executionrpc/v1"
-	"github.com/purinliang/mill/internal/kubernetes"
+	"github.com/purinliang/mill/internal/execution/coordinator"
+	"github.com/purinliang/mill/internal/execution/kubernetes"
+	"github.com/purinliang/mill/internal/execution/rpc"
+	executionv1 "github.com/purinliang/mill/internal/execution/rpc/v1"
 )
 
 const (
@@ -38,10 +38,10 @@ func main() {
 	defer stop()
 	configuration, err := configFromEnvironment(os.Getenv)
 	if err != nil {
-		log.Fatalf("configure Mill executor: %v", err)
+		log.Fatalf("configure Mill execution service: %v", err)
 	}
 	if err := run(ctx, configuration); err != nil && !errors.Is(err, context.Canceled) {
-		log.Fatalf("run Mill executor: %v", err)
+		log.Fatalf("run Mill execution service: %v", err)
 	}
 }
 
@@ -107,18 +107,18 @@ func run(ctx context.Context, configuration config) error {
 	if err != nil {
 		return err
 	}
-	executor, err := kubernetes.New(configuration.kubernetes)
+	runtime, err := kubernetes.New(configuration.kubernetes)
 	if err != nil {
 		return err
 	}
-	leaseOwner, err := newExecutorInstanceID()
+	leaseOwner, err := newExecutionInstanceID()
 	if err != nil {
 		return err
 	}
 	worker := &coordinator.Coordinator{
-		Store: store, Executor: executor, Logger: log.Default(), LeaseOwner: leaseOwner,
+		Store: store, Runtime: runtime, Logger: log.Default(), LeaseOwner: leaseOwner,
 	}
-	log.Printf("Mill executor instance=%s job_service=%s", leaseOwner, configuration.jobGRPCTarget)
+	log.Printf("Mill execution instance=%s job_service=%s", leaseOwner, configuration.jobGRPCTarget)
 	return runCoordinator(ctx, worker, coordinatorInterval)
 }
 
@@ -137,10 +137,10 @@ func runCoordinator(ctx context.Context, worker *coordinator.Coordinator, interv
 	}
 }
 
-func newExecutorInstanceID() (string, error) {
+func newExecutionInstanceID() (string, error) {
 	identifier := make([]byte, 16)
 	if _, err := rand.Read(identifier); err != nil {
-		return "", fmt.Errorf("generate executor instance ID: %w", err)
+		return "", fmt.Errorf("generate execution instance ID: %w", err)
 	}
-	return "executor-" + hex.EncodeToString(identifier), nil
+	return "execution-" + hex.EncodeToString(identifier), nil
 }

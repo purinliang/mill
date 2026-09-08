@@ -6,12 +6,12 @@ scope.
 
 ## Current project state
 
-Mill currently has a Job-service process and a standalone executor process. The
+Mill currently has a Job process and a standalone execution process. The
 Job service validates and plans JSONL inputs and stores jobs, logical tasks,
-attempts, retry eligibility, and progress in PostgreSQL. Executor replicas use
+attempts, retry eligibility, and progress in PostgreSQL. Execution replicas use
 gRPC to lease that work and launch one native Kubernetes Job for each attempt.
 The workload CLI contract, local-file execution, bounded retries, attempt
-history, deterministic Kubernetes identity, and executor restart reconciliation
+history, deterministic Kubernetes identity, and execution restart reconciliation
 are implemented.
 
 The object-storage adapter supports `file://` and `s3://`. S3-backed attempts
@@ -20,18 +20,18 @@ pinning. `scripts/demo-word-count-batch` exercises the complete node-local
 control plane; its failure and restart modes test retry exhaustion and process
 recovery. Per-attempt PostgreSQL leases now provide renewable ownership,
 expired-owner takeover, and fencing tokens for all state mutations.
-The batch demo's `--replica-failover` mode runs two executors concurrently,
-rejects premature lease stealing, kills the primary, and verifies fenced
-takeover of the same attempts and Kubernetes Jobs.
+The batch demo's `--replica-failover` mode runs two execution processes
+concurrently. It rejects premature lease stealing, kills the primary, and
+verifies fenced takeover of the same attempts and Kubernetes Jobs.
 `scripts/demo-word-count-s3` proves the shared-storage path against a disposable
 S3-compatible service and exact local baseline.
 `scripts/demo-word-count-deployed` proves the same 12-task flow through
-deployed Job-service and executor Pods in unique temporary namespaces, then
+deployed Job and execution Pods in unique temporary namespaces, then
 removes only its owned cluster resources and fixture containers while retaining
-diagnostics. Its `--executor-failover` mode scales the executor Deployment to
+diagnostics. Its `--execution-failover` mode scales the execution Deployment to
 two, deletes the active lease owner's Pod, and proves fenced takeover without
 changing attempt or Kubernetes Job identities. `scripts/setup` provides a
-repeatable local kind environment. Its `--job-service-failover` mode separately
+repeatable local kind environment. Its `--job-failover` mode separately
 deletes the original REST/gRPC Pod after adding a ready replica and proves both
 client paths reconnect without changing durable execution identity.
 
@@ -39,30 +39,31 @@ The backend-independent execution model and store contract have been extracted
 from `internal/job`. A versioned Protobuf schema and gRPC client/server adapters
 now carry the implemented lease operations with server-owned lease duration,
 fencing tokens, deadlines, and domain error mapping. They are tested over an
-in-memory transport. `cmd/mill` can serve the Job-side API on an optional 1 MiB
-bounded gRPC listener with graceful shutdown and no longer imports coordinator
-or Kubernetes packages. `cmd/mill-executor` is the only runnable
+in-memory transport. `cmd/mill-job` can serve the Job-side API on an optional
+1 MiB bounded gRPC listener with graceful shutdown and no longer imports
+coordinator or Kubernetes packages. `cmd/mill-execution` is the only runnable
 gRPC-to-Kubernetes coordinator and has no Job-package or PostgreSQL dependency.
 The batch demo's `--split-process` mode proves the 12-task flow
-through one Job service and two live standalone executor replicas. An executor
+through one Job service and two live standalone execution replicas. One replica
 may own all current leases while the other remains standby; Kubernetes workload
-Pods, not executor replicas, provide task parallelism. Jobs select an optional
+Pods, not execution replicas, provide task parallelism. Jobs select an optional
 `small`, `medium`, or `large` resource class; the Job service persists resolved
-CPU and memory values and executors receive them through gRPC. The
+CPU and memory values and execution replicas receive them through gRPC. The
 `--replica-failover` mode proves survivor takeover across this boundary while
 preserving attempt and Kubernetes Job identities.
 
-Minimal non-root OCI images package the Job service and executor. The executor
-supports mutually exclusive explicit kubeconfig-context and in-cluster
-service-account modes. A local kind manifest runs one replica of each service,
-separates control-plane and workload namespaces, and limits the executor to
-creating and getting Jobs. It depends on externally managed, Pod-reachable
-PostgreSQL and S3-compatible storage and makes no availability claim. Workload
-image inspection, generic output verification/aggregation, wider fault
-recovery, PostgreSQL replication, and multi-node availability remain planned.
-Add implementation only in small, explicitly requested increments. Do not add
-more Dockerfiles, Kubernetes manifests, CI workflows, Terraform, or unrelated
-infrastructure unless a later task requires them.
+Minimal non-root OCI images package the Job and execution services. The
+execution service supports either an explicit kubeconfig context or standard
+in-cluster service-account credentials, but never both. A local kind manifest
+runs one replica of each service, separates control-plane and workload
+namespaces, and limits the execution service to creating and getting Jobs. It
+depends on externally managed, Pod-reachable PostgreSQL and S3-compatible
+storage and makes no availability claim. Workload image inspection, generic
+output verification/aggregation, wider fault recovery, PostgreSQL replication,
+and multi-node availability remain planned. Add implementation only in small,
+explicitly requested increments. Do not add more Dockerfiles, Kubernetes
+manifests, CI workflows, Terraform, or unrelated infrastructure unless a later
+task explicitly requires them.
 
 `deploy/kubernetes/availability` contains the explicitly requested multi-node
 foundation. Preserve the distinction between its alternative profiles: two
@@ -87,7 +88,7 @@ than making historical DDL silently repeatable.
 Preserve `scripts/demo-availability` as the destructive two-node acceptance
 proof. It must refuse fewer than two hostname failure domains, require all
 three replica pairs to be ready and anti-affined before mutation, and retain
-evidence. Executor, Job-service, and PostgreSQL primary Pod deletion must occur
+evidence. Execution, Job, and PostgreSQL primary Pod deletion must occur
 against one active 12-task batch. Require fenced takeover, a changed database
 primary, stable attempt and Kubernetes Job identities, exactly one attempt per
 task, restored replicas, synchronous streaming, and exact merged output. Do
@@ -139,9 +140,9 @@ operational and maintenance cost.
   only current format, partition sizing is internal policy, and parallelism is
   server configuration captured durably on each job.
 - Keep workload resources server-defined. Accept only the named resource
-  classes, default omission to `small`, persist both the class and resolved
-  integer requests/limits on the job, and pass resolved values—not policy
-  names—to executors. A retry must retain its job's persisted resources.
+  classes, default omission to `small`, and persist both the class and resolved
+  integer requests/limits on the job. Pass resolved values—not policy names—to
+  execution replicas, and retain the job's persisted settings for every retry.
 - Use explicit, validated state transitions. Make transitions idempotent where
   retries, reconciliation, or process restarts can repeat an operation.
 - Persist a `starting` attempt and mark its task active in one transaction
@@ -168,36 +169,36 @@ operational and maintenance cost.
   new attempt. Missing running Jobs and identity mismatches require
   investigation; never silently recreate them.
 - Preserve `scripts/demo-word-count-batch --restart-coordinator` as a real
-  process-boundary recovery test. It must use SIGKILL only on the child executor
-  PID, keep the Job service, PostgreSQL, and Kubernetes alive, compare stable
-  attempt IDs and Job UIDs, reject duplicate attempts, and still verify the
-  complete workload output.
+  process-boundary recovery test. It must use SIGKILL only on the child
+  execution PID, keep the Job service, PostgreSQL, and Kubernetes alive,
+  compare stable attempt IDs and Job UIDs, reject duplicate attempts, and
+  still verify the complete workload output.
 - Preserve `scripts/demo-word-count-batch --replica-failover` as the
   simultaneous-process lease test. Both processes must overlap before SIGKILL;
   the standby must not steal live leases, and takeover must change fencing
   tokens without changing attempt IDs, external UIDs, or Kubernetes Jobs.
 - Preserve `scripts/demo-word-count-batch --split-process` as the runtime
   boundary test. The Job service must not start an in-process coordinator, two
-  standalone executor processes must remain live, neither executor may receive
+  standalone execution processes must remain live, neither process may receive
   PostgreSQL configuration, and all task outputs must match the local baseline.
 - Preserve `scripts/demo-word-count-deployed` as the packaged control-plane
-  proof. Each run must use unique namespaces, keep the executor free of
+  proof. Each run must use unique namespaces, keep the execution service free of
   PostgreSQL credentials, execute exactly 12 S3-backed tasks with bounded
   parallelism, reject hostPath/node placement, compare exact output, retain
   diagnostics, and remove only resources created by that run.
-- Preserve `scripts/demo-word-count-deployed --executor-failover` as the
-  single-node executor Pod failure proof. The standby must first respect live
+- Preserve `scripts/demo-word-count-deployed --execution-failover` as the
+  single-node execution Pod failure proof. The standby must first respect live
   leases; deletion must target the Pod whose instance owns the initial leases;
   takeover must replace lease owners and fencing tokens while preserving task,
   attempt, external UID, Kubernetes Job name, and Job UID identities. Require
   exactly 12 first attempts, restored replica availability, and exact output.
-  Do not describe this as Job-service, database, storage, node, or partition
+  Do not describe this as Job, database, storage, node, or partition
   availability.
-- Preserve `scripts/demo-word-count-deployed --job-service-failover` as the
-  single-node Job-service Pod failure proof. Begin with one endpoint, add and
+- Preserve `scripts/demo-word-count-deployed --job-failover` as the
+  single-node Job Pod failure proof. Begin with one endpoint, add and
   verify a ready standby, delete the original Pod, and require both retrying
-  REST access and the existing executor gRPC client to recover through the
-  Service. Preserve lease owner/token and attempt/Job identities, exactly 12
+  REST access and the existing execution-service gRPC client to recover through
+  the Service. Preserve lease owner/token and attempt/Job identities, exactly 12
   first attempts, restored replica availability, and exact output. Do not
   describe this as database, storage, node, or partition availability.
 - Do not implement a custom cluster scheduler when Kubernetes provides a
@@ -216,11 +217,11 @@ operational and maintenance cost.
 - Prefer deterministic tests where practical. Add fault and recovery tests as
   distributed behavior is introduced.
 - The approved deployment boundary is one replicated Job service and
-  replicated executor workers. Keep planning inside the Job service and do not
+  replicated execution service. Keep planning inside the Job service and do not
   create a separate planner service without measured independent scaling need.
   Do not split other packages into services merely to increase Pod count.
 - As the service-boundary milestone proceeds, make the Job service the sole
-  owner of Mill metadata tables. Executor replicas must access the implemented
+  owner of Mill metadata tables. Execution replicas must access the implemented
   lease operations through a versioned Protobuf/gRPC domain API with deadlines,
   fencing tokens, state guards, and idempotent mutations. Do not use gRPC as a
   durable queue or change the workload CLI contract to gRPC.
@@ -254,10 +255,10 @@ job, task, shard, attempt, or state-transition semantics.
 
 ## Code organization
 
-- Keep Mill as one Go module with the implemented Job-service and executor
+- Keep Mill as one Go module with the implemented Job and execution
   binaries. A logical module is not automatically a service; do not create more
   service boundaries without a concrete operational reason.
-- Keep `cmd/mill` as the composition root: environment configuration,
+- Keep `cmd/mill-job` as the composition root: environment configuration,
   dependency construction, route assembly, process lifecycle, and shutdown
   belong there. Do not put job or execution policy in `main.go`.
 - Organize `internal` by cohesive capability, not by generic technical layers.
@@ -276,20 +277,20 @@ job, task, shard, attempt, or state-transition semantics.
   credential resolution in AWS. Close read bodies and require seekable bodies
   for the current complete-object upload path.
 - Keep backend-independent task observation/claim logic in
-  `internal/coordinator`, Kubernetes types and API calls in
-  `internal/kubernetes`, and their lifecycle/configuration in
-  `cmd/mill-executor/main.go`. Word-count aggregation stays in the example.
-- Require an executor to select exactly one Kubernetes credential source. Use
-  an explicit kubeconfig context outside the cluster and client-go's standard
-  service-account configuration inside it; do not silently fall back between
-  clusters. Keep namespace selection explicit in both modes, and grant only the
-  RBAC operations the executor actually uses.
+  `internal/execution/coordinator`, Kubernetes types and API calls in
+  `internal/execution/kubernetes`, and their lifecycle/configuration in
+  `cmd/mill-execution/main.go`. Word-count aggregation stays in the example.
+- Require the execution service to select exactly one Kubernetes credential
+  source. Outside the cluster, use an explicit kubeconfig context. Inside it,
+  use client-go's standard service-account configuration. Do not silently fall
+  back between clusters. Keep namespace selection explicit in both modes.
+  Grant only the RBAC operations the execution service actually uses.
 - Keep the local deployment's Mill services in `mill-system` and generated Jobs
   in `mill-workloads`. The Job service must not mount a service-account token.
-  The executor Role remains namespace-scoped to `create` and `get` Jobs unless
+  The execution Role remains namespace-scoped to `create` and `get` Jobs unless
   a concrete implemented operation requires another verb or resource. Never
-  give the executor PostgreSQL credentials or permission to read workload
-  Secrets.
+  provide PostgreSQL credentials to the execution service or grant it
+  permission to read workload Secrets.
 - Treat `deploy/kubernetes/local` as a kind-only, single-replica baseline. It
   uses preloaded development images and external PostgreSQL/S3; do not reuse it
   to claim K3s, database, node, or object-storage availability. Keep secret
@@ -297,14 +298,14 @@ job, task, shard, attempt, or state-transition semantics.
 - Defer the broad architecture/code-ownership refactor until Milestone 8 is
   complete. Continue focused per-slice review and fix demonstrated correctness
   issues immediately; deferral is not permission to accumulate known defects.
-- Keep executor-facing attempt types, sentinel domain failures, and the
+- Keep execution-facing attempt types, sentinel domain failures, and the
   transport-independent store contract in `internal/execution`. Coordinator
   and Kubernetes packages must not import `internal/job`.
 - Keep the versioned schema under `api/proto/mill/execution/v1` and transport
-  adapters in `internal/executionrpc`. Lease duration is Job-service policy,
-  never an executor request field. Commit generated bindings with schema
-  changes and do not hand-edit them. The RPC client package must not pull in
-  `internal/job` or PostgreSQL transitively.
+  adapters in `internal/execution/rpc`. Lease duration is Job policy,
+  never an execution-service request field. Commit generated bindings with
+  schema changes and do not hand-edit them. The RPC client package must not
+  pull in `internal/job` or PostgreSQL transitively.
 - Keep the language-neutral CLI protocol and its Go serialization/parser in
   `internal/workload`. Reserve top-level `cmd` for Mill's own executables.
   Example executable entrypoints belong under `examples/<name>/cmd/<command>`,
@@ -476,9 +477,9 @@ Examples:
 
 ```text
 feat(api): add job creation endpoint
-feat(executor): launch indexed Kubernetes jobs
+feat(execution): launch indexed Kubernetes jobs
 feat(storage): persist task state in PostgreSQL
-test(executor): cover failed task retry
+test(execution): cover failed task retry
 docs(readme): document execution lifecycle
 refactor(job): simplify task state transitions
 ```

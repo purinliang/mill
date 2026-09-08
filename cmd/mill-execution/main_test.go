@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/purinliang/mill/internal/coordinator"
 	"github.com/purinliang/mill/internal/execution"
+	"github.com/purinliang/mill/internal/execution/coordinator"
 )
 
 type unavailableStore struct {
@@ -102,16 +102,16 @@ func TestConfigRequiresJobServiceAndBoundsTimeout(t *testing.T) {
 	}
 }
 
-func TestExecutorInstanceIDsAreUnique(t *testing.T) {
-	first, err := newExecutorInstanceID()
+func TestExecutionInstanceIDsAreUnique(t *testing.T) {
+	first, err := newExecutionInstanceID()
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := newExecutorInstanceID()
+	second, err := newExecutionInstanceID()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first == second || !strings.HasPrefix(first, "executor-") || len(first) != len("executor-")+32 {
+	if first == second || !strings.HasPrefix(first, "execution-") || len(first) != len("execution-")+32 {
 		t.Fatalf("instance IDs = %q and %q", first, second)
 	}
 }
@@ -119,7 +119,7 @@ func TestExecutorInstanceIDsAreUnique(t *testing.T) {
 func TestCoordinatorRetriesAfterJobServiceError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	store := &unavailableStore{cancel: cancel}
-	worker := &coordinator.Coordinator{Store: store, LeaseOwner: "executor-a"}
+	worker := &coordinator.Coordinator{Store: store, LeaseOwner: "execution-a"}
 	err := runCoordinator(ctx, worker, time.Millisecond)
 	if !errors.Is(err, context.Canceled) || store.calls != 2 {
 		t.Fatalf("error = %v, lease calls = %d", err, store.calls)

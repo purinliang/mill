@@ -16,14 +16,14 @@ three-node) required_nodes=3; postgres_manifest=postgres-three-node.yaml ;;
 esac
 : "${MILL_DATABASE_PASSWORD:?MILL_DATABASE_PASSWORD is required}"
 : "${MILL_JOB_IMAGE:?MILL_JOB_IMAGE must be reachable from every node}"
-: "${MILL_EXECUTOR_IMAGE:?MILL_EXECUTOR_IMAGE must be reachable from every node}"
+: "${MILL_EXECUTION_IMAGE:?MILL_EXECUTION_IMAGE must be reachable from every node}"
 : "${MILL_OUTPUT_ROOT_URI:?MILL_OUTPUT_ROOT_URI is required}"
 : "${AWS_REGION:?AWS_REGION is required}"
 [[ "${MILL_OUTPUT_ROOT_URI}" == s3://* ]] || { printf 'MILL_OUTPUT_ROOT_URI must use s3://.\n' >&2; exit 1; }
 [[ "${MILL_DATABASE_PASSWORD}" =~ ^[A-Za-z0-9._~-]{16,128}$ ]] || {
 	printf 'MILL_DATABASE_PASSWORD must be 16-128 URL-safe characters.\n' >&2; exit 1;
 }
-for image in "${MILL_JOB_IMAGE}" "${MILL_EXECUTOR_IMAGE}"; do
+for image in "${MILL_JOB_IMAGE}" "${MILL_EXECUTION_IMAGE}"; do
 	[[ "${image}" =~ ^[A-Za-z0-9][A-Za-z0-9._/:@-]+$ ]] || {
 		printf 'Image references must contain no whitespace or YAML control characters.\n' >&2; exit 1;
 	}
@@ -183,29 +183,29 @@ if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
 		AWS_SESSION_TOKEN "${AWS_SESSION_TOKEN:-}"
 	apply_environment_secret mill-workloads "${credentials_secret}" "${temporary_directory}/workload.env"
 fi
-write_environment_file "${temporary_directory}/executor.env" \
+write_environment_file "${temporary_directory}/execution.env" \
 	MILL_WORKLOAD_S3_REGION "${MILL_WORKLOAD_S3_REGION:-${AWS_REGION}}" \
 	MILL_WORKLOAD_S3_ENDPOINT "${MILL_WORKLOAD_S3_ENDPOINT:-${MILL_S3_ENDPOINT:-}}" \
 	MILL_WORKLOAD_S3_CREDENTIALS_SECRET "${credentials_secret}"
-apply_environment_secret mill-system mill-executor-config "${temporary_directory}/executor.env"
+apply_environment_secret mill-system mill-execution-config "${temporary_directory}/execution.env"
 
 rendered_control_plane="${temporary_directory}/control-plane.yaml"
-awk -v job_image="${MILL_JOB_IMAGE}" -v executor_image="${MILL_EXECUTOR_IMAGE}" '
-	$0 ~ /^[[:space:]]*image: mill\/job-service:dev[[:space:]]*$/ {
-		sub(/image: mill\/job-service:dev/, "image: " job_image)
+awk -v job_image="${MILL_JOB_IMAGE}" -v execution_image="${MILL_EXECUTION_IMAGE}" '
+	$0 ~ /^[[:space:]]*image: mill\/job:dev[[:space:]]*$/ {
+		sub(/image: mill\/job:dev/, "image: " job_image)
 	}
-	$0 ~ /^[[:space:]]*image: mill\/executor:dev[[:space:]]*$/ {
-		sub(/image: mill\/executor:dev/, "image: " executor_image)
+	$0 ~ /^[[:space:]]*image: mill\/execution:dev[[:space:]]*$/ {
+		sub(/image: mill\/execution:dev/, "image: " execution_image)
 	}
 	{ print }
 ' deploy/kubernetes/availability/control-plane.yaml > "${rendered_control_plane}"
 [[ "$(grep -cF "image: ${MILL_JOB_IMAGE}" "${rendered_control_plane}")" == 1 && \
-	"$(grep -cF "image: ${MILL_EXECUTOR_IMAGE}" "${rendered_control_plane}")" == 1 ]] || {
+	"$(grep -cF "image: ${MILL_EXECUTION_IMAGE}" "${rendered_control_plane}")" == 1 ]] || {
 	printf 'Failed to render requested control-plane images.\n' >&2; exit 1;
 }
 kubectl --context "${context}" apply -f "${rendered_control_plane}" >/dev/null
-kubectl --context "${context}" -n mill-system rollout status deployment/mill-job-service --timeout=300s
-kubectl --context "${context}" -n mill-system rollout status deployment/mill-executor --timeout=300s
+kubectl --context "${context}" -n mill-system rollout status deployment/mill-job --timeout=300s
+kubectl --context "${context}" -n mill-system rollout status deployment/mill-execution --timeout=300s
 
 printf '\nMill %s availability profile is ready in context %s.\n' "${MILL_AVAILABILITY_PROFILE}" "${context}"
 kubectl --context "${context}" get pods -n mill-database -o wide

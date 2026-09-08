@@ -30,7 +30,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// ExecutionService is the internal boundary through which executor replicas
+// ExecutionService is the internal boundary through which execution replicas
 // lease work and report guarded state transitions to the Job service.
 type ExecutionServiceClient interface {
 	LeaseActiveAttempts(ctx context.Context, in *LeaseActiveAttemptsRequest, opts ...grpc.CallOption) (*LeaseActiveAttemptsResponse, error)
@@ -102,7 +102,7 @@ func (c *executionServiceClient) FailAttempt(ctx context.Context, in *FailAttemp
 // All implementations must embed UnimplementedExecutionServiceServer
 // for forward compatibility.
 //
-// ExecutionService is the internal boundary through which executor replicas
+// ExecutionService is the internal boundary through which execution replicas
 // lease work and report guarded state transitions to the Job service.
 type ExecutionServiceServer interface {
 	LeaseActiveAttempts(context.Context, *LeaseActiveAttemptsRequest) (*LeaseActiveAttemptsResponse, error)

@@ -26,8 +26,8 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/purinliang/mill/internal/execution"
-	"github.com/purinliang/mill/internal/executionrpc"
-	executionv1 "github.com/purinliang/mill/internal/executionrpc/v1"
+	"github.com/purinliang/mill/internal/execution/rpc"
+	executionv1 "github.com/purinliang/mill/internal/execution/rpc/v1"
 	"github.com/purinliang/mill/internal/workload"
 )
 
@@ -99,26 +99,26 @@ func (b *processBackend) FailAttempt(context.Context, string, string, string) (e
 	return execution.Attempt{}, execution.ErrInvalidAttemptTransition
 }
 
-func TestExecutorProcessClaimsAndDispatchesThroughPublicServices(t *testing.T) {
+func TestExecutionProcessClaimsAndDispatchesThroughPublicServices(t *testing.T) {
 	backend := &processBackend{reports: make(chan runningReport, 1)}
 	grpcAddress := startPublicExecutionService(t, backend)
 	kubernetesServer, createdJobs := startPublicKubernetesAPI(t)
 	kubeContext := writeProcessKubeconfig(t, kubernetesServer.URL)
 
-	binary := filepath.Join(t.TempDir(), "mill-executor")
+	binary := filepath.Join(t.TempDir(), "mill-execution")
 	build := exec.Command("go", "build", "-o", binary, ".")
 	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build executor: %v\n%s", err, output)
+		t.Fatalf("build execution service: %v\n%s", err, output)
 	}
 
-	logFilename := filepath.Join(t.TempDir(), "executor.log")
+	logFilename := filepath.Join(t.TempDir(), "execution.log")
 	logFile, err := os.Create(logFilename)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer logFile.Close()
 	process := exec.Command(binary)
-	process.Env = executorEnvironment(map[string]string{
+	process.Env = executionEnvironment(map[string]string{
 		"MILL_JOB_GRPC_TARGET":                grpcAddress,
 		"MILL_EXECUTION_RPC_TIMEOUT":          "1s",
 		"MILL_KUBE_CONTEXT":                   kubeContext,
@@ -134,7 +134,7 @@ func TestExecutorProcessClaimsAndDispatchesThroughPublicServices(t *testing.T) {
 	process.Stdout = logFile
 	process.Stderr = logFile
 	if err := process.Start(); err != nil {
-		t.Fatalf("start executor: %v", err)
+		t.Fatalf("start execution service: %v", err)
 	}
 	waitResult := make(chan error, 1)
 	go func() { waitResult <- process.Wait() }()
@@ -151,18 +151,18 @@ func TestExecutorProcessClaimsAndDispatchesThroughPublicServices(t *testing.T) {
 	case created = <-createdJobs:
 	case err := <-waitResult:
 		exited = true
-		t.Fatalf("executor exited before creating a Job: %v; logs:\n%s", err, readExecutorLog(logFilename))
+		t.Fatalf("execution service exited before creating a Job: %v; logs:\n%s", err, readExecutionLog(logFilename))
 	case <-time.After(10 * time.Second):
-		t.Fatalf("executor did not create a Job; logs:\n%s", readExecutorLog(logFilename))
+		t.Fatalf("execution service did not create a Job; logs:\n%s", readExecutionLog(logFilename))
 	}
 	var report runningReport
 	select {
 	case report = <-backend.reports:
 	case err := <-waitResult:
 		exited = true
-		t.Fatalf("executor exited before reporting dispatch: %v; logs:\n%s", err, readExecutorLog(logFilename))
+		t.Fatalf("execution service exited before reporting dispatch: %v; logs:\n%s", err, readExecutionLog(logFilename))
 	case <-time.After(10 * time.Second):
-		t.Fatalf("executor did not report dispatch; logs:\n%s", readExecutorLog(logFilename))
+		t.Fatalf("execution service did not report dispatch; logs:\n%s", readExecutionLog(logFilename))
 	}
 
 	if report != (runningReport{attemptID: "attempt-1", token: "token-1", external: "kubernetes-job-uid-1"}) {
@@ -171,7 +171,7 @@ func TestExecutorProcessClaimsAndDispatchesThroughPublicServices(t *testing.T) {
 	backend.mu.Lock()
 	claimExecutor, claimOwner := backend.claimExecutor, backend.claimOwner
 	backend.mu.Unlock()
-	if claimExecutor != "kubernetes" || !strings.HasPrefix(claimOwner, "executor-") {
+	if claimExecutor != "kubernetes" || !strings.HasPrefix(claimOwner, "execution-") {
 		t.Fatalf("claim identity = executor %q owner %q", claimExecutor, claimOwner)
 	}
 	if created.Name != "mill-attempt-1" || created.Namespace != "mill-workloads" {
@@ -190,16 +190,16 @@ func TestExecutorProcessClaimsAndDispatchesThroughPublicServices(t *testing.T) {
 	}
 
 	if err := process.Process.Signal(syscall.SIGTERM); err != nil {
-		t.Fatalf("signal executor: %v", err)
+		t.Fatalf("signal execution service: %v", err)
 	}
 	select {
 	case err := <-waitResult:
 		exited = true
 		if err != nil {
-			t.Fatalf("executor shutdown: %v; logs:\n%s", err, readExecutorLog(logFilename))
+			t.Fatalf("execution service shutdown: %v; logs:\n%s", err, readExecutionLog(logFilename))
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("executor did not stop after SIGTERM")
+		t.Fatal("execution service did not stop after SIGTERM")
 	}
 }
 
@@ -280,7 +280,7 @@ func startPublicKubernetesAPI(t *testing.T) (*httptest.Server, <-chan *batchv1.J
 
 func writeProcessKubeconfig(t *testing.T, server string) string {
 	t.Helper()
-	const contextName = "executor-process-test"
+	const contextName = "execution-process-test"
 	filename := filepath.Join(t.TempDir(), "kubeconfig")
 	config := clientcmdapi.Config{
 		Clusters: map[string]*clientcmdapi.Cluster{
@@ -299,7 +299,7 @@ func writeProcessKubeconfig(t *testing.T, server string) string {
 	return contextName
 }
 
-func executorEnvironment(overrides map[string]string) []string {
+func executionEnvironment(overrides map[string]string) []string {
 	environment := make([]string, 0, len(os.Environ())+len(overrides))
 	for _, entry := range os.Environ() {
 		name, _, _ := strings.Cut(entry, "=")
@@ -313,7 +313,7 @@ func executorEnvironment(overrides map[string]string) []string {
 	return environment
 }
 
-func readExecutorLog(filename string) string {
+func readExecutionLog(filename string) string {
 	contents, err := os.ReadFile(filename)
 	if err != nil {
 		return "<cannot read log: " + err.Error() + ">"

@@ -1,5 +1,5 @@
 // Package execution defines the backend-independent contract between Mill's
-// durable job state and an executor that realizes attempts in a runtime.
+// durable job state and an execution service that realizes attempts in a runtime.
 package execution
 
 import (

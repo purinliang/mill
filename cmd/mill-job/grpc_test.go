@@ -14,8 +14,8 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/purinliang/mill/internal/execution"
-	"github.com/purinliang/mill/internal/executionrpc"
-	executionv1 "github.com/purinliang/mill/internal/executionrpc/v1"
+	"github.com/purinliang/mill/internal/execution/rpc"
+	executionv1 "github.com/purinliang/mill/internal/execution/rpc/v1"
 )
 
 type executionRPCBackend struct {

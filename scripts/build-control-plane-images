@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-readonly JOB_IMAGE="${MILL_JOB_IMAGE:-mill/job-service:dev}"
-readonly EXECUTOR_IMAGE="${MILL_EXECUTOR_IMAGE:-mill/executor:dev}"
+readonly JOB_IMAGE="${MILL_JOB_IMAGE:-mill/job:dev}"
+readonly EXECUTION_IMAGE="${MILL_EXECUTION_IMAGE:-mill/execution:dev}"
 
 fail() {
 	printf 'build-control-plane-images: %s\n' "$*" >&2
@@ -31,19 +31,19 @@ verify_image() {
 }
 
 main() {
-	[[ "$#" -eq 0 ]] || fail "does not accept arguments; override tags with MILL_JOB_IMAGE or MILL_EXECUTOR_IMAGE"
+	[[ "$#" -eq 0 ]] || fail "does not accept arguments; override tags with MILL_JOB_IMAGE or MILL_EXECUTION_IMAGE"
 	require_docker
 
-	docker build --file cmd/mill/Dockerfile --tag "${JOB_IMAGE}" .
-	docker build --file cmd/mill-executor/Dockerfile --tag "${EXECUTOR_IMAGE}" .
+	docker build --file cmd/mill-job/Dockerfile --tag "${JOB_IMAGE}" .
+	docker build --file cmd/mill-execution/Dockerfile --tag "${EXECUTION_IMAGE}" .
 
-	verify_image "${JOB_IMAGE}" /mill
-	verify_image "${EXECUTOR_IMAGE}" /mill-executor
+	verify_image "${JOB_IMAGE}" /mill-job
+	verify_image "${EXECUTION_IMAGE}" /mill-execution
 
 	printf '\nBuilt control-plane images:\n'
 	docker image inspect \
 		--format '{{.RepoTags}}  size={{.Size}} bytes  user={{.Config.User}}  entrypoint={{json .Config.Entrypoint}}' \
-		"${JOB_IMAGE}" "${EXECUTOR_IMAGE}"
+		"${JOB_IMAGE}" "${EXECUTION_IMAGE}"
 }
 
 main "$@"

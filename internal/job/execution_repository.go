@@ -8,7 +8,7 @@ import (
 
 // LeaseActiveAttempts renews this owner's active attempts and atomically takes
 // over unowned or expired attempts. A takeover keeps the attempt identity, so
-// the executor reconciles the same external Kubernetes Job.
+// the execution service reconciles the same external Kubernetes Job.
 func (r *Repository) LeaseActiveAttempts(
 	ctx context.Context,
 	executor, leaseOwner string,

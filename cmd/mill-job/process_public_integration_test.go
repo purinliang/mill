@@ -22,8 +22,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/purinliang/mill/internal/execution"
-	"github.com/purinliang/mill/internal/executionrpc"
-	executionv1 "github.com/purinliang/mill/internal/executionrpc/v1"
+	"github.com/purinliang/mill/internal/execution/rpc"
+	executionv1 "github.com/purinliang/mill/internal/execution/rpc/v1"
 	"github.com/purinliang/mill/internal/job"
 )
 
@@ -33,7 +33,7 @@ func TestJobServiceProcessServesJobsAndShutsDownGracefully(t *testing.T) {
 		t.Skip("MILL_TEST_DATABASE_URL is not set")
 	}
 
-	binary := filepath.Join(t.TempDir(), "mill")
+	binary := filepath.Join(t.TempDir(), "mill-job")
 	build := exec.Command("go", "build", "-o", binary, ".")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build Job service: %v\n%s", err, output)

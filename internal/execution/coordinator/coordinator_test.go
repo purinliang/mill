@@ -91,16 +91,16 @@ func (s *memoryStore) FailAttempt(_ context.Context, id, _, _ string) (execution
 	return s.transition(id, execution.AttemptStateFailed)
 }
 
-type executorFunc func(context.Context, execution.ClaimedAttempt) (Observation, error)
+type runtimeFunc func(context.Context, execution.ClaimedAttempt) (Observation, error)
 
-func (f executorFunc) Reconcile(ctx context.Context, a execution.ClaimedAttempt) (Observation, error) {
+func (f runtimeFunc) Reconcile(ctx context.Context, a execution.ClaimedAttempt) (Observation, error) {
 	return f(ctx, a)
 }
 
 func TestTwelveTasksWithThreeSlotsAndIndependentCompletion(t *testing.T) {
 	store := &memoryStore{limit: 3, total: 12}
 	finished := map[string]bool{}
-	c := &Coordinator{Store: store, Logger: log.New(io.Discard, "", 0), LeaseOwner: "executor-a", Executor: executorFunc(func(_ context.Context, a execution.ClaimedAttempt) (Observation, error) {
+	c := &Coordinator{Store: store, Logger: log.New(io.Discard, "", 0), LeaseOwner: "executor-a", Runtime: runtimeFunc(func(_ context.Context, a execution.ClaimedAttempt) (Observation, error) {
 		return Observation{ExternalID: "pod-" + a.Attempt.ID, Completed: finished[a.Attempt.ID]}, nil
 	})}
 	if err := c.Tick(context.Background()); err != nil {
@@ -137,7 +137,7 @@ func TestTwelveTasksWithThreeSlotsAndIndependentCompletion(t *testing.T) {
 
 func TestAmbiguousDispatchKeepsAttemptForRestart(t *testing.T) {
 	store := &memoryStore{limit: 1, total: 2}
-	c := &Coordinator{Store: store, Logger: log.New(io.Discard, "", 0), LeaseOwner: "executor-a", Executor: executorFunc(func(context.Context, execution.ClaimedAttempt) (Observation, error) {
+	c := &Coordinator{Store: store, Logger: log.New(io.Discard, "", 0), LeaseOwner: "executor-a", Runtime: runtimeFunc(func(context.Context, execution.ClaimedAttempt) (Observation, error) {
 		return Observation{}, errors.New("lost create response")
 	})}
 	if err := c.Tick(context.Background()); err == nil {
@@ -149,7 +149,7 @@ func TestAmbiguousDispatchKeepsAttemptForRestart(t *testing.T) {
 	expired := time.Now().Add(-time.Second)
 	store.attempts[0].Attempt.LeaseExpiresAt = &expired
 	// A new coordinator instance uses persisted active attempts, no in-memory queue.
-	restarted := &Coordinator{Store: store, Logger: c.Logger, LeaseOwner: "executor-b", Executor: executorFunc(func(_ context.Context, a execution.ClaimedAttempt) (Observation, error) {
+	restarted := &Coordinator{Store: store, Logger: c.Logger, LeaseOwner: "executor-b", Runtime: runtimeFunc(func(_ context.Context, a execution.ClaimedAttempt) (Observation, error) {
 		return Observation{ExternalID: "existing-job"}, nil
 	})}
 	if err := restarted.Tick(context.Background()); err != nil {
@@ -166,14 +166,14 @@ func TestCoordinatorTakesOverOnlyAfterLeaseExpiry(t *testing.T) {
 	coordinatorA := &Coordinator{
 		Store: store, Logger: log.New(io.Discard, "", 0),
 		LeaseOwner: "executor-a",
-		Executor: executorFunc(func(_ context.Context, a execution.ClaimedAttempt) (Observation, error) {
+		Runtime: runtimeFunc(func(_ context.Context, a execution.ClaimedAttempt) (Observation, error) {
 			return Observation{ExternalID: "job-" + a.Attempt.ID}, nil
 		}),
 	}
 	coordinatorB := &Coordinator{
 		Store: store, Logger: coordinatorA.Logger,
 		LeaseOwner: "executor-b",
-		Executor: executorFunc(func(context.Context, execution.ClaimedAttempt) (Observation, error) {
+		Runtime: runtimeFunc(func(context.Context, execution.ClaimedAttempt) (Observation, error) {
 			observedByB++
 			return Observation{}, nil
 		}),
@@ -203,13 +203,13 @@ func TestExhaustedFailureStopsClaimsButObservesOtherActiveTasks(t *testing.T) {
 	// coordinator follows durable store decisions rather than owning a budget.
 	store := &memoryStore{limit: 2, total: 4}
 	c := &Coordinator{Store: store, Logger: log.New(io.Discard, "", 0), LeaseOwner: "executor-a"}
-	c.Executor = executorFunc(func(context.Context, execution.ClaimedAttempt) (Observation, error) {
+	c.Runtime = runtimeFunc(func(context.Context, execution.ClaimedAttempt) (Observation, error) {
 		return Observation{ExternalID: "external"}, nil
 	})
 	if err := c.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	c.Executor = executorFunc(func(_ context.Context, a execution.ClaimedAttempt) (Observation, error) {
+	c.Runtime = runtimeFunc(func(_ context.Context, a execution.ClaimedAttempt) (Observation, error) {
 		if a.ShardIndex == 0 {
 			return Observation{ExternalID: "external", Failure: "exit 1"}, nil
 		}

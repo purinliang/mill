@@ -955,7 +955,7 @@ const file_api_proto_mill_execution_v1_execution_proto_rawDesc = "" +
 	"\x10ClaimNextAttempt\x12*.mill.execution.v1.ClaimNextAttemptRequest\x1a+.mill.execution.v1.ClaimNextAttemptResponse\x12f\n" +
 	"\x12MarkAttemptRunning\x12,.mill.execution.v1.MarkAttemptRunningRequest\x1a\".mill.execution.v1.AttemptResponse\x12`\n" +
 	"\x0fCompleteAttempt\x12).mill.execution.v1.CompleteAttemptRequest\x1a\".mill.execution.v1.AttemptResponse\x12X\n" +
-	"\vFailAttempt\x12%.mill.execution.v1.FailAttemptRequest\x1a\".mill.execution.v1.AttemptResponseBAZ?github.com/purinliang/mill/internal/executionrpc/v1;executionv1b\x06proto3"
+	"\vFailAttempt\x12%.mill.execution.v1.FailAttemptRequest\x1a\".mill.execution.v1.AttemptResponseBBZ@github.com/purinliang/mill/internal/execution/rpc/v1;executionv1b\x06proto3"
 
 var (
 	file_api_proto_mill_execution_v1_execution_proto_rawDescOnce sync.Once

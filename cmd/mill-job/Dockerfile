@@ -9,14 +9,15 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY internal/ ./internal/
-COPY cmd/mill-executor/ ./cmd/mill-executor/
+COPY cmd/mill-job/ ./cmd/mill-job/
 
-RUN go build -trimpath -ldflags="-s -w" -o /out/mill-executor ./cmd/mill-executor
+RUN go build -trimpath -ldflags="-s -w" -o /out/mill-job ./cmd/mill-job
 
 FROM scratch
 
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=build --chown=65532:65532 /out/mill-executor /mill-executor
+COPY --from=build --chown=65532:65532 /out/mill-job /mill-job
 
 USER 65532:65532
-ENTRYPOINT ["/mill-executor"]
+EXPOSE 8080 9090
+ENTRYPOINT ["/mill-job"]

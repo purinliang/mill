@@ -6,8 +6,8 @@ set -euo pipefail
 : "${MILL_OUTPUT_ROOT_URI:?MILL_OUTPUT_ROOT_URI is required}"
 : "${AWS_REGION:?AWS_REGION is required for the local S3 deployment}"
 
-readonly JOB_IMAGE="${MILL_JOB_IMAGE:-mill/job-service:dev}"
-readonly EXECUTOR_IMAGE="${MILL_EXECUTOR_IMAGE:-mill/executor:dev}"
+readonly JOB_IMAGE="${MILL_JOB_IMAGE:-mill/job:dev}"
+readonly EXECUTION_IMAGE="${MILL_EXECUTION_IMAGE:-mill/execution:dev}"
 readonly CONTEXT="${MILL_KUBE_CONTEXT:-kind-mill}"
 readonly KIND_CLUSTER="${MILL_KIND_CLUSTER:-mill}"
 readonly SYSTEM_NAMESPACE="${MILL_SYSTEM_NAMESPACE:-mill-system}"
@@ -80,9 +80,9 @@ main() {
 	docker info >/dev/null 2>&1 || fail "cannot reach the Docker daemon"
 	kubectl --context "${CONTEXT}" get nodes >/dev/null
 
-	MILL_JOB_IMAGE="${JOB_IMAGE}" MILL_EXECUTOR_IMAGE="${EXECUTOR_IMAGE}" \
+	MILL_JOB_IMAGE="${JOB_IMAGE}" MILL_EXECUTION_IMAGE="${EXECUTION_IMAGE}" \
 		./scripts/build-control-plane-images
-	kind load docker-image "${JOB_IMAGE}" "${EXECUTOR_IMAGE}" --name "${KIND_CLUSTER}"
+	kind load docker-image "${JOB_IMAGE}" "${EXECUTION_IMAGE}" --name "${KIND_CLUSTER}"
 	temporary_directory="$(mktemp -d)"
 	sed -e "s/mill-system/${SYSTEM_NAMESPACE}/g" \
 		-e "s/mill-workloads/${WORKLOAD_NAMESPACE}/g" \
@@ -111,23 +111,23 @@ main() {
 			AWS_SESSION_TOKEN "${AWS_SESSION_TOKEN:-}"
 		apply_secret_from_file "${WORKLOAD_NAMESPACE}" "${credentials_secret}" "${temporary_directory}/workload.env"
 	fi
-	write_environment_file "${temporary_directory}/executor.env" \
+	write_environment_file "${temporary_directory}/execution.env" \
 		MILL_WORKLOAD_S3_REGION "${MILL_WORKLOAD_S3_REGION:-${AWS_REGION}}" \
 		MILL_WORKLOAD_S3_ENDPOINT "${MILL_WORKLOAD_S3_ENDPOINT:-${MILL_S3_ENDPOINT:-}}" \
 		MILL_WORKLOAD_S3_CREDENTIALS_SECRET "${credentials_secret}"
-	apply_secret_from_file "${SYSTEM_NAMESPACE}" mill-executor-config "${temporary_directory}/executor.env"
+	apply_secret_from_file "${SYSTEM_NAMESPACE}" mill-execution-config "${temporary_directory}/execution.env"
 
 	kubectl --context "${CONTEXT}" apply -f "${temporary_directory}/control-plane.yaml" >/dev/null
 	kubectl --context "${CONTEXT}" -n "${SYSTEM_NAMESPACE}" set image \
-		deployment/mill-job-service "job-service=${JOB_IMAGE}" >/dev/null
+		deployment/mill-job "job=${JOB_IMAGE}" >/dev/null
 	kubectl --context "${CONTEXT}" -n "${SYSTEM_NAMESPACE}" set image \
-		deployment/mill-executor "executor=${EXECUTOR_IMAGE}" >/dev/null
+		deployment/mill-execution "execution=${EXECUTION_IMAGE}" >/dev/null
 	kubectl --context "${CONTEXT}" -n "${SYSTEM_NAMESPACE}" rollout restart \
-		deployment/mill-job-service deployment/mill-executor >/dev/null
+		deployment/mill-job deployment/mill-execution >/dev/null
 	kubectl --context "${CONTEXT}" -n "${SYSTEM_NAMESPACE}" rollout status \
-		deployment/mill-job-service --timeout=120s
+		deployment/mill-job --timeout=120s
 	kubectl --context "${CONTEXT}" -n "${SYSTEM_NAMESPACE}" rollout status \
-		deployment/mill-executor --timeout=120s
+		deployment/mill-execution --timeout=120s
 
 	printf '\nMill control plane is running in %s (%s, %s).\n' \
 		"${CONTEXT}" "${SYSTEM_NAMESPACE}" "${WORKLOAD_NAMESPACE}"

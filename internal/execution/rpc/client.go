@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/purinliang/mill/internal/execution"
-	executionv1 "github.com/purinliang/mill/internal/executionrpc/v1"
+	executionv1 "github.com/purinliang/mill/internal/execution/rpc/v1"
 )
 
 type Client struct {

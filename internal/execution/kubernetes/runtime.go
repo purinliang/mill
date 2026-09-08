@@ -19,8 +19,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/purinliang/mill/internal/coordinator"
 	"github.com/purinliang/mill/internal/execution"
+	"github.com/purinliang/mill/internal/execution/coordinator"
 	"github.com/purinliang/mill/internal/workload"
 )
 
@@ -36,12 +36,12 @@ type Config struct {
 	S3CredentialsSecret string
 }
 
-type Executor struct {
+type Runtime struct {
 	jobs   batchclient.JobInterface
 	config Config
 }
 
-func New(config Config) (*Executor, error) {
+func New(config Config) (*Runtime, error) {
 	if err := config.validate(); err != nil {
 		return nil, err
 	}
@@ -54,7 +54,7 @@ func New(config Config) (*Executor, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create Kubernetes client: %w", err)
 	}
-	return &Executor{jobs: client.Jobs(config.Namespace), config: config}, nil
+	return &Runtime{jobs: client.Jobs(config.Namespace), config: config}, nil
 }
 
 func (c Config) validate() error {
@@ -108,7 +108,7 @@ func (c Config) restConfig() (*rest.Config, error) {
 // Reconcile recovers the create/record crash window by a stable Job name.
 // Running attempts never recreate missing resources: that could rerun work
 // while a deleted Job's Pods are still terminating.
-func (e *Executor) Reconcile(ctx context.Context, claimed execution.ClaimedAttempt) (coordinator.Observation, error) {
+func (e *Runtime) Reconcile(ctx context.Context, claimed execution.ClaimedAttempt) (coordinator.Observation, error) {
 	name := "mill-" + claimed.Attempt.ID
 	external, err := e.jobs.Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) && claimed.Attempt.State == execution.AttemptStateStarting {
@@ -151,7 +151,7 @@ func (e *Executor) Reconcile(ctx context.Context, claimed execution.ClaimedAttem
 	return observed, nil
 }
 
-func (e *Executor) manifest(claimed execution.ClaimedAttempt) (*batchv1.Job, error) {
+func (e *Runtime) manifest(claimed execution.ClaimedAttempt) (*batchv1.Job, error) {
 	if claimed.Resources.CPURequestMillis < 1 ||
 		claimed.Resources.CPULimitMillis < claimed.Resources.CPURequestMillis ||
 		claimed.Resources.MemoryRequestBytes < 1 ||
@@ -241,7 +241,7 @@ func (e *Executor) manifest(claimed execution.ClaimedAttempt) (*batchv1.Job, err
 	}, nil
 }
 
-func (e *Executor) workloadURI(raw, directory string) (string, bool, error) {
+func (e *Runtime) workloadURI(raw, directory string) (string, bool, error) {
 	u, err := url.ParseRequestURI(raw)
 	if err != nil {
 		return "", false, fmt.Errorf("parse %s URI: %w", directory, err)
@@ -269,7 +269,7 @@ func (e *Executor) workloadURI(raw, directory string) (string, bool, error) {
 	return (&url.URL{Scheme: "file", Path: filepath.Join(mountRoot, relative)}).String(), true, nil
 }
 
-func (e *Executor) relativeURI(raw, directory string) (string, error) {
+func (e *Runtime) relativeURI(raw, directory string) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "file" || u.Host != "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || !filepath.IsAbs(u.Path) {
 		return "", fmt.Errorf("%s must use an absolute local file URI", directory)

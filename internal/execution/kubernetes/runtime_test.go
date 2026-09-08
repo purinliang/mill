@@ -31,7 +31,7 @@ func testConfig() Config {
 }
 
 func TestManifestPreservesRangeAndSeparatesMounts(t *testing.T) {
-	e := Executor{config: testConfig()}
+	e := Runtime{config: testConfig()}
 	m, err := e.manifest(testClaim())
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +67,7 @@ func TestManifestPreservesRangeAndSeparatesMounts(t *testing.T) {
 func TestManifestRejectsInvalidResources(t *testing.T) {
 	claim := testClaim()
 	claim.Resources.MemoryLimitBytes = claim.Resources.MemoryRequestBytes - 1
-	if _, err := (&Executor{config: testConfig()}).manifest(claim); err == nil {
+	if _, err := (&Runtime{config: testConfig()}).manifest(claim); err == nil {
 		t.Fatal("manifest accepted a memory limit below its request")
 	}
 }
@@ -80,7 +80,7 @@ func TestS3ManifestUsesSharedStorageWithoutNodePinOrVolumes(t *testing.T) {
 	claim := testClaim()
 	claim.InputURI = "s3://mill-input/records.jsonl"
 	claim.OutputURI = "s3://mill-output/jobs/job-1/tasks/2/result.jsonl"
-	m, err := (&Executor{config: config}).manifest(claim)
+	m, err := (&Runtime{config: config}).manifest(claim)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestS3ManifestUsesSharedStorageWithoutNodePinOrVolumes(t *testing.T) {
 }
 
 func TestRejectPathsOutsideConfiguredRoots(t *testing.T) {
-	e := Executor{config: testConfig()}
+	e := Runtime{config: testConfig()}
 	for _, uri := range []string{"s3://bucket/file", "file:///local/input/../../etc/passwd", "file:///local/inputs/file", "file:///local/input"} {
 		if _, err := e.relativeURI(uri, "input"); err == nil {
 			t.Errorf("accepted %s", uri)
@@ -171,7 +171,7 @@ func TestRecoverLostCreateResponseAndObserveTerminalCondition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := Executor{jobs: client.Jobs("default"), config: testConfig()}
+	e := Runtime{jobs: client.Jobs("default"), config: testConfig()}
 	claim := testClaim()
 	if _, err := e.Reconcile(context.Background(), claim); err == nil {
 		t.Fatal("expected lost-response error")

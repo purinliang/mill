@@ -10,8 +10,8 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/purinliang/mill/internal/executionrpc"
-	executionv1 "github.com/purinliang/mill/internal/executionrpc/v1"
+	"github.com/purinliang/mill/internal/execution/rpc"
+	executionv1 "github.com/purinliang/mill/internal/execution/rpc/v1"
 )
 
 const attemptLeaseDuration = 15 * time.Second

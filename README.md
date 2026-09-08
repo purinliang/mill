@@ -28,28 +28,31 @@ User
   |
   | REST/JSON: submit or inspect a job
   v
-Job service
+Job service (`mill-job`)
   |
   +--> streaming JSONL planner --> record-aligned byte ranges
   |
   +--> PostgreSQL --> jobs, tasks, attempts, retry eligibility
   |
-  `-- gRPC --> executor replica(s) --> Kubernetes Job per attempt
+  `-- gRPC --> execution service replica(s) (`mill-execution`)
+                                      |
+                                      `--> Kubernetes Job per attempt
                                          |
                                          `--> workload Pod
                                                 +--> ranged file/S3 input
                                                 `--> per-attempt file/S3 output
 ```
 
-The Job service owns REST, planning, PostgreSQL, and the internal execution API;
-it does not import the coordinator or Kubernetes adapter. Standalone executor
-replicas access execution state exclusively through bounded Protobuf/gRPC calls.
-An executor persists an attempt through the Job service before creating its
-deterministic Kubernetes Job, then reconciles Kubernetes observations back into
-PostgreSQL. Durable per-attempt leases fence stale executors and allow a replica
-to take over an expired lease while preserving the attempt and Kubernetes Job
-identity. For S3-backed jobs, Pods need no hostPath volume or fixed-node selector
-and can use shared object storage from any eligible node. See
+The Job service owns REST, planning, PostgreSQL, and the internal execution
+API; it does not import the coordinator or Kubernetes adapter. Standalone
+execution replicas access state exclusively through bounded Protobuf/gRPC
+calls. An execution replica persists an attempt through the Job service before
+creating its deterministic Kubernetes Job, then reconciles Kubernetes
+observations back into PostgreSQL. Durable per-attempt leases fence stale
+execution replicas and allow another replica to take over an expired lease
+while preserving the attempt and Kubernetes Job identity. For S3-backed jobs,
+Pods need no hostPath volume or fixed-node selector and can use shared object
+storage from any eligible node. See
 [Architecture](docs/architecture.md) for the domain model, correctness rules,
 resource-class policy, and availability design. The physical-node procedure
 and required evidence are in the [Availability runbook](docs/availability-runbook.md).
@@ -86,7 +89,7 @@ Build the two Mill control-plane images and verify their runtime identities:
 ./scripts/build-control-plane-images
 ```
 
-This produces `mill/job-service:dev` and `mill/executor:dev`. No Kubernetes
+This produces `mill/job:dev` and `mill/execution:dev`. No Kubernetes
 deployment is created by this command.
 
 After preparing a Pod-reachable, migrated PostgreSQL database and shared S3
@@ -109,14 +112,14 @@ Run the complete batch demonstration with node-local files:
 ./scripts/demo-word-count-batch
 ```
 
-Run the same batch through one Job-service process and two standalone executor
+Run the same batch through one Job process and two standalone execution
 replicas communicating over gRPC:
 
 ```bash
 ./scripts/demo-word-count-batch --split-process
 ```
 
-Run two executor replicas and kill the active lease owner:
+Run two execution replicas and kill the active lease owner:
 
 ```bash
 ./scripts/demo-word-count-batch --replica-failover
@@ -134,16 +137,16 @@ Run the same 12-task S3 workload with both Mill services deployed as Pods:
 ./scripts/demo-word-count-deployed
 ```
 
-Delete an active executor Pod and prove fenced takeover by another replica:
+Delete an active execution Pod and prove fenced takeover by another replica:
 
 ```bash
-./scripts/demo-word-count-deployed --executor-failover
+./scripts/demo-word-count-deployed --execution-failover
 ```
 
-Delete the original Job-service Pod and prove REST/gRPC reconnection:
+Delete the original Job Pod and prove REST/gRPC reconnection:
 
 ```bash
-./scripts/demo-word-count-deployed --job-service-failover
+./scripts/demo-word-count-deployed --job-failover
 ```
 
 The S3 demonstration starts disposable PostgreSQL and S3-compatible SeaweedFS
@@ -155,8 +158,8 @@ temporary credentials and storage container.
 The deployed variation runs both Mill services as Pods in unique namespaces,
 captures their diagnostics, and removes only its own namespaces and fixture
 containers after exact result verification. Its failover mode scales the
-executor Deployment to two replicas and proves recovery from one active
-executor Pod deletion. Its Job-service mode similarly scales that Deployment,
+execution Deployment to two replicas and proves recovery from one active
+execution Pod deletion. Its Job mode similarly scales that Deployment,
 deletes the original REST/gRPC endpoint, and proves reconnection through the
 Service. Neither mode tests database, storage, node, or network failure.
 
@@ -186,22 +189,21 @@ Implemented:
 - backend-independent execution types and store contract;
 - versioned execution Protobuf schema and tested gRPC client/server adapters;
 - optional Job-side gRPC listener with bounded messages and graceful shutdown;
-- separately runnable executor process with no PostgreSQL dependency;
-- minimal non-root OCI images for the Job service and executor;
-- explicit executor support for either a kubeconfig context or in-cluster
-  service-account credentials;
-- a single-node kind deployment with separate control-plane/workload
-  namespaces, health probes, resource bounds, and namespace-scoped executor
-  RBAC;
-- demonstrated 12-task split-process execution through one Job service and two
-  live executor replicas;
-- demonstrated executor-process failover with lease-token replacement and
+- separately runnable execution process with no PostgreSQL dependency;
+- minimal non-root OCI images for the Job and execution services;
+- explicit execution-service support for either a kubeconfig context or
+  in-cluster service-account credentials;
+- a single-node kind deployment with separate namespaces, health probes,
+  resource bounds, and namespace-scoped execution RBAC;
+- demonstrated a 12-task split-process batch through one Job service
+  and two live execution replicas;
+- demonstrated execution-process failover with lease-token replacement and
   stable attempt and Kubernetes Job identities;
-- demonstrated active executor Pod deletion and fenced takeover by another
+- demonstrated active execution Pod deletion and fenced takeover by another
   deployed replica without duplicate attempts or Kubernetes Jobs;
-- demonstrated Job-service Pod deletion with REST/gRPC reconnection and stable
+- demonstrated Job Pod deletion with REST/gRPC reconnection and stable
   durable execution identities;
-- deterministic Kubernetes identity and executor restart reconciliation;
+- deterministic Kubernetes identity and execution-process reconciliation;
 - durable workload resource classes propagated through gRPC to Kubernetes;
 - trusted workload CLI contract and non-root example images;
 - local, container, single-task, full-batch, retry, restart, replica-failover,
@@ -243,7 +245,7 @@ parallelism, and expose successful output URIs.
 ### 4 — Reliable execution — in progress
 
 Bound retries, preserve attempt history, delay retry eligibility durably, and
-recover the same Kubernetes identities after executor process loss. Use
+recover the same Kubernetes identities after execution process loss. Use
 durable leases to renew or transfer attempt ownership and reject stale state
 changes. Wider dispatch crash windows, resource deletion, long API stalls, and
 network ambiguity remain.
@@ -256,35 +258,36 @@ node pinning. Real AWS S3 remains untested.
 
 ### 6 — Service boundary and resource classes — implemented locally
 
-The pure execution domain contract, versioned Protobuf/gRPC adapters, Job-side
-listener, standalone executor, removal of the direct path, and executor
-failover proof are implemented. Optional named `small`, `medium`, and `large`
-workload classes persist their resolved CPU and memory resources so retries
-remain stable if server profiles change later.
+The pure execution domain contract, versioned Protobuf/gRPC adapters,
+Job-side listener, standalone execution service, removal of the direct path,
+and execution failover proof are implemented. Optional named `small`,
+`medium`, and `large` workload classes persist their resolved CPU and memory
+resources so retries remain stable if server profiles change later.
 
 ### 7 — Two-laptop replica availability — in progress
 
-Use one K3s server and one K3s agent. Spread two Job-service replicas and two
-executor replicas across the laptops. Run a CloudNativePG primary and standby
+Use one K3s server and one K3s agent. Spread two Job replicas and two
+execution replicas across the laptops. Run a CloudNativePG primary and standby
 with availability-oriented synchronous replication. Demonstrate individual
 Mill Pod failure and controlled PostgreSQL Pod promotion. This stage will not
 claim whole-laptop or network-partition tolerance.
 
 The single-node prerequisite is implemented: both packaged services run as
-one-replica Deployments, communicate through a ClusterIP Service, and isolate
-workload Jobs in a namespace where the executor may only create and get Jobs.
-The complete 12-task S3 workload has run through these deployed services with
-exact result verification and bounded parallelism. A single-node test also
-scales the executor to two replicas, deletes the Pod that owns three active
-leases, and proves takeover with new fencing tokens while attempt IDs,
-Kubernetes Job names, and Job UIDs remain unchanged. Another single-node test
-deletes the original Job-service Pod and proves the REST client and executor's
-gRPC connection recover through the Service without changing durable work.
+one-replica Deployments and communicate through a ClusterIP Service. Workload
+Jobs are isolated in a namespace where the execution service may only create
+and get Jobs. The complete 12-task S3 workload has run through these deployed
+services with exact result verification and bounded parallelism. A single-node
+test also scales the execution service to two replicas and deletes the Pod that
+owns three active leases. It proves takeover with new fencing tokens while
+attempt IDs, Kubernetes Job names, and Job UIDs remain unchanged. Another
+single-node test deletes the original Job Pod and proves that both the REST
+client and execution service's gRPC connection recover through the Service
+without changing durable work.
 Multi-node replica placement, K3s installation, and database replication remain
 to be exercised. Pinned role-based K3s installation, profile deployment, and a
 destructive two-node acceptance runner are implemented but have not yet been
-run on two physical laptops. A two-node kind simulation has passed executor
-and Job-service Pod deletion, synchronous standby promotion, connection
+run on two physical laptops. A two-node kind simulation has passed execution
+and Job Pod deletion, synchronous standby promotion, connection
 recovery, stable execution identities, and byte-exact 12-task output. This is
 runtime evidence for the manifests, not a physical-laptop failure-domain claim.
 The deployable manifests are defined under

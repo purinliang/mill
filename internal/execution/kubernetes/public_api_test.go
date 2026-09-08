@@ -20,11 +20,11 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/purinliang/mill/internal/execution"
-	"github.com/purinliang/mill/internal/kubernetes"
+	"github.com/purinliang/mill/internal/execution/kubernetes"
 	"github.com/purinliang/mill/internal/workload"
 )
 
-func TestExecutorCreatesAJobThroughTheKubernetesAPI(t *testing.T) {
+func TestRuntimeCreatesAJobThroughTheKubernetesAPI(t *testing.T) {
 	var created *batchv1.Job
 	scheme := runtime.NewScheme()
 	if err := batchv1.AddToScheme(scheme); err != nil {
@@ -79,7 +79,7 @@ func TestExecutorCreatesAJobThroughTheKubernetesAPI(t *testing.T) {
 	defer server.Close()
 
 	contextName := writeKubeconfig(t, server.URL)
-	executor, err := kubernetes.New(kubernetes.Config{
+	runtime, err := kubernetes.New(kubernetes.Config{
 		Context:   contextName,
 		Namespace: "mill-workloads",
 		S3Region:  "us-east-1",
@@ -104,7 +104,7 @@ func TestExecutorCreatesAJobThroughTheKubernetesAPI(t *testing.T) {
 		},
 	}
 
-	observation, err := executor.Reconcile(context.Background(), claim)
+	observation, err := runtime.Reconcile(context.Background(), claim)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestNewReportsKubernetesCredentialLoadingFailures(t *testing.T) {
 
 func TestReconcileReportsInvalidClaimsWithoutCreatingJobs(t *testing.T) {
 	created := 0
-	executor := newPublicExecutor(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	runtime := newPublicRuntime(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		if request.Method == http.MethodGet {
 			writeJobStatus(response, http.StatusNotFound, metav1.StatusReasonNotFound, "missing")
@@ -211,7 +211,7 @@ func TestReconcileReportsInvalidClaimsWithoutCreatingJobs(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			claim := validPublicClaim()
 			mutate(&claim)
-			observation, err := executor.Reconcile(context.Background(), claim)
+			observation, err := runtime.Reconcile(context.Background(), claim)
 			if err != nil {
 				t.Fatalf("Reconcile: %v", err)
 			}
@@ -221,7 +221,7 @@ func TestReconcileReportsInvalidClaimsWithoutCreatingJobs(t *testing.T) {
 		})
 	}
 
-	withoutS3 := newPublicExecutor(t, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+	withoutS3 := newPublicRuntime(t, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		writeJobStatus(response, http.StatusNotFound, metav1.StatusReasonNotFound, "missing")
 	}), kubernetes.Config{})
@@ -235,7 +235,7 @@ func TestReconcileReportsInvalidClaimsWithoutCreatingJobs(t *testing.T) {
 
 	localClaim := validPublicClaim()
 	localClaim.InputURI = "file:///tmp/input/records.jsonl"
-	observation, err = executor.Reconcile(context.Background(), localClaim)
+	observation, err = runtime.Reconcile(context.Background(), localClaim)
 	if err != nil {
 		t.Fatalf("Reconcile local claim: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestReconcileReportsInvalidClaimsWithoutCreatingJobs(t *testing.T) {
 
 func TestReconcileRecoversAnAlreadyCreatedJob(t *testing.T) {
 	gets := 0
-	executor := newPublicExecutor(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	runtime := newPublicRuntime(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		switch request.Method {
 		case http.MethodGet:
@@ -267,7 +267,7 @@ func TestReconcileRecoversAnAlreadyCreatedJob(t *testing.T) {
 		}
 	}), kubernetes.Config{S3Region: "us-east-1"})
 
-	observation, err := executor.Reconcile(context.Background(), validPublicClaim())
+	observation, err := runtime.Reconcile(context.Background(), validPublicClaim())
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestReconcileRecoversAnAlreadyCreatedJob(t *testing.T) {
 
 func TestReconcileTurnsInvalidKubernetesJobsIntoBoundedFailures(t *testing.T) {
 	message := strings.Repeat("invalid manifest; ", 400)
-	executor := newPublicExecutor(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	runtime := newPublicRuntime(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		if request.Method == http.MethodGet {
 			writeJobStatus(response, http.StatusNotFound, metav1.StatusReasonNotFound, "missing")
@@ -287,7 +287,7 @@ func TestReconcileTurnsInvalidKubernetesJobsIntoBoundedFailures(t *testing.T) {
 		writeJobStatus(response, http.StatusUnprocessableEntity, metav1.StatusReasonInvalid, message)
 	}), kubernetes.Config{S3Region: "us-east-1"})
 
-	observation, err := executor.Reconcile(context.Background(), validPublicClaim())
+	observation, err := runtime.Reconcile(context.Background(), validPublicClaim())
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -301,9 +301,9 @@ func TestReconcileRejectsIdentityMismatchAndIgnoresFalseConditions(t *testing.T)
 		claim := validPublicClaim()
 		job := publicJob(claim, "job-uid")
 		job.Labels["mill.dev/task-id"] = "another-task"
-		executor := executorReturningJob(t, job)
+		runtime := runtimeReturningJob(t, job)
 
-		if _, err := executor.Reconcile(context.Background(), claim); err == nil || !strings.Contains(err.Error(), "identity") {
+		if _, err := runtime.Reconcile(context.Background(), claim); err == nil || !strings.Contains(err.Error(), "identity") {
 			t.Fatalf("Reconcile error = %v", err)
 		}
 	})
@@ -312,9 +312,9 @@ func TestReconcileRejectsIdentityMismatchAndIgnoresFalseConditions(t *testing.T)
 		claim := validPublicClaim()
 		job := publicJob(claim, "job-uid")
 		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionFalse}}
-		executor := executorReturningJob(t, job)
+		runtime := runtimeReturningJob(t, job)
 
-		observation, err := executor.Reconcile(context.Background(), claim)
+		observation, err := runtime.Reconcile(context.Background(), claim)
 		if err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
@@ -324,22 +324,22 @@ func TestReconcileRejectsIdentityMismatchAndIgnoresFalseConditions(t *testing.T)
 	})
 }
 
-func newPublicExecutor(t *testing.T, handler http.Handler, config kubernetes.Config) *kubernetes.Executor {
+func newPublicRuntime(t *testing.T, handler http.Handler, config kubernetes.Config) *kubernetes.Runtime {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	config.Context = writeKubeconfig(t, server.URL)
 	config.Namespace = "mill-workloads"
-	executor, err := kubernetes.New(config)
+	runtime, err := kubernetes.New(config)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return executor
+	return runtime
 }
 
-func executorReturningJob(t *testing.T, job *batchv1.Job) *kubernetes.Executor {
+func runtimeReturningJob(t *testing.T, job *batchv1.Job) *kubernetes.Runtime {
 	t.Helper()
-	return newPublicExecutor(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	return newPublicRuntime(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		if request.Method != http.MethodGet {
 			http.Error(response, "unexpected request", http.StatusMethodNotAllowed)

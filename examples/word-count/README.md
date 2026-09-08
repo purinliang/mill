@@ -131,25 +131,25 @@ After completion, job status lists the 12 successful output URIs. The script
 copies the results back, combines them into `counts.jsonl`, and checks that
 they match a local count over the entire input. It prints the fresh output
 directory, final result, and Kubernetes inspection/cleanup commands. The Job
-service, executor processes, and private PostgreSQL server stop when the script
+service, execution processes, and private PostgreSQL server stop when the script
 exits; all files and Kubernetes resources remain for inspection. `server.log`
-records Job-service activity, `executor-*.log` records claims and reconciliation,
+records Job activity, `execution-*.log` records claims and reconciliation,
 and `status.json` contains final API status. This is a correctness demonstration,
 not a throughput benchmark: the input is small and Pod startup dominates
 execution time.
 
-To run the same batch with a second live executor replica:
+To run the same batch with a second live execution replica:
 
 ```bash
 ./scripts/demo-word-count-batch --split-process
 ```
 
-All batch modes run through one Job service and standalone executors. Executors
-have no PostgreSQL configuration and lease work only through the Job service's
-gRPC API. This mode starts two replicas; one may own all current leases while
-the other stands by. Parallel computation still occurs in the bounded set of
-Kubernetes workload Pods. The script verifies the same 12 outputs against the
-local baseline.
+All batch modes run through one Job service and standalone execution services.
+Execution replicas have no PostgreSQL configuration and lease work only
+through the Job service's gRPC API. This mode starts two replicas; one may own
+all current leases while the other stands by. Parallel computation still occurs
+in the bounded set of Kubernetes workload Pods. The script verifies the same
+12 outputs against the local baseline.
 
 For two active attempts instead:
 
@@ -163,9 +163,9 @@ To run and verify the `medium` workload resource class:
 MILL_DEMO_RESOURCE_CLASS=medium ./scripts/demo-word-count-batch
 ```
 
-Mill persists the resolved profile on the job, sends it to the executor through
-gRPC, and applies `100m`/`1` CPU and `512Mi` memory request/limit to every
-workload Pod.
+Mill persists the resolved profile on the job and sends it to the execution
+service through gRPC. It applies `100m`/`1` CPU and a `512Mi` memory
+request/limit to every workload Pod.
 
 With this configuration the current planner produces six tasks, each covering
 two of the 12 records. The result still covers the entire input. The demo uses
@@ -207,7 +207,7 @@ and storage data. Completed Kubernetes Jobs remain for inspection.
 
 This variation packages both Mill services as Kubernetes Deployments instead of
 running them as laptop processes. It uses unique temporary control-plane and
-workload namespaces, a ClusterIP REST/gRPC Service, in-cluster executor
+workload namespaces, a ClusterIP REST/gRPC Service, in-cluster execution
 credentials, and namespace-scoped Job RBAC.
 
 The same 12 S3-backed mapper tasks run with peak parallelism three and are
@@ -217,42 +217,43 @@ removes its unique namespaces and containers on exit and retains diagnostics in
 the printed run directory. This proves the deployed service path, not high
 availability.
 
-To scale the executor Deployment to two replicas and delete the replica that
+To scale the execution Deployment to two replicas and delete the replica that
 owns the first three task leases, run:
 
 ```bash
-./scripts/demo-word-count-deployed --executor-failover
+./scripts/demo-word-count-deployed --execution-failover
 ```
 
 The deterministic delay wrapper creates time to identify the active and
-standby executor Pods. The script verifies that the standby respects live
+standby execution Pods. The script verifies that the standby respects live
 leases, deletes the owner, observes takeover with new fencing tokens, and
 requires the same attempts and Kubernetes Jobs to finish all 12 outputs. It
 also requires the merged result to match the local count. This isolates one
-executor Pod failure; PostgreSQL, the Job service, kind node, and object store
+execution Pod failure; PostgreSQL, the Job service, kind node, and object store
 remain healthy.
 
-To delete the original Job-service Pod while tasks are running, use:
+To delete the original Job Pod while tasks are running, use:
 
 ```bash
-./scripts/demo-word-count-deployed --job-service-failover
+./scripts/demo-word-count-deployed --job-failover
 ```
 
-The script first adds a ready Job-service replica, then removes the only Pod
-that existed when the executor established its gRPC connection. It reconnects
-the REST port-forward and requires the executor to reconnect through the
-Service, finish the same leased attempts, and produce the exact 12-task result.
-This does not fail PostgreSQL, the Kubernetes node, or object storage.
+The script first adds a ready Job replica, then removes the only Pod that
+existed when the execution service established its gRPC connection. It
+reconnects the REST port-forward and requires the execution service to reconnect
+through the Service, finish the same leased attempts, and produce the exact
+12-task result. PostgreSQL, the Kubernetes node, and object storage remain
+healthy throughout this test.
 
 The multi-node `scripts/demo-availability` exercise uses the same wrapper's
-`availability` mode. It holds shards 0–2 for 120 seconds so executor,
-Job-service, and controlled PostgreSQL-primary failovers can be exercised
+`availability` mode. It holds shards 0–2 for 120 seconds so execution,
+Job, and controlled PostgreSQL-primary failovers can be exercised
 against one active wave. The
 [availability runbook](../../docs/availability-runbook.md) defines the required
 topology and evidence; this longer delay remains test-fixture behavior rather
 than Mill execution policy.
 
-## Crash and restart the executor
+## Crash and restart the execution service
 
 Run the process-boundary recovery demonstration with:
 
@@ -267,9 +268,9 @@ The delay is demonstration behavior, not part of Mill's workload contract.
 
 Once PostgreSQL contains three `running` attempts with Kubernetes UIDs, the
 script saves their identities and the corresponding Job names/UIDs, then sends
-SIGKILL to **only the child executor process**. It immediately verifies the Job
+SIGKILL to **only the child execution process**. It immediately verifies the Job
 service and PostgreSQL still answer and the same Kubernetes Jobs still exist.
-It then starts a replacement executor with exactly the same Job-service,
+It then starts a replacement execution process with exactly the same Job,
 cluster, namespace, node, and storage configuration.
 
 The restart is accepted only when:
@@ -283,17 +284,17 @@ The restart is accepted only when:
 The run directory retains `attempts-before-crash.json`,
 `attempts-after-restart.json`, `kubernetes-before-crash.json`,
 `kubernetes-without-coordinator.json`, and `kubernetes-after-restart.json`.
-`server.log` shows the uninterrupted Job service; `executor-1.log` and
-`executor-2.log` show the killed and replacement executors. `attempts.json` and
+`server.log` shows the uninterrupted Job service; `execution-1.log` and
+`execution-2.log` show the killed and replacement processes. `attempts.json` and
 `status.json` show the final state.
 
-This proves the implemented recovery path for loss of the executor process
+This proves the implemented recovery path for loss of the execution process
 while the Job service, PostgreSQL, and Kubernetes remain healthy. It does not
-prove recovery from Job-service or PostgreSQL loss, Kubernetes API partitions,
+prove recovery from Job or PostgreSQL loss, Kubernetes API partitions,
 node failure, deleted active Jobs, or every possible instruction-level crash
 window.
 
-## Run two executor replicas and kill one
+## Run two execution replicas and kill one
 
 Run the concurrent-process failover demonstration with:
 
@@ -301,9 +302,9 @@ Run the concurrent-process failover demonstration with:
 ./scripts/demo-word-count-batch --replica-failover
 ```
 
-The script starts the primary executor, waits for three delayed attempts, and
-then starts a second executor against the same Job-service gRPC endpoint.
-Before failure, it verifies that both executors are healthy while the second
+The script starts the primary execution process, waits for three delayed
+attempts, and then starts a second process against the same Job gRPC endpoint.
+Before failure, it verifies that both processes are healthy while the second
 cannot steal unexpired leases or create duplicate Jobs. It kills the primary
 and accepts takeover only when the survivor replaces every fencing token while
 preserving the original task IDs, attempt IDs, external UIDs, and Kubernetes

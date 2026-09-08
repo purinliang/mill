@@ -113,8 +113,8 @@ two-laptop learning demonstration, the same images may instead be imported
 directly into K3s on both nodes. Build one archive on the first laptop:
 
 ```bash
-MILL_JOB_IMAGE=mill/job-service:m7 \
-MILL_EXECUTOR_IMAGE=mill/executor:m7 \
+MILL_JOB_IMAGE=mill/job:m7 \
+MILL_EXECUTION_IMAGE=mill/execution:m7 \
   ./scripts/build-control-plane-images
 
 docker build \
@@ -122,7 +122,7 @@ docker build \
   --tag mill/word-count-fault:m7 .
 
 docker save --output /tmp/mill-m7-images.tar \
-  mill/job-service:m7 mill/executor:m7 mill/word-count-fault:m7
+  mill/job:m7 mill/execution:m7 mill/word-count-fault:m7
 sudo k3s ctr images import /tmp/mill-m7-images.tar
 scp /tmp/mill-m7-images.tar <second-laptop>:/tmp/mill-m7-images.tar
 ```
@@ -172,7 +172,7 @@ First install the pinned CloudNativePG operator:
 MILL_KUBE_CONTEXT=<context> ./scripts/install-cloudnative-pg
 ```
 
-Push `mill/job-service` and `mill/executor` images to a registry reachable by
+Push `mill/job` and `mill/execution` images to a registry reachable by
 every node, and use S3 or another S3-compatible endpoint reachable from every
 Pod. Then deploy one profile:
 
@@ -180,8 +180,8 @@ Pod. Then deploy one profile:
 export MILL_KUBE_CONTEXT=<context>
 export MILL_AVAILABILITY_PROFILE=two-node  # or three-node
 export MILL_DATABASE_PASSWORD="$(openssl rand -hex 24)"
-export MILL_JOB_IMAGE=<registry>/mill/job-service:<immutable-tag>
-export MILL_EXECUTOR_IMAGE=<registry>/mill/executor:<immutable-tag>
+export MILL_JOB_IMAGE=<registry>/mill/job:<immutable-tag>
+export MILL_EXECUTION_IMAGE=<registry>/mill/execution:<immutable-tag>
 export MILL_OUTPUT_ROOT_URI=s3://<output-bucket>
 export AWS_REGION=<region>
 export AWS_ACCESS_KEY_ID=<temporary-or-scoped-key>
@@ -205,8 +205,8 @@ For the registry-free two-laptop commands above, use:
 export MILL_KUBE_CONTEXT=mill-k3s
 export MILL_AVAILABILITY_PROFILE=two-node
 export MILL_DATABASE_PASSWORD="$(openssl rand -hex 24)"
-export MILL_JOB_IMAGE=mill/job-service:m7
-export MILL_EXECUTOR_IMAGE=mill/executor:m7
+export MILL_JOB_IMAGE=mill/job:m7
+export MILL_EXECUTION_IMAGE=mill/execution:m7
 export MILL_OUTPUT_ROOT_URI=s3://mill-output
 export MILL_WORKLOAD_S3_ENDPOINT="$MILL_S3_ENDPOINT"
 ./scripts/deploy-availability
@@ -222,8 +222,8 @@ export MILL_DEMO_INPUT_ROOT_URI=s3://mill-input
 ```
 
 The demonstration creates one 12-task batch and, while its first wave is held
-open, deletes an active executor Pod, its current Job-service endpoint Pod, and
-the CloudNativePG primary Pod. It requires fenced executor takeover, REST and
+open, deletes an active execution Pod, its current Job service endpoint Pod, and
+the CloudNativePG primary Pod. It requires fenced execution takeover, REST and
 database reconnection, a different promoted primary, unchanged attempt and
 Kubernetes Job identities, exactly 12 first attempts, and byte-exact merged
 output. It does not delete the job or its objects afterward. All snapshots and

@@ -10,7 +10,7 @@ import (
 	"github.com/purinliang/mill/internal/execution"
 )
 
-const ExecutorName = "kubernetes"
+const RuntimeName = "kubernetes"
 
 type Observation struct {
 	ExternalID string
@@ -18,13 +18,13 @@ type Observation struct {
 	Failure    string
 }
 
-type Executor interface {
+type Runtime interface {
 	Reconcile(context.Context, execution.ClaimedAttempt) (Observation, error)
 }
 
 type Coordinator struct {
 	Store      execution.Store
-	Executor   Executor
+	Runtime    Runtime
 	Logger     *log.Logger
 	LeaseOwner string
 }
@@ -33,7 +33,7 @@ type Coordinator struct {
 // An API error is ambiguous: retain durable intent and retry observation on
 // the next tick, instead of declaring failure and potentially duplicating work.
 func (c *Coordinator) Tick(ctx context.Context) error {
-	active, err := c.Store.LeaseActiveAttempts(ctx, ExecutorName, c.LeaseOwner)
+	active, err := c.Store.LeaseActiveAttempts(ctx, RuntimeName, c.LeaseOwner)
 	if err != nil {
 		return err
 	}
@@ -48,7 +48,7 @@ func (c *Coordinator) Tick(ctx context.Context) error {
 	}
 	// Bound each tick so a backlog across many jobs cannot starve observation.
 	for range 100 {
-		attempt, err := c.Store.ClaimNextAttempt(ctx, ExecutorName, c.LeaseOwner)
+		attempt, err := c.Store.ClaimNextAttempt(ctx, RuntimeName, c.LeaseOwner)
 		if errors.Is(err, execution.ErrNoTaskAvailable) {
 			return nil
 		}
@@ -64,7 +64,7 @@ func (c *Coordinator) Tick(ctx context.Context) error {
 }
 
 func (c *Coordinator) reconcile(ctx context.Context, claimed execution.ClaimedAttempt) error {
-	observed, err := c.Executor.Reconcile(ctx, claimed)
+	observed, err := c.Runtime.Reconcile(ctx, claimed)
 	if err != nil {
 		return fmt.Errorf("reconcile attempt %s: %w", claimed.Attempt.ID, err)
 	}

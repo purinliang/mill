@@ -4,9 +4,9 @@ package mill.execution.v1;
 
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/purinliang/mill/internal/executionrpc/v1;executionv1";
+option go_package = "github.com/purinliang/mill/internal/execution/rpc/v1;executionv1";
 
-// ExecutionService is the internal boundary through which executor replicas
+// ExecutionService is the internal boundary through which execution replicas
 // lease work and report guarded state transitions to the Job service.
 service ExecutionService {
   rpc LeaseActiveAttempts(LeaseActiveAttemptsRequest) returns (LeaseActiveAttemptsResponse);

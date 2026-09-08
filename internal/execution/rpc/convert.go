@@ -7,7 +7,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/purinliang/mill/internal/execution"
-	executionv1 "github.com/purinliang/mill/internal/executionrpc/v1"
+	executionv1 "github.com/purinliang/mill/internal/execution/rpc/v1"
 )
 
 func claimedAttemptToProto(claimed execution.ClaimedAttempt) *executionv1.ClaimedAttempt {

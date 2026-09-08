@@ -2,8 +2,8 @@ package execution
 
 import "context"
 
-// Store is the executor's durable control-plane boundary. Lease policy belongs
-// to the implementation behind this interface, not to an executor replica.
+// Store is the execution service's durable control-plane boundary. Lease policy
+// belongs to the implementation behind this interface, not to an execution replica.
 type Store interface {
 	LeaseActiveAttempts(context.Context, string, string) ([]ClaimedAttempt, error)
 	ClaimNextAttempt(context.Context, string, string) (ClaimedAttempt, error)

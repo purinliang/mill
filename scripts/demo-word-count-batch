@@ -41,15 +41,15 @@ kubectl --context kind-mill get node mill-control-plane >/dev/null
 run_directory="$(mktemp -d /tmp/mill-batch.XXXXXXXX)"
 node_directory="/var/local/$(basename "${run_directory}" | tr '[:upper:]' '[:lower:]' | tr '.' '-')"
 server_pid=""
-executor_pids=()
+execution_pids=()
 postgres_started=false
 job_id=""
 cleanup() {
 	local status=$?
-	for executor_pid in "${executor_pids[@]}"; do
-		kill -TERM "${executor_pid}" 2>/dev/null || true
-		if ! wait "${executor_pid}"; then
-			printf 'Executor PID %s did not exit cleanly; inspect executor logs\n' "${executor_pid}" >&2
+	for execution_pid in "${execution_pids[@]}"; do
+		kill -TERM "${execution_pid}" 2>/dev/null || true
+		if ! wait "${execution_pid}"; then
+			printf 'Execution PID %s did not exit cleanly; inspect execution logs\n' "${execution_pid}" >&2
 			status=1
 		fi
 	done
@@ -64,7 +64,7 @@ cleanup() {
 		pg_ctl -D "${run_directory}/postgres" -m fast -w stop >/dev/null || true
 	fi
 	if (( status != 0 )); then
-		printf '\nDemo failed; inspect %s/server.log, %s/executor-*.log, and %s/postgres.log\n' \
+		printf '\nDemo failed; inspect %s/server.log, %s/execution-*.log, and %s/postgres.log\n' \
 			"${run_directory}" "${run_directory}" "${run_directory}" >&2
 		if [[ -n "${job_id}" ]]; then
 			kubectl --context kind-mill -n default get jobs,pods -l "mill.dev/job-id=${job_id}" || true
@@ -76,8 +76,8 @@ trap cleanup EXIT
 printf 'Local files: %s\nNode files: %s\n' "${run_directory}" "${node_directory}"
 mkdir "${run_directory}/input" "${run_directory}/output" "${run_directory}/socket"
 go run ./examples/word-count/generate --output "${run_directory}/input/records.jsonl"
-go build -o "${run_directory}/mill" ./cmd/mill
-go build -o "${run_directory}/mill-executor" ./cmd/mill-executor
+go build -o "${run_directory}/mill-job" ./cmd/mill-job
+go build -o "${run_directory}/mill-execution" ./cmd/mill-execution
 image=mill/word-count:dev
 dockerfile=examples/word-count/cmd/word-count/Dockerfile
 if [[ "${failure_mode}" != none || "${restart_coordinator}" == true || "${replica_failover}" == true ]]; then
@@ -117,7 +117,7 @@ start_mill() {
 	local address="$1"
 	local log_file="$2"
 	printf '\n--- starting Mill process at %s ---\n' "${address}" >> "${log_file}"
-	MILL_HTTP_ADDR="${address}" "${run_directory}/mill" >> "${log_file}" 2>&1 &
+	MILL_HTTP_ADDR="${address}" "${run_directory}/mill-job" >> "${log_file}" 2>&1 &
 	started_pid=$!
 	local ready=false
 	for _ in {1..60}; do
@@ -127,31 +127,31 @@ start_mill() {
 	done
 	[[ "${ready}" == true ]] || { printf 'Mill at %s did not become ready\n' "${address}" >&2; return 1; }
 }
-start_executor() {
+start_execution() {
 	local number="$1"
-	local log_file="${run_directory}/executor-${number}.log"
-	printf '\n--- starting standalone executor %s ---\n' "${number}" >> "${log_file}"
+	local log_file="${run_directory}/execution-${number}.log"
+	printf '\n--- starting standalone execution %s ---\n' "${number}" >> "${log_file}"
 	env -u MILL_DATABASE_URL -u MILL_OUTPUT_ROOT_URI -u MILL_PARALLELISM -u MILL_HTTP_ADDR -u MILL_GRPC_ADDR \
-		MILL_JOB_GRPC_TARGET="${grpc_address}" "${run_directory}/mill-executor" >> "${log_file}" 2>&1 &
+		MILL_JOB_GRPC_TARGET="${grpc_address}" "${run_directory}/mill-execution" >> "${log_file}" 2>&1 &
 	started_pid=$!
-	executor_pids+=("${started_pid}")
+	execution_pids+=("${started_pid}")
 	local ready=false
 	for _ in {1..60}; do
-		kill -0 "${started_pid}" 2>/dev/null || { printf 'Executor %s exited; inspect %s\n' "${number}" "${log_file}" >&2; return 1; }
-		if grep -q 'Mill executor instance=' "${log_file}"; then ready=true; break; fi
+		kill -0 "${started_pid}" 2>/dev/null || { printf 'Execution %s exited; inspect %s\n' "${number}" "${log_file}" >&2; return 1; }
+		if grep -q 'Mill execution instance=' "${log_file}"; then ready=true; break; fi
 		sleep 0.1
 	done
-	[[ "${ready}" == true ]] || { printf 'Executor %s did not initialize\n' "${number}" >&2; return 1; }
+	[[ "${ready}" == true ]] || { printf 'Execution %s did not initialize\n' "${number}" >&2; return 1; }
 	if tr '\0' '\n' < "/proc/${started_pid}/environ" | grep -q '^MILL_DATABASE_URL='; then
-		printf 'Executor %s inherited MILL_DATABASE_URL\n' "${number}" >&2; return 1
+		printf 'Execution %s inherited MILL_DATABASE_URL\n' "${number}" >&2; return 1
 	fi
 }
-forget_executor() {
+forget_execution() {
 	local stopped_pid="$1"
 	local index
-	for index in "${!executor_pids[@]}"; do
-		if [[ "${executor_pids[index]}" == "${stopped_pid}" ]]; then
-			unset 'executor_pids[index]'
+	for index in "${!execution_pids[@]}"; do
+		if [[ "${execution_pids[index]}" == "${stopped_pid}" ]]; then
+			unset 'execution_pids[index]'
 			return
 		fi
 	done
@@ -159,13 +159,13 @@ forget_executor() {
 started_pid=""
 start_mill "${primary_address}" "${run_directory}/server.log"
 server_pid="${started_pid}"
-start_executor 1
-primary_executor_pid="${started_pid}"
+start_execution 1
+primary_execution_pid="${started_pid}"
 if [[ "${split_process}" == true ]]; then
-	start_executor 2
-	printf 'Job service and two database-isolated executor processes are running.\n'
+	start_execution 2
+	printf 'Job service and two database-isolated execution processes are running.\n'
 else
-	printf 'Job service and one database-isolated executor process are running.\n'
+	printf 'Job service and one database-isolated execution process are running.\n'
 fi
 
 workload_mode="${failure_mode}"
@@ -200,8 +200,8 @@ replica_started=false
 replica_failed_over=false
 deadline=$((SECONDS + 180))
 while (( SECONDS < deadline )); do
-	for executor_pid in "${executor_pids[@]}"; do
-		kill -0 "${executor_pid}" 2>/dev/null || { printf 'Executor PID %s stopped during the batch\n' "${executor_pid}" >&2; exit 1; }
+	for execution_pid in "${execution_pids[@]}"; do
+		kill -0 "${execution_pid}" 2>/dev/null || { printf 'Execution PID %s stopped during the batch\n' "${execution_pid}" >&2; exit 1; }
 	done
 	curl -fsS "http://${MILL_HTTP_ADDR}/jobs/${job_id}" > "${run_directory}/status.json"
 	state="$(jq -r '.state' "${run_directory}/status.json")"
@@ -225,29 +225,29 @@ while (( SECONDS < deadline )); do
 				| jq '[.items[] | {name:.metadata.name,uid:.metadata.uid}] | sort_by(.name)' \
 				> "${run_directory}/replica-kubernetes-before.json"
 
-			printf '\nStarting a second executor while %s attempts are leased by the first...\n' "${parallelism}"
-			start_executor 2
-			secondary_executor_pid="${started_pid}"
+			printf '\nStarting a second execution while %s attempts are leased by the first...\n' "${parallelism}"
+			start_execution 2
+			secondary_execution_pid="${started_pid}"
 			sleep 2
 			kill -0 "${server_pid}"
-			kill -0 "${primary_executor_pid}"
-			kill -0 "${secondary_executor_pid}"
+			kill -0 "${primary_execution_pid}"
+			kill -0 "${secondary_execution_pid}"
 			snapshot_initial_attempts "${run_directory}/replica-attempts-contended.json"
 			cmp "${run_directory}/replica-attempts-before.json" "${run_directory}/replica-attempts-contended.json"
 			kubectl --context kind-mill -n default get jobs -l "mill.dev/job-id=${job_id}" -o json \
 				| jq '[.items[] | {name:.metadata.name,uid:.metadata.uid}] | sort_by(.name)' \
 				> "${run_directory}/replica-kubernetes-contended.json"
 			cmp "${run_directory}/replica-kubernetes-before.json" "${run_directory}/replica-kubernetes-contended.json"
-			printf 'Both executors are healthy; the second did not steal unexpired leases or create Jobs.\n'
+			printf 'Both executions are healthy; the second did not steal unexpired leases or create Jobs.\n'
 
-			printf 'Crashing primary executor PID %s; the second executor remains alive...\n' "${primary_executor_pid}"
-			crashed_pid="${primary_executor_pid}"
-			primary_executor_pid=""
+			printf 'Crashing primary execution PID %s; the second execution remains alive...\n' "${primary_execution_pid}"
+			crashed_pid="${primary_execution_pid}"
+			primary_execution_pid=""
 			kill -KILL "${crashed_pid}"
 			if wait "${crashed_pid}" 2>/dev/null; then
-				printf 'Expected the killed primary executor to exit unsuccessfully\n' >&2; exit 1
+				printf 'Expected the killed primary execution to exit unsuccessfully\n' >&2; exit 1
 			fi
-			forget_executor "${crashed_pid}"
+			forget_execution "${crashed_pid}"
 			curl -fsS "http://${primary_address}/readyz" >/dev/null
 			replica_started=true
 		fi
@@ -287,14 +287,14 @@ SQL
 				"${run_directory}/attempts-before-crash.json" >/dev/null
 			jq -e --argjson expected "${parallelism}" 'length == $expected' "${run_directory}/kubernetes-before-crash.json" >/dev/null
 
-			printf '\nCrashing executor PID %s while %s attempts are running...\n' "${primary_executor_pid}" "${parallelism}"
-			crashed_pid="${primary_executor_pid}"
-			primary_executor_pid=""
+			printf '\nCrashing execution PID %s while %s attempts are running...\n' "${primary_execution_pid}" "${parallelism}"
+			crashed_pid="${primary_execution_pid}"
+			primary_execution_pid=""
 			kill -KILL "${crashed_pid}"
 			if wait "${crashed_pid}" 2>/dev/null; then
-				printf 'Expected the killed executor process to exit unsuccessfully\n' >&2; exit 1
+				printf 'Expected the killed execution process to exit unsuccessfully\n' >&2; exit 1
 			fi
-			forget_executor "${crashed_pid}"
+			forget_execution "${crashed_pid}"
 			curl -fsS "http://${MILL_HTTP_ADDR}/readyz" >/dev/null
 			psql "${MILL_DATABASE_URL}" -XAt -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null
 			kubectl --context kind-mill -n default get jobs -l "mill.dev/job-id=${job_id}" -o json \
@@ -302,9 +302,9 @@ SQL
 				> "${run_directory}/kubernetes-without-coordinator.json"
 			cmp "${run_directory}/kubernetes-before-crash.json" "${run_directory}/kubernetes-without-coordinator.json"
 
-			printf 'Job service, PostgreSQL, and Kubernetes survived. Restarting the executor...\n'
-			start_executor 2
-			primary_executor_pid="${started_pid}"
+			printf 'Job service, PostgreSQL, and Kubernetes survived. Restarting the execution...\n'
+			start_execution 2
+			primary_execution_pid="${started_pid}"
 			psql "${MILL_DATABASE_URL}" -XAt -v ON_ERROR_STOP=1 -v job_id="${job_id}" > "${run_directory}/attempts-after-restart.json" <<'SQL'
 SELECT json_agg(snapshot ORDER BY shard_index)
 FROM (
@@ -401,20 +401,20 @@ go run ./examples/word-count/cmd/word-count --job-id "${job_id}" --task-id local
 	--output-uri "file://${run_directory}/baseline.jsonl" --
 cmp "${run_directory}/baseline.jsonl" "${run_directory}/counts.jsonl"
 if [[ "${restart_coordinator}" == true ]]; then
-	printf '\nPASS: A replacement executor recovered the same running attempts and Kubernetes Jobs after SIGKILL.\n'
+	printf '\nPASS: A replacement execution recovered the same running attempts and Kubernetes Jobs after SIGKILL.\n'
 	printf 'Recovery snapshots: %s/attempts-before-crash.json and %s/kubernetes-before-crash.json\n' "${run_directory}" "${run_directory}"
 fi
 if [[ "${replica_failover}" == true ]]; then
-	printf '\nPASS: Two executor processes respected leases; the survivor fenced and took over the crashed owner.\n'
+	printf '\nPASS: Two execution processes respected leases; the survivor fenced and took over the crashed owner.\n'
 	printf 'Replica snapshots: %s/replica-attempts-before.json and %s/replica-attempts-after.json\n' "${run_directory}" "${run_directory}"
 fi
 grep -q 'Mill execution gRPC server listening on' "${run_directory}/server.log"
-if grep -q 'Kubernetes executor instance=' "${run_directory}/server.log"; then
-	printf 'Job service unexpectedly started the removed in-process executor\n' >&2; exit 1
+if grep -q 'Mill execution instance=' "${run_directory}/server.log"; then
+	printf 'Job service unexpectedly started the removed in-process execution\n' >&2; exit 1
 fi
 if [[ "${split_process}" == true ]]; then
-	printf '\nPASS: One Job service and two live standalone executor replicas completed the batch through gRPC.\n'
-	printf 'One executor may own the active leases while the other remains available as standby.\n'
-	printf 'Process logs: %s/server.log and %s/executor-{1,2}.log\n' "${run_directory}" "${run_directory}"
+	printf '\nPASS: One Job service and two live standalone execution replicas completed the batch through gRPC.\n'
+	printf 'One execution may own the active leases while the other remains available as standby.\n'
+	printf 'Process logs: %s/server.log and %s/execution-{1,2}.log\n' "${run_directory}" "${run_directory}"
 fi
 printf '\nPASS: %s task outputs merged; exact match with the full-input local count.\nObserved peak running tasks: %s\nFinal counts: %s/counts.jsonl\nJob status: %s/status.json\n' "${expected_tasks}" "${peak}" "${run_directory}" "${run_directory}"

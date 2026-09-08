@@ -4,11 +4,11 @@ metadata:
   name: mill-job
   namespace: mill-system
   labels:
-    app.kubernetes.io/name: mill-job-service
+    app.kubernetes.io/name: mill-job
     app.kubernetes.io/part-of: mill
 spec:
   selector:
-    app.kubernetes.io/name: mill-job-service
+    app.kubernetes.io/name: mill-job
   ports:
     - name: http
       port: 8080
@@ -20,10 +20,10 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mill-job-service
+  name: mill-job
   namespace: mill-system
   labels:
-    app.kubernetes.io/name: mill-job-service
+    app.kubernetes.io/name: mill-job
     app.kubernetes.io/part-of: mill
 spec:
   replicas: 2
@@ -35,11 +35,11 @@ spec:
       maxSurge: 0
   selector:
     matchLabels:
-      app.kubernetes.io/name: mill-job-service
+      app.kubernetes.io/name: mill-job
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: mill-job-service
+        app.kubernetes.io/name: mill-job
         app.kubernetes.io/part-of: mill
     spec:
       automountServiceAccountToken: false
@@ -49,7 +49,7 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
             - labelSelector:
                 matchLabels:
-                  app.kubernetes.io/name: mill-job-service
+                  app.kubernetes.io/name: mill-job
               topologyKey: kubernetes.io/hostname
       securityContext:
         runAsNonRoot: true
@@ -58,8 +58,8 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: job-service
-          image: mill/job-service:dev
+        - name: job
+          image: mill/job:dev
           imagePullPolicy: IfNotPresent
           envFrom:
             - secretRef:
@@ -106,21 +106,21 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: mill-job-service
+  name: mill-job
   namespace: mill-system
 spec:
   minAvailable: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: mill-job-service
+      app.kubernetes.io/name: mill-job
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mill-executor
+  name: mill-execution
   namespace: mill-system
   labels:
-    app.kubernetes.io/name: mill-executor
+    app.kubernetes.io/name: mill-execution
     app.kubernetes.io/part-of: mill
 spec:
   replicas: 2
@@ -132,21 +132,21 @@ spec:
       maxSurge: 0
   selector:
     matchLabels:
-      app.kubernetes.io/name: mill-executor
+      app.kubernetes.io/name: mill-execution
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: mill-executor
+        app.kubernetes.io/name: mill-execution
         app.kubernetes.io/part-of: mill
     spec:
-      serviceAccountName: mill-executor
+      serviceAccountName: mill-execution
       terminationGracePeriodSeconds: 10
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             - labelSelector:
                 matchLabels:
-                  app.kubernetes.io/name: mill-executor
+                  app.kubernetes.io/name: mill-execution
               topologyKey: kubernetes.io/hostname
       securityContext:
         runAsNonRoot: true
@@ -155,12 +155,12 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: executor
-          image: mill/executor:dev
+        - name: execution
+          image: mill/execution:dev
           imagePullPolicy: IfNotPresent
           envFrom:
             - secretRef:
-                name: mill-executor-config
+                name: mill-execution-config
           env:
             - name: MILL_JOB_GRPC_TARGET
               value: mill-job:9090
@@ -184,10 +184,10 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: mill-executor
+  name: mill-execution
   namespace: mill-system
 spec:
   minAvailable: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: mill-executor
+      app.kubernetes.io/name: mill-execution
