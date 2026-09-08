@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Measures handwritten Go coverage while excluding generated Protobuf code.
 
 set -euo pipefail
 

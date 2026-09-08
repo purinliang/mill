@@ -1,3 +1,4 @@
+// This file tests retry limits, delay, history, and concurrent claims.
 package postgres
 
 import (

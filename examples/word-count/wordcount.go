@@ -1,3 +1,4 @@
+// This file implements the example's token normalization and word counting.
 package wordcount
 
 import (

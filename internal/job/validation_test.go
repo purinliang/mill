@@ -1,3 +1,4 @@
+// This file tests job-domain normalization and validation rules.
 package job
 
 import (

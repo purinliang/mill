@@ -1,3 +1,4 @@
+// This file tests public file and S3-compatible object-store behavior.
 package objectstore_test
 
 import (

@@ -1,3 +1,4 @@
+// This file tests workload argument serialization and parsing details.
 package workload
 
 import (

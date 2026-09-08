@@ -1,4 +1,5 @@
 // Package objectstore opens Mill inputs and publishes workload outputs by URI.
+// This file implements file and S3-compatible object reads and writes.
 package objectstore
 
 import (

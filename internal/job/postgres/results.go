@@ -1,3 +1,4 @@
+// This file queries successful task outputs for completed jobs.
 package postgres
 
 import (

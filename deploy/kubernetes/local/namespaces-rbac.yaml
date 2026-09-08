@@ -1,3 +1,4 @@
+# Defines local namespaces and execution-service Kubernetes permissions.
 apiVersion: v1
 kind: Namespace
 metadata:

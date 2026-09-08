@@ -1,3 +1,4 @@
+// This file tests a running Job process through its REST and gRPC APIs.
 package main_test
 
 import (

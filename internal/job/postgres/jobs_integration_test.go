@@ -1,3 +1,4 @@
+// This file tests durable job and task behavior against real PostgreSQL.
 package postgres
 
 import (

@@ -1,3 +1,4 @@
+// This file tests public gRPC construction, mapping, and failure behavior.
 package executionrpc_test
 
 import (

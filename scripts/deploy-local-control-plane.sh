@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Configures and deploys the local kind control plane.
 
 set -euo pipefail
 

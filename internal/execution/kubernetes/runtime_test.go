@@ -1,3 +1,4 @@
+// This file tests Kubernetes Job construction and observation details.
 package kubernetes
 
 import (

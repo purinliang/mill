@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Runs the complete local word-count batch through multiple tasks.
 
 set -euo pipefail
 

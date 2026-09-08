@@ -1,3 +1,4 @@
+// This file tests the deterministic fault-injection workload wrapper.
 package main
 
 import (

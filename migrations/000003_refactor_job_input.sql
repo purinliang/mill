@@ -1,3 +1,4 @@
+-- Replaces manifest fields with input identity and logical byte ranges.
 BEGIN;
 
 ALTER TABLE public.jobs

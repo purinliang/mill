@@ -1,3 +1,4 @@
+// This file persists attempt claims, state transitions, and retry policy.
 package postgres
 
 import (

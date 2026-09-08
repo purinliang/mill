@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Runs one manually constructed Kubernetes word-count task.
 
 set -euo pipefail
 

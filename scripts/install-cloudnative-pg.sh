@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Installs the pinned CloudNativePG operator used by availability demos.
 
 set -euo pipefail
 

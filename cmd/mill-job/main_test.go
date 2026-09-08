@@ -1,3 +1,4 @@
+// This file tests Job-process configuration, health routes, and shutdown.
 package main
 
 import (

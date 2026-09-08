@@ -1,3 +1,4 @@
+// This file tests JSONL scanning and logical-shard boundary details.
 package jsonl
 
 import (

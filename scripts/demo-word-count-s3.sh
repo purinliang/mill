@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Runs the word-count batch with S3-compatible shared object storage.
 
 set -euo pipefail
 

@@ -1,3 +1,4 @@
+// This file tests planner failures and consistency through its public API.
 package jsonl_test
 
 import (

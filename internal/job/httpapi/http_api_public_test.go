@@ -1,3 +1,4 @@
+// This file tests the public REST adapter and stable JSON contract.
 package httpapi_test
 
 import (

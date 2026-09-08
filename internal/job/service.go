@@ -1,3 +1,4 @@
+// This file coordinates submission, planning, persistence, and status reads.
 package job
 
 import (

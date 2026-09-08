@@ -1,3 +1,4 @@
+// This file constructs the PostgreSQL job repository and output policy.
 package postgres
 
 import (

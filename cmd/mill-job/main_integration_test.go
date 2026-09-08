@@ -1,3 +1,4 @@
+// This file verifies that the Job process connects to real PostgreSQL.
 package main
 
 import (

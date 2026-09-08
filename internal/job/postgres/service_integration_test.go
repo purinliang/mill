@@ -1,3 +1,4 @@
+// This file tests the job workflow with JSONL planning and PostgreSQL.
 package postgres
 
 import (

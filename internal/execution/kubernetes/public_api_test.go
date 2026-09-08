@@ -1,3 +1,4 @@
+// This file tests Kubernetes runtime behavior through its public API.
 package kubernetes_test
 
 import (

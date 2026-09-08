@@ -1,3 +1,4 @@
+// This file owns job submission, URI, identity, and shard-plan rules.
 package job
 
 import (

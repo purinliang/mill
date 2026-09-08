@@ -1,3 +1,4 @@
+// This file declares job-domain failures shared across adapters.
 package job
 
 import "errors"

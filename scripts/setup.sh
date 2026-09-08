@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Installs and verifies pinned local Kubernetes development tools.
 
 set -euo pipefail
 

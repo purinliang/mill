@@ -1,3 +1,4 @@
+// This file tests Job-side gRPC startup, shutdown, and error handling.
 package main
 
 import (

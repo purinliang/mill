@@ -1,3 +1,4 @@
+// This file tests public constructors and dependency validation.
 package job_test
 
 import (

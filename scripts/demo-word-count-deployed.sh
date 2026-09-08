@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Runs word count through the deployed Mill control-plane services.
 
 set -euo pipefail
 

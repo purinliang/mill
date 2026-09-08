@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Installs a pinned K3s server or agent for the multi-laptop lab.
 
 set -euo pipefail
 

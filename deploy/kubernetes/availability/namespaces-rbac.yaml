@@ -1,3 +1,4 @@
+# Defines namespaces and least-privilege execution permissions for the lab.
 apiVersion: v1
 kind: Namespace
 metadata:

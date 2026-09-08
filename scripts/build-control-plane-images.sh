@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Builds and inspects the Mill Job and execution service images.
 
 set -euo pipefail
 

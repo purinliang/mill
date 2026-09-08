@@ -1,3 +1,4 @@
+// This file tests coordinator reconciliation with in-memory collaborators.
 package coordinator
 
 import (

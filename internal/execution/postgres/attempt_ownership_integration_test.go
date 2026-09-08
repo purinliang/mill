@@ -1,3 +1,4 @@
+// This file tests lease renewal and takeover against real PostgreSQL.
 package postgres
 
 import (

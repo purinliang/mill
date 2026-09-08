@@ -1,3 +1,4 @@
+// This file adapts the execution Store interface to a bounded gRPC client.
 package executionrpc
 
 import (

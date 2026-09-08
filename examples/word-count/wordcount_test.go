@@ -1,3 +1,4 @@
+// This file tests the public word-count computation and output contract.
 package wordcount
 
 import (

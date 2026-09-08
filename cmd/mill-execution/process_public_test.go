@@ -1,3 +1,4 @@
+// This file tests the execution process through its public service boundary.
 package main_test
 
 import (

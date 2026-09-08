@@ -1,3 +1,4 @@
+// This file runs the minimal JSONL byte-range copy example workload.
 package main
 
 import (

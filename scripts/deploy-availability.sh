@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Deploys the local replica and PostgreSQL availability laboratory.
 
 set -euo pipefail
 

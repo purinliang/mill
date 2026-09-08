@@ -1,4 +1,5 @@
 // Package kubernetes executes Mill attempts as native Jobs.
+// This file creates and observes native Kubernetes Jobs for leased attempts.
 package kubernetes
 
 import (

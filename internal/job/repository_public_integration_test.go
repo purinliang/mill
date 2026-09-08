@@ -1,3 +1,4 @@
+// This file tests public job and execution persistence contracts together.
 package job_test
 
 import (

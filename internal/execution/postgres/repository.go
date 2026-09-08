@@ -1,3 +1,4 @@
+// This file defines the PostgreSQL execution repository and shared errors.
 package postgres
 
 import (

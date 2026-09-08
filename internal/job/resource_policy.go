@@ -1,3 +1,4 @@
+// This file maps resource classes to bounded workload resource requests.
 package job
 
 import "github.com/purinliang/mill/internal/execution"

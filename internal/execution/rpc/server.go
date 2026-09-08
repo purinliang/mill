@@ -1,3 +1,4 @@
+// This file exposes durable execution operations through the gRPC server.
 package executionrpc
 
 import (

@@ -1,3 +1,4 @@
+-- Adds lease ownership, fencing tokens, and takeover lookup support.
 BEGIN;
 
 -- A lease fences state changes from stale coordinator replicas. Existing

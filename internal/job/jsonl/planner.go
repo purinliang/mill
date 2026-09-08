@@ -1,3 +1,4 @@
+// This file scans JSONL inputs and plans record-aligned logical shards.
 package jsonl
 
 import (

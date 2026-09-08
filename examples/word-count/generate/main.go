@@ -1,3 +1,4 @@
+// This file generates deterministic JSONL records from the Walden fixture.
 package main
 
 import (

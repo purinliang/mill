@@ -1,3 +1,4 @@
+// This file tests coordinator behavior only through its public API.
 package coordinator_test
 
 import (

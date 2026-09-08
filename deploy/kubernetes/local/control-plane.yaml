@@ -1,3 +1,4 @@
+# Deploys the single-node kind baseline for local Mill development.
 apiVersion: v1
 kind: Service
 metadata:

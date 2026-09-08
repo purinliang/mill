@@ -1,3 +1,4 @@
+// This file defines job submissions, status, progress, and result models.
 package job
 
 import (

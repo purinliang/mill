@@ -1,4 +1,5 @@
 // Package coordinator connects durable task intent to an execution backend.
+// This file reconciles leased attempts and fills available execution slots.
 package coordinator
 
 import (

@@ -1,3 +1,4 @@
+// This file defines the storage and dataset-planning ports used by jobs.
 package job
 
 import "context"

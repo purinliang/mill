@@ -1,3 +1,4 @@
+// This file defines the durable state boundary used by execution replicas.
 package execution
 
 import "context"

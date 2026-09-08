@@ -1,3 +1,4 @@
+// This file tests attempt lifecycles and concurrency against PostgreSQL.
 package postgres
 
 import (

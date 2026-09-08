@@ -1,3 +1,4 @@
+// This file tests resource-class policy and invalid classes.
 package job
 
 import "testing"

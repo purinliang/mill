@@ -1,3 +1,4 @@
+// This file converts execution domain values to and from Protobuf messages.
 package executionrpc
 
 import (

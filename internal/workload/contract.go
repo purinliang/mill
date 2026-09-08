@@ -1,3 +1,4 @@
+// This file defines and parses Mill's language-neutral workload arguments.
 package workload
 
 import (

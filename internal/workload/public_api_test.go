@@ -1,3 +1,4 @@
+// This file tests the public workload contract and validation behavior.
 package workload_test
 
 import (

@@ -1,3 +1,4 @@
+// This file renews attempt leases and performs fenced ownership takeover.
 package postgres
 
 import (

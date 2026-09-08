@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Demonstrates service and database failover behavior in the availability lab.
 
 set -euo pipefail
 

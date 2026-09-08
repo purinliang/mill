@@ -1,3 +1,4 @@
+// This file tests REST routing, validation, and error responses.
 package httpapi
 
 import (

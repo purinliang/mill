@@ -1,3 +1,4 @@
+// This file tests object URI parsing and local storage implementation details.
 package objectstore
 
 import (

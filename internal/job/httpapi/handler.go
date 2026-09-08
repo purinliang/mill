@@ -1,3 +1,4 @@
+// This file implements REST endpoints for job submission and status.
 package httpapi
 
 import (

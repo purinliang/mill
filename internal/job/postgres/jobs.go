@@ -1,3 +1,4 @@
+// This file persists job creation, task materialization, and status reads.
 package postgres
 
 import (

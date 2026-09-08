@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1
+# Builds the deterministic fail-once word-count demo image.
 FROM golang:1.27.1 AS build
 WORKDIR /src
 ENV CGO_ENABLED=0 GOTOOLCHAIN=local
