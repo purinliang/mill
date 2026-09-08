@@ -111,6 +111,90 @@ func TestFileReadsRejectDirectoriesAndOutOfBoundsRanges(t *testing.T) {
 	}
 }
 
+func TestPublicOperationsReportMissingAndInvalidLocations(t *testing.T) {
+	store, err := objectstore.New(context.Background(), objectstore.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing := fileURI(filepath.Join(t.TempDir(), "missing.jsonl"))
+
+	if _, err := store.Open(context.Background(), missing); err == nil {
+		t.Fatal("Open succeeded for a missing file")
+	}
+	if _, err := store.OpenRange(context.Background(), missing, 0, 1); err == nil {
+		t.Fatal("OpenRange succeeded for a missing file")
+	}
+	if _, err := store.OpenRange(context.Background(), "not-a-uri", 0, 1); err == nil {
+		t.Fatal("OpenRange accepted an invalid URI")
+	}
+	if _, err := store.OpenRange(context.Background(), "s3://bucket/key", 0, 1); err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("OpenRange unconfigured S3 error = %v", err)
+	}
+	if err := store.Put(context.Background(), "not-a-uri", strings.NewReader("result")); err == nil {
+		t.Fatal("Put accepted an invalid URI")
+	}
+	if err := store.Put(context.Background(), "s3://bucket/key", strings.NewReader("result")); err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("Put unconfigured S3 error = %v", err)
+	}
+}
+
+func TestS3OperationsExposeRemoteFailures(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		http.Error(response, "denied", http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	store, err := objectstore.New(context.Background(), objectstore.Config{
+		Region:   "us-east-1",
+		Endpoint: server.URL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.Open(context.Background(), "s3://bucket/input.jsonl"); err == nil {
+		t.Fatal("Open hid an S3 failure")
+	}
+	if _, err := store.OpenRange(context.Background(), "s3://bucket/input.jsonl", 0, 1); err == nil {
+		t.Fatal("OpenRange hid an S3 failure")
+	}
+	if err := store.Put(context.Background(), "s3://bucket/output.jsonl", strings.NewReader("result")); err == nil {
+		t.Fatal("Put hid an S3 failure")
+	}
+}
+
+func TestFilePutReportsPublicationPathFailures(t *testing.T) {
+	store, err := objectstore.New(context.Background(), objectstore.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("parent is a regular file", func(t *testing.T) {
+		parent := filepath.Join(t.TempDir(), "parent")
+		if err := os.WriteFile(parent, []byte("not a directory"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		err := store.Put(context.Background(), fileURI(filepath.Join(parent, "result.jsonl")), strings.NewReader("result"))
+		if err == nil || !strings.Contains(err.Error(), "create output directory") {
+			t.Fatalf("Put error = %v", err)
+		}
+	})
+
+	t.Run("destination is a directory", func(t *testing.T) {
+		destination := filepath.Join(t.TempDir(), "result.jsonl")
+		if err := os.Mkdir(destination, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		err := store.Put(context.Background(), fileURI(destination), strings.NewReader("result"))
+		if err == nil || !strings.Contains(err.Error(), "publish output") {
+			t.Fatalf("Put error = %v", err)
+		}
+	})
+}
+
 type failingReadSeeker struct{}
 
 func (failingReadSeeker) Read([]byte) (int, error) {
