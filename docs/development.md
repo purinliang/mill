@@ -477,6 +477,17 @@ Run all hermetic tests:
 go test ./...
 ```
 
+Report coverage for handwritten Go code with:
+
+```bash
+./scripts/test-coverage
+```
+
+This command still compiles and exercises the committed Protobuf bindings
+through Mill's RPC tests, but excludes generated `*.pb.go` statements from the
+reported coverage percentage. Test the handwritten RPC client/server adapters
+and domain behavior rather than generated getters and descriptors.
+
 Prepare a disposable migrated database and enable PostgreSQL integration tests:
 
 ```bash

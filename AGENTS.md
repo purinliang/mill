@@ -242,6 +242,8 @@ When Go implementation begins:
 - follow standard Go project conventions and keep packages cohesive;
 - use `gofmt` on changed Go files;
 - run `go test ./...` before considering a change complete;
+- measure coverage with `scripts/test-coverage`; it excludes generated
+  `*.pb.go` statements while retaining those files in compilation and testing;
 - avoid interfaces that do not provide a current testing or substitution need;
 - return errors explicitly and wrap them with useful operational context;
 - prefer standard-library solutions when they are reasonable; and
