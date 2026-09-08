@@ -89,6 +89,28 @@ func TestFilePutDoesNotReplaceExistingOutputAfterReadFailure(t *testing.T) {
 	}
 }
 
+func TestFileReadsRejectDirectoriesAndOutOfBoundsRanges(t *testing.T) {
+	store, err := objectstore.New(context.Background(), objectstore.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	if _, err := store.Open(context.Background(), fileURI(directory)); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("Open directory error = %v", err)
+	}
+	if _, err := store.OpenRange(context.Background(), fileURI(directory), 0, 1); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("OpenRange directory error = %v", err)
+	}
+
+	filename := filepath.Join(directory, "short.txt")
+	if err := os.WriteFile(filename, []byte("short"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.OpenRange(context.Background(), fileURI(filename), 0, 6); err == nil || !strings.Contains(err.Error(), "beyond object size") {
+		t.Fatalf("out-of-bounds OpenRange error = %v", err)
+	}
+}
+
 type failingReadSeeker struct{}
 
 func (failingReadSeeker) Read([]byte) (int, error) {

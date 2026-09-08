@@ -2,17 +2,22 @@ package executionrpc_test
 
 import (
 	"context"
+	"errors"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/purinliang/mill/internal/execution"
 	"github.com/purinliang/mill/internal/executionrpc"
 	executionv1 "github.com/purinliang/mill/internal/executionrpc/v1"
+	"github.com/purinliang/mill/internal/job"
 )
 
 type recordingBackend struct {
@@ -20,6 +25,7 @@ type recordingBackend struct {
 	failedID       string
 	failedToken    string
 	failureMessage string
+	failure        error
 }
 
 func (b *recordingBackend) LeaseActiveAttempts(context.Context, string, string, time.Duration) ([]execution.ClaimedAttempt, error) {
@@ -42,10 +48,33 @@ func (b *recordingBackend) FailAttempt(_ context.Context, id, token, message str
 	b.failedID = id
 	b.failedToken = token
 	b.failureMessage = message
+	if b.failure != nil {
+		return execution.Attempt{}, b.failure
+	}
 	result := b.attempt
 	result.State = execution.AttemptStateFailed
 	result.FailureMessage = message
 	return result, nil
+}
+
+func TestFailAttemptPreservesPublicDomainFailures(t *testing.T) {
+	t.Run("lease lost", func(t *testing.T) {
+		client := newPublicClient(t, &recordingBackend{failure: execution.ErrAttemptLeaseLost})
+		_, err := client.FailAttempt(context.Background(), "attempt-1", "stale-token", "exit 1")
+		if !errors.Is(err, execution.ErrAttemptLeaseLost) {
+			t.Fatalf("FailAttempt error = %v, want ErrAttemptLeaseLost", err)
+		}
+	})
+
+	t.Run("invalid argument", func(t *testing.T) {
+		client := newPublicClient(t, &recordingBackend{failure: &job.ValidationError{
+			Field: "failure message", Problem: "is too long",
+		}})
+		_, err := client.FailAttempt(context.Background(), "attempt-1", "token-1", "exit 1")
+		if status.Code(err) != codes.InvalidArgument || !strings.Contains(status.Convert(err).Message(), "failure message") {
+			t.Fatalf("FailAttempt error = %v", err)
+		}
+	})
 }
 
 func TestFailAttemptRoundTripPreservesFailureDetails(t *testing.T) {
