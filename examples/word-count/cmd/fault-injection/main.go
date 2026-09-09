@@ -1,6 +1,7 @@
 // This test-only wrapper injects deterministic failure or delay before
 // delegating to the normal mapper. Mill itself never reads the marker:
 // PostgreSQL owns the real retry policy.
+// This file wraps word count with deterministic fail-once demo behavior.
 package main
 
 import (
@@ -41,7 +42,7 @@ func run(args []string, markerRoot string, pause func(time.Duration), execute fu
 	if mode == "delay" && invocation.ShardIndex < 3 {
 		pause(15 * time.Second)
 	}
-	// The multi-node acceptance exercise performs executor, Job-service, and
+	// The multi-node acceptance exercise performs execution, Job service, and
 	// database failovers against the same active wave.
 	if mode == "availability" && invocation.ShardIndex < 3 {
 		pause(120 * time.Second)

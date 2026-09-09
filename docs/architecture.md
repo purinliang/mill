@@ -12,26 +12,29 @@ metadata, S3 or local files hold data, and Kubernetes owns placement and
 container lifecycle. Mill does not implement a cluster scheduler, database
 election, or arbitrary workload aggregation.
 
-The implemented runtime boundary has two Go executables. `cmd/mill` contains the
-HTTP API, Job service, streaming planner, PostgreSQL repository, and optional
-internal gRPC listener. It does not import the coordinator or Kubernetes
-adapter. `cmd/mill-executor` runs the coordinator and Kubernetes adapter against
-that API without a PostgreSQL dependency. The full batch and executor-failover
-paths have been demonstrated across this boundary, but the processes are not
-yet packaged as Kubernetes services.
+The implemented runtime boundary has two Go executables. `cmd/mill-job`
+contains the HTTP API, Job service, dataset partitioner, PostgreSQL repository,
+and optional internal gRPC listener. It does not import the coordinator or
+Kubernetes adapter. `cmd/mill-execution` runs the coordinator and Kubernetes
+adapter against that API without a PostgreSQL dependency. The full batch and
+execution-failover paths have been demonstrated across this boundary. Both
+processes are packaged as minimal images and deployed as Kubernetes services
+in the local demonstration.
 
 ```text
 User
   |
   | POST /jobs or GET /jobs/{id}
   v
-Job service
+Job service (`mill-job`)
   |
-  +--> JSONL planner --> input object --> logical ranges
+  +--> dataset partitioner --> input object --> logical ranges
   |
   +--> PostgreSQL --> jobs, tasks, attempts
   |
-  `-- gRPC --> executor replica(s) --> Kubernetes API --> Job --> Pod
+  `-- gRPC --> execution service replica(s) (`mill-execution`)
+                                      |
+                                      `--> Kubernetes API --> Job --> Pod
                                                                |
                                                                +--> ranged input
                                                                `--> unique output
@@ -89,7 +92,7 @@ Each attempt output is derived as
 `tasks/<shard-index>/attempts/<attempt-id>/result.jsonl`, preventing retries
 from overwriting each other.
 
-## Submission and planning
+## Submission and partitioning
 
 The implemented request is intentionally small:
 
@@ -110,11 +113,11 @@ returns the original job; changing the submission conflicts. JSONL is currently
 the only format. Shard size and parallelism are server policy rather than
 request fields.
 
-The planner streams the input twice without retaining the dataset or every line
-offset in memory. The first pass validates JSONL, counts records, and calculates
-SHA-256. The second chooses complete-record boundaries. The input must remain
-immutable after submission; S3 version IDs and runtime checksum enforcement are
-not implemented.
+The partitioner streams the input twice without retaining the dataset or every
+line offset in memory. The first pass validates JSONL, counts records, and
+calculates SHA-256. The second chooses complete-record boundaries. The input
+must remain immutable after submission; S3 version IDs and runtime checksum
+enforcement are not implemented.
 
 The current heuristic targets four waves of work:
 
@@ -126,9 +129,9 @@ actual tasks = ceil(record count / records per task)
 
 Each record is limited to 16 MiB. A 100-record input at parallelism three
 usually produces 12 tasks, while only three attempts may be active. For S3,
-two complete planning reads are intentionally accepted in this prototype;
-metadata-assisted or one-pass planning is deferred until measurements justify
-the added complexity.
+two complete partitioning reads are intentionally accepted in this prototype;
+metadata-assisted or one-pass partitioning is deferred until measurements
+justify the added complexity.
 
 ## Workload contract
 
@@ -159,7 +162,7 @@ the individual invocation.
 `internal/objectstore` implements a URI-oriented adapter using local files and
 the AWS SDK for Go v2:
 
-- whole-object reads support streaming planning;
+- whole-object reads support streaming partitioning;
 - ranged reads translate `[start, end)` into an S3 HTTP byte range;
 - complete outputs are published through atomic local rename or S3 PutObject;
 - a custom endpoint and path-style addressing support local S3-compatible
@@ -173,7 +176,7 @@ credentials. Mill assumes trusted workloads in V1, but credentials should
 still be limited to the required input/output namespaces.
 
 The storage abstraction is not a network service. It is a small client library
-used by the planner and reference workload.
+used by the partitioner and reference workload.
 
 ## Durable execution and reconciliation
 
@@ -197,7 +200,7 @@ execution did not occur. Stable Job names and recorded UIDs allow the
 coordinator to rediscover the same execution after its process restarts. Mill
 does not silently launch a replacement for a missing running Job.
 
-Each process uses a random executor instance identity. A newly created attempt
+Each execution process uses a random instance identity. A newly created attempt
 receives a 15-second lease, owner, and UUID fencing token in the same transaction
 that marks its task running. Every coordinator tick renews leases it owns and
 may atomically take over unowned or expired attempts using `FOR UPDATE SKIP
@@ -214,7 +217,7 @@ remains planned.
 
 ## Service boundary
 
-The approved next distributed-service shape has only two long-lived Mill
+The implemented distributed-service shape has only two long-lived Mill
 services:
 
 ```text
@@ -223,103 +226,106 @@ Client --REST--> Job service replicas --PostgreSQL--> metadata
                          |
                   Protobuf/gRPC
                          |
-                 Executor replicas --Kubernetes API--> workload Jobs
+                Execution replicas --Kubernetes API--> workload Jobs
 ```
 
-The **Job service** owns the public API, job state machine, planner, and all
-metadata database access. The **executor service** owns Kubernetes creation and
-observation and never accesses Mill tables directly. A separate planner service
-is unjustified while planning is a bounded streaming operation inside the Job
-workflow.
+The **Job service** owns the public API, job state machine, partitioner, and all
+metadata database access. The **execution service** owns Kubernetes creation and
+observation and never accesses Mill tables directly. A separate partition
+service is unjustified while partitioning remains a bounded streaming
+operation inside the Job workflow.
 
-`internal/execution` now owns the backend-independent attempt model and the
-store contract consumed by the coordinator and Kubernetes adapter. HTTP
-submission, JSONL planning, and PostgreSQL implementation remain in
-`internal/job`; file count was not by itself a reason to split them.
+The package-level ownership and dependency graphs are documented beside the
+code in the [Job package](../internal/job/README.md) and
+[execution package](../internal/execution/README.md). Those package boundaries
+make the two service responsibilities visible without creating more services.
 
 The versioned gRPC API is defined in
 `api/proto/mill/execution/v1/execution.proto`. It exposes the implemented lease
 domain operations rather than database CRUD:
 
-- lease active attempts owned by an executor replica;
+- lease active attempts owned by an execution replica;
 - claim the next eligible attempt;
 - record a Kubernetes external identity;
 - complete an attempt; and
 - fail an attempt with a bounded reason.
 
-The Job-side adapter owns the 15-second lease policy; it is deliberately absent
-from executor requests. Every mutation carries an attempt ID and fencing token.
-The client applies a per-call deadline, maps concurrency and state failures back
-to domain errors, and treats other transport failures as ambiguous. A `bufconn`
-test proves schema conversion, server-owned lease policy, and error mapping
-without opening a network port.
+The Job-side adapter owns the 15-second lease policy and deliberately omits it
+from execution-service requests. Every mutation carries both an attempt ID and
+the current fencing token. The client applies a per-call deadline, maps
+concurrency and state failures back to domain errors, and treats other
+transport failures as ambiguous. A `bufconn` test proves schema conversion,
+server-owned lease policy, and error mapping without opening a network port.
 
-The current `cmd/mill` process serves the Job-side API when `MILL_GRPC_ADDR` is
-set; messages are limited to 1 MiB and the gRPC server shuts down with the HTTP
-server. This listener has no transport credentials or authorization, so it
-should bind only to a trusted local or cluster-internal address.
-`cmd/mill-executor` uses a bounded, deadline-bearing gRPC client, has no
+The current `cmd/mill-job` process serves the Job-side API when
+`MILL_GRPC_ADDR` is set. Messages are limited to 1 MiB, and the gRPC server
+shuts down with the HTTP server. This listener has no transport credentials;
+bind it only to a trusted local or cluster-internal address.
+`cmd/mill-execution` uses a bounded, deadline-bearing gRPC client, has no
 PostgreSQL configuration or dependency, and retries later coordinator ticks
 when the Job service is temporarily unavailable. The 12-task batch runs through
-one Job-service process and standalone executor replicas; the failover mode
+one Job process and standalone execution service replicas; the failover mode
 kills the active lease owner and proves fenced takeover by a surviving replica.
-Minimal non-root images now package both services. The executor explicitly
-selects either a local kubeconfig context or the standard in-cluster
+Minimal non-root images now package both services. The execution service
+explicitly selects either a local kubeconfig context or the standard in-cluster
 service-account configuration; selecting both or neither is an error. Local
-namespace-scoped RBAC and a one-replica Pod deployment are implemented. Service
-authentication and multi-replica deployment remain planned. Lease expiry
-transfers observation ownership; it does not create a new attempt. An explicit
-expected version may be added only if the existing fencing and state guards
-prove insufficient for safely retrying an unknown RPC outcome.
+namespace-scoped RBAC and one- or two-replica Pod deployments are implemented.
+Service authentication remains planned. Lease expiry transfers observation
+ownership without creating a new attempt. Add an explicit expected version
+only if the existing fencing and state guards prove insufficient for safely
+retrying an unknown RPC outcome.
 
 ### Runtime separation implementation path
 
 Implement the boundary as small runnable slices rather than another broad
 package refactor:
 
-1. **Serve the Job-side RPC API — implemented.** Keep `cmd/mill` as the Job
+1. **Serve the Job-side RPC API — implemented.** Keep `cmd/mill-job` as the Job
    service for now. It runs REST and optional gRPC listeners together,
    registers `executionrpc.Server`, limits messages to 1 MiB, and shuts both
    listeners down gracefully. PostgreSQL remains reachable only from this
    process.
-2. **Add a separate executor process — implemented.** `cmd/mill-executor` has an
-   executor instance identity, `executionrpc.Client`, coordinator loop, and
-   Kubernetes client. Its dependency graph contains neither `internal/job` nor
-   PostgreSQL, and temporary RPC failures leave it running for a later tick.
+2. **Add a separate execution process — implemented.** The
+   `cmd/mill-execution` command has an execution instance identity,
+   `executionrpc.Client`, coordinator loop, and Kubernetes client. Its
+   dependency graph contains neither `internal/job` nor PostgreSQL, and
+   temporary RPC failures leave it running for a later tick.
 3. **Prove a complete split-process batch — implemented.** Run the existing
-   12-task example through one Job-service process and two executor processes.
+   12-task example through one Job process and two execution processes.
    Preserve bounded parallelism and exact output comparison, and verify
-   executors have no database configuration.
+   execution processes have no database configuration.
 4. **Remove the direct execution path — implemented.** The in-process
    coordinator, `repositoryExecutionStore`, and `MILL_EXECUTOR` have been
    removed from the Job service rather than maintained as a second mode.
-5. **Prove executor failover — implemented locally.** Record active attempt
-   IDs, lease tokens, Kubernetes Job names, and UIDs; kill one executor with
-   `SIGKILL`; wait for lease expiry; and verify the survivor receives new
-   fencing tokens while the attempt IDs, Job names, and UIDs remain unchanged.
-   All 12 tasks must finish without duplicate attempts or Kubernetes Jobs.
+5. **Prove execution failover — implemented locally.** Record active attempt
+   IDs, lease tokens, Kubernetes Job names, and UIDs. Kill one execution
+   process with `SIGKILL`, wait for lease expiry, and verify that the survivor
+   receives new fencing tokens. Attempt IDs, Job names, and UIDs must remain
+   unchanged, and all 12 tasks must finish without duplicate attempts or
+   Kubernetes Jobs being created.
 
 After step 5, the two-service system was reviewed before further feature work.
-The dependency direction and package ownership remained cohesive, so no broad
-refactor was justified. The review traced one submitted job through REST,
-planning, PostgreSQL, gRPC, reconciliation, Kubernetes, and output publication,
-then retained the existing boundaries. Do not split the planner, HTTP handling,
-or PostgreSQL repositories out of `internal/job` merely because the package
-contains several files.
+The review traced one submitted job through REST, partitioning, PostgreSQL,
+gRPC, reconciliation, Kubernetes, and output publication. A first
+learning-oriented refactor then made those boundaries visible in the package
+tree: the job core depends on the `Store` and `DatasetPartitioner` contracts,
+while HTTP, partitioning, and PostgreSQL remain adapters. Attempt persistence
+moved beside the execution domain. These package boundaries do not create
+additional deployed services.
 
-This checkpoint demonstrates executor-process availability and a real service
+This checkpoint demonstrates execution-process availability and a real service
 boundary. It does not demonstrate complete infrastructure availability. A Job
-service replica can later reconnect executors through a Kubernetes Service, but
-PostgreSQL remains a failure point until database replication is implemented,
-and single-node kind remains a node-level failure point until the multi-node
-stage.
+service replica can reconnect execution replicas through a Kubernetes Service,
+but PostgreSQL remains a failure point until database replication is complete.
+Single-node kind remains a node-level failure point until the multi-node stage.
 
 ### Refactor checkpoint
 
-Perform one overall architecture and code-ownership refactor after the
-three-node quorum milestone. Waiting until Milestone 8 provides evidence from
-process failure, deployed Pods, controlled primary/standby promotion, physical
-node loss, and minority isolation before reshaping the code.
+The first refactor checkpoint follows the Milestone 7 test expansion and makes
+existing service boundaries easier to learn. Perform a second overall review
+after the three-node quorum milestone. Milestone 8 should provide evidence from
+process failure, controlled database promotion, physical node loss, and
+minority isolation before another broad reshaping of the code.
 
 Begin with a package/dependency inventory and an end-to-end walkthrough.
 Review service composition, lifecycle and shutdown, package ownership,
@@ -357,10 +363,10 @@ memory profiles are:
 
 All three classes request `100m` CPU and limit CPU to `1`; these values remain
 server policy rather than user input. Users do not submit raw Kubernetes
-resource strings. Executors receive resolved integer resources through gRPC
-and construct the corresponding Kubernetes quantities.
+resource strings. Execution replicas receive resolved integer resources
+through gRPC and construct the corresponding Kubernetes quantities.
 
-The Job and executor services should normally request 64 MiB and limit at
+The Job and execution services should normally request 64 MiB and limit at
 128 MiB. Their memory may scale with explicitly bounded concurrent requests,
 RPCs, and workers, but not dataset size or historical job count. PostgreSQL is
 budgeted separately, initially around a 256 MiB request and 512 MiB limit per
@@ -372,19 +378,19 @@ Availability statements name the exact failure being tested.
 
 ### Local single-node deployment baseline — implemented
 
-The first packaged deployment creates `mill-system` for the Job service and
-executor, and `mill-workloads` for generated Kubernetes Jobs. One ClusterIP
+The first packaged deployment creates `mill-system` for the Job and execution
+services, and `mill-workloads` for generated Kubernetes Jobs. One ClusterIP
 Service exposes the Job service's REST and plaintext internal gRPC ports. The
-Job-service Pod does not mount a Kubernetes service-account token. The executor
-uses an in-cluster token and a Role in `mill-workloads` limited to `create` and
-`get` on `batch/jobs`; it cannot read Pods or Secrets, list or delete Jobs, or
-access resources cluster-wide.
+Job Pod does not mount a Kubernetes service-account token. The execution
+service uses an in-cluster token and a Role in `mill-workloads` limited to
+`create` and `get` on `batch/jobs`; it cannot list or delete Jobs, read Pods
+or Secrets, or access resources cluster-wide.
 
 The Job service alone receives the PostgreSQL URL and its object-store
-credentials. The executor receives only the Job-service address, target
-namespace, and workload object-store routing. Static local workload credentials
-live in a separate Secret in `mill-workloads`; referencing that Secret in a Job
-does not grant the executor permission to read it.
+credentials. The execution service receives only the Job address, target
+namespace, and workload object-store routing. Static local workload
+credentials live in a separate Secret in `mill-workloads`; referencing that
+Secret in a Job does not grant the execution service permission to read it.
 
 Both Deployments have one replica and depend on externally managed PostgreSQL
 and S3-compatible storage. The kind-specific images use `imagePullPolicy:
@@ -392,38 +398,38 @@ Never`. This baseline proves Pod startup, PostgreSQL-backed readiness, service
 discovery, in-cluster configuration, and the RBAC boundary. It makes no
 availability claim.
 
-`scripts/demo-word-count-deployed` proves the complete boundary using unique
+`scripts/demo-word-count-deployed.sh` proves the complete boundary using unique
 temporary namespaces and disposable PostgreSQL/S3 fixtures. It submits 12
 logical tasks through the deployed REST endpoint, leases them through deployed
-gRPC and executor Pods, observes 12 S3-backed Kubernetes Jobs at bounded
+gRPC and execution Pods, observes 12 S3-backed Kubernetes Jobs at bounded
 parallelism three, and verifies the merged result exactly. This extends the
 deployment claim to end-to-end correctness, but not availability.
 
-Its `--executor-failover` mode is the first narrow availability proof. On the
-same kind node, it scales the executor Deployment to two replicas, proves the
+Its `--execution-failover` mode is the first narrow availability proof. On the
+same kind node, it scales the execution Deployment to two replicas, proves the
 standby cannot acquire valid leases, deletes the active owner Pod, and waits for
-lease takeover. Recovery is valid only when fencing tokens and the owning
-executor change while task IDs, attempt IDs, attempt numbers, external UIDs,
+lease takeover. Recovery is valid only when fencing tokens and the execution
+owner change while task IDs, attempt IDs, attempt numbers, external UIDs,
 Kubernetes Job names, and Job UIDs remain stable. The batch must finish with no
-second attempts and exact output. This proves tolerance of one executor Pod
+second attempts and exact output. This proves tolerance of one execution Pod
 deletion while the Job service, PostgreSQL, Kubernetes API/node, network, and
 object storage stay healthy; it does not prove any of those dependencies are
 available under failure.
 
-The complementary `--job-service-failover` mode starts with one Job-service
+The complementary `--job-failover` mode starts with one Job
 endpoint, scales its Deployment to two ready replicas, and deletes the original
 Pod while attempts are live. A retrying REST client reconnects, and the
-executor's existing gRPC client must reconnect through the ClusterIP Service
-and finish the same leases. Task IDs, attempt IDs, attempt numbers, external
-UIDs, lease owner, fencing tokens, Kubernetes Job names, and Job UIDs remain
-stable. This proves one stateless Job-service Pod failure only while
-PostgreSQL, the executor, Kubernetes API/node, network, and object storage stay
-healthy.
+execution service's existing gRPC client must reconnect through the ClusterIP
+Service and finish the same leases. Task IDs, attempt IDs, attempt numbers,
+external UIDs, lease owner, fencing tokens, Kubernetes Job names, and Job UIDs
+must remain stable. This proves tolerance of one stateless Job Pod failure
+while PostgreSQL, the execution service, Kubernetes API/node, network, and
+object storage stay healthy.
 
 ### Two-laptop replica availability — planned
 
-One laptop runs a K3s server and the other a K3s agent. Two Job-service and two
-executor replicas are spread across the nodes. CloudNativePG runs a primary and
+One laptop runs a K3s server and the other a K3s agent. Two Job and two
+execution replicas are spread across the nodes. CloudNativePG runs a primary and
 standby with synchronous replication set to availability-oriented
 `dataDurability: preferred`.
 
@@ -458,7 +464,7 @@ the K3s/etcd topology and failure scenarios have actually passed.
 
 ## Explicitly deferred
 
-- asynchronous planning and preparation recovery;
+- asynchronous partitioning and preparation recovery;
 - raw user-configurable Kubernetes resources;
 - arbitrary input formats or partitioning languages;
 - generic result aggregation or content validation;

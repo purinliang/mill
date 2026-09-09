@@ -1,3 +1,4 @@
+// This file tests deterministic paragraph grouping and JSONL generation.
 package main
 
 import (

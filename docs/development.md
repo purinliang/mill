@@ -1,8 +1,9 @@
-# Developing Mill
+# Development
 
 This guide covers the implemented local environment, demonstrations, tests,
-configuration, and repository organization. Planned multi-service and
-availability work is described in [Architecture](architecture.md).
+configuration, and repository organization. Availability design is described
+in [Architecture](architecture.md), and staged work is in the
+[roadmap](roadmap.md).
 
 ## Prerequisites
 
@@ -11,7 +12,7 @@ availability work is described in [Architecture](architecture.md).
 - PostgreSQL 18 client/server tools for local and integration runs;
 - Docker Engine with daemon access;
 - `curl`, `jq`, `openssl`, and ordinary POSIX command-line tools; and
-- kind and kubectl, which `scripts/setup` can install at pinned versions.
+- kind and kubectl, which `scripts/setup.sh` can install at pinned versions.
 
 Docker is a machine-level prerequisite. The setup script does not install the
 daemon, modify group membership, replace an incompatible cluster, or delete
@@ -22,7 +23,7 @@ resources.
 Run:
 
 ```bash
-./scripts/setup
+./scripts/setup.sh
 ```
 
 The script installs pinned kind and kubectl binaries under
@@ -58,7 +59,7 @@ awk 'BEGIN { for (i = 0; i < 100; i++) print "{\"value\":" i "}" }' \
 export MILL_OUTPUT_ROOT_URI='file:///tmp/mill-output'
 export MILL_PARALLELISM=3
 export MILL_GRPC_ADDR='127.0.0.1:9090'
-go run ./cmd/mill
+go run ./cmd/mill-job
 ```
 
 The default HTTP address is `:8080`; set `MILL_HTTP_ADDR` to override it. The
@@ -77,8 +78,8 @@ curl --include --request POST http://localhost:8080/jobs \
 ```
 
 The first request returns `201`; an identical replay returns `200` with the
-same job. Without a separately running executor, its tasks remain pending.
-Retrieve status with:
+same job. Without a separately running execution service, its tasks remain
+pending. Retrieve status with:
 
 ```bash
 curl http://localhost:8080/jobs/<job-id>
@@ -94,7 +95,7 @@ Health endpoints are:
 ### One manually configured task
 
 ```bash
-./scripts/demo-word-count-single-task
+./scripts/demo-word-count-single-task.sh
 ```
 
 This stages one input range in the kind node, renders a Kubernetes Job, and
@@ -103,40 +104,40 @@ compares its output with a local run. It does not use PostgreSQL task claims.
 ### Full node-local batch
 
 ```bash
-./scripts/demo-word-count-batch
+./scripts/demo-word-count-batch.sh
 ```
 
-This starts private temporary PostgreSQL, Job-service, and standalone executor
-processes, submits the generated 12-record Walden input, executes the planned
+This starts private temporary PostgreSQL, Job, and standalone execution service
+processes, submits the generated 12-record Walden input, executes the resulting
 logical tasks with bounded concurrency, merges successful outputs, and compares
 them to a local full-input result. It uses hostPath storage on the single kind
 node.
 
-Run the same batch with a second live executor replica:
+Run the same batch with a second live execution replica:
 
 ```bash
-./scripts/demo-word-count-batch --split-process
+./scripts/demo-word-count-batch.sh --split-process
 ```
 
-All modes use the gRPC service boundary. Executors receive no PostgreSQL
-configuration and access execution state only through the Job service. The
-script verifies that all 12 task outputs match the local baseline and no more
-than the configured number of workload Pods run concurrently. One
-executor may own all active leases while the other remains available as
-standby; executor replicas provide reconciliation availability, while workload
-Pods provide computation parallelism. Override the gRPC port with
+All modes use the gRPC service boundary. Execution replicas receive no
+PostgreSQL configuration and access execution state only through the Job
+service. The script verifies that all 12 task outputs match the local baseline
+and no more than the configured number of workload Pods run concurrently. One
+execution replica may own all active leases while the other remains available
+as standby. Execution replicas provide reconciliation availability, while
+workload Pods provide computation parallelism. Override the gRPC port with
 `MILL_DEMO_GRPC_PORT` when necessary.
 
 Use two active attempts with:
 
 ```bash
-MILL_PARALLELISM=2 ./scripts/demo-word-count-batch
+MILL_PARALLELISM=2 ./scripts/demo-word-count-batch.sh
 ```
 
 Exercise a workload resource class and verify every generated Pod template:
 
 ```bash
-MILL_DEMO_RESOURCE_CLASS=medium ./scripts/demo-word-count-batch
+MILL_DEMO_RESOURCE_CLASS=medium ./scripts/demo-word-count-batch.sh
 ```
 
 The accepted values are `small`, `medium`, and `large`; omission defaults to
@@ -146,40 +147,40 @@ the Kubernetes CPU and memory requests/limits.
 Exercise deterministic task failure and retry exhaustion:
 
 ```bash
-./scripts/demo-word-count-batch --failure once
-./scripts/demo-word-count-batch --failure always
+./scripts/demo-word-count-batch.sh --failure once
+./scripts/demo-word-count-batch.sh --failure always
 ```
 
-Exercise executor process recovery while the Job service, PostgreSQL, and
+Exercise execution process recovery while the Job service, PostgreSQL, and
 Kubernetes continue:
 
 ```bash
-./scripts/demo-word-count-batch --restart-coordinator
+./scripts/demo-word-count-batch.sh --restart-coordinator
 ```
 
-The replacement executor waits for the 15-second attempt leases to expire, takes
-over with new fencing tokens, and observes the same attempt IDs and Kubernetes
-Job UIDs. The script records attempt history, failure logs, and identity
-snapshots in its printed temporary directory. Kubernetes Jobs remain until
-explicitly removed.
+The replacement execution process waits for the 15-second attempt leases to
+expire, takes over with new fencing tokens, and observes the same attempt IDs
+and Kubernetes Job UIDs. The script records attempt history, failure logs, and
+identity snapshots in its printed temporary directory. It retains Kubernetes
+Jobs until the user explicitly removes them.
 
-Exercise two live executor replicas and survivor takeover:
+Exercise two live execution replicas and survivor takeover:
 
 ```bash
-./scripts/demo-word-count-batch --replica-failover
+./scripts/demo-word-count-batch.sh --replica-failover
 ```
 
-The script first lets one executor own three delayed attempts, then starts a
-second executor against the same Job-service gRPC endpoint. It proves that the
+The script first lets one execution process own three delayed attempts, then
+starts a second process against the same Job gRPC endpoint. It proves that the
 second process cannot change the unexpired leases or create duplicate Jobs,
-kills the lease owner with SIGKILL, and verifies that the survivor receives new
-fencing tokens for the same attempt IDs and Kubernetes UIDs. The Job service
-remains available and the remaining shards complete through the survivor.
+kills the lease owner with SIGKILL, and verifies that the survivor receives
+new fencing tokens for the same attempt IDs and Kubernetes UIDs. The Job
+service remains available while the survivor completes the remaining shards.
 
 ### Full S3-compatible batch
 
 ```bash
-./scripts/demo-word-count-s3
+./scripts/demo-word-count-s3.sh
 ```
 
 This is the shared-storage vertical slice. It:
@@ -213,13 +214,13 @@ deployment or availability claim. Override its HTTP port with
 ### Full batch through deployed Mill services
 
 ```bash
-./scripts/demo-word-count-deployed
+./scripts/demo-word-count-deployed.sh
 ```
 
 This is the single-node deployment proof. It creates unique temporary system
 and workload namespaces, starts disposable PostgreSQL 18 and SeaweedFS
 containers on kind's Docker network, migrates the database, and calls
-`scripts/deploy-local-control-plane`. The API is reached through a temporary
+`scripts/deploy-local-control-plane.sh`. The API is reached through a temporary
 port-forward; override its local port with `MILL_DEMO_PORT`, whose default is
 `18083`.
 
@@ -235,48 +236,49 @@ not overwritten. The disposable database and object store are correctness
 fixtures; this test demonstrates a fully deployed control plane, not service,
 node, database, or storage availability.
 
-To test one executor Pod failure on the same single-node cluster, run:
+To test one execution Pod failure on the same single-node cluster, run:
 
 ```bash
-./scripts/demo-word-count-deployed --executor-failover
+./scripts/demo-word-count-deployed.sh --execution-failover
 ```
 
 This mode uses a deterministic 15-second delay for the first three workload
-attempts. It waits until one executor owns all three leases, scales the
-Deployment from one replica to two, and verifies that the standby neither
+attempts. It waits until one execution replica owns all three leases, scales
+the Deployment from one replica to two, and verifies that the standby neither
 steals the live leases nor creates replacement Jobs. It then records the owner
 and standby logs, deletes the owning Pod, waits for that Pod to disappear, and
-accepts takeover only when another running executor holds new fencing tokens
-for the same task IDs, attempt IDs, attempt numbers, external UIDs, Kubernetes
-Job names, and Job UIDs.
+accepts takeover only when another running execution replica holds new fencing
+tokens for the same task IDs, attempt IDs, attempt numbers, external UIDs,
+Kubernetes Job names, and Job UIDs.
 
 The run must still finish with exactly 12 first attempts, two available
-executor replicas, peak workload parallelism three, and output identical to
+execution replicas, peak workload parallelism three, and output identical to
 the local baseline. The printed directory retains `failover-attempts-*.json`,
-`failover-kubernetes-*.json`, and the executor logs around the failure. This is
-evidence for executor Pod recovery while the Job service, PostgreSQL,
+`failover-kubernetes-*.json`, and the execution logs around the failure. This is
+evidence for execution Pod recovery while the Job service, PostgreSQL,
 Kubernetes control plane/node, network, and object store remain healthy; it is
 not a full high-availability claim.
 
-To test one Job-service Pod failure, run:
+To test one Job Pod failure, run:
 
 ```bash
-./scripts/demo-word-count-deployed --job-service-failover
+./scripts/demo-word-count-deployed.sh --job-failover
 ```
 
 This mode also delays the first three attempts. It records the original
-attempt and Kubernetes Job identities, scales the Job-service Deployment from
+attempt and Kubernetes Job identities, scales the Job Deployment from
 one ready replica to two, and deletes the original Pod—the only gRPC endpoint
-that existed when the executor connected. The external port-forward is
-recreated to model a retrying REST client. The test passes only when the REST
-API becomes reachable, the executor reconnects through the ClusterIP Service,
-the original lease owner and fencing tokens complete the same attempts, all 12
-first attempts finish, and the output remains exact. Its
-`job-service-*.json` and Pod-specific logs provide the failure evidence.
+that existed when the execution service connected. The external port-forward
+is recreated to model a retrying REST client. The test passes only when the
+REST API becomes reachable and the execution service reconnects through the
+ClusterIP Service. The original lease owner and fencing tokens must complete
+the same attempts; all 12 first attempts must finish with exact output. Its
+`job-*.json` and Pod-specific logs provide the failure evidence.
 
-This proves one stateless Job-service Pod may fail while another ready replica,
-PostgreSQL, the executor, Kubernetes node/API, network, and object store remain
-healthy. It does not demonstrate database, node, or partition tolerance.
+This proves that one stateless Job Pod may fail while another ready replica,
+PostgreSQL, the execution service, Kubernetes node/API, network, and object
+store remain healthy. It does not demonstrate tolerance of database, node, or
+network-partition failure.
 
 ### Availability manifests
 
@@ -284,7 +286,7 @@ The multi-node profiles live in `deploy/kubernetes/availability`. Install the
 pinned CloudNativePG 1.30.0 operator into the intended context first:
 
 ```bash
-MILL_KUBE_CONTEXT=<context> ./scripts/install-cloudnative-pg
+MILL_KUBE_CONTEXT=<context> ./scripts/install-cloudnative-pg.sh
 ```
 
 The installer downloads the official release manifest, verifies its pinned
@@ -292,8 +294,8 @@ SHA-256 digest, applies it server-side, and waits for the controller. The
 directory then provides:
 
 - `namespaces-rbac.yaml` for the system, workload, and database namespaces and
-  the existing namespace-scoped executor permissions;
-- `control-plane.yaml` for two Job-service and two executor replicas, required
+  the existing namespace-scoped execution-service permissions;
+- `control-plane.yaml` for two Job and two execution replicas, required
   hostname anti-affinity, and one-replica disruption budgets;
 - `postgres-two-node.yaml` for two PostgreSQL instances with synchronous
   `ANY 1` and `dataDurability: preferred`; and
@@ -304,9 +306,9 @@ The PostgreSQL profiles have the same resource name and are alternatives; do
 not apply both. Each requires a `kubernetes.io/basic-auth` Secret named
 `mill-database-credentials` in `mill-database`, and each uses K3s's
 `local-path` storage class. The control-plane manifest similarly expects its
-configuration Secrets and node-reachable images. `scripts/deploy-availability`
-validates the topology, creates the Secrets, applies migrations, and rolls out
-the services.
+configuration Secrets and node-reachable images. The
+`scripts/deploy-availability.sh` script validates the topology, creates the
+Secrets, applies migrations, and rolls out the services.
 
 Required anti-affinity intentionally leaves replicas Pending when the cluster
 has too few distinct hostnames. Weakening it to make a one-node test green
@@ -327,13 +329,13 @@ input provenance, deterministic record grouping, and result-merging behavior.
 Build both Mill service images from the repository root:
 
 ```bash
-./scripts/build-control-plane-images
+./scripts/build-control-plane-images.sh
 ```
 
-The script builds `mill/job-service:dev` from `cmd/mill/Dockerfile` and
-`mill/executor:dev` from `cmd/mill-executor/Dockerfile`. Override the tags with
-`MILL_JOB_IMAGE` and `MILL_EXECUTOR_IMAGE`. It inspects both results and fails
-unless they have the expected entrypoint and run as the numeric non-root user
+The script builds `mill/job:dev` from `cmd/mill-job/Dockerfile` and builds
+`mill/execution:dev` from `cmd/mill-execution/Dockerfile`. Override the tags
+with `MILL_JOB_IMAGE` and `MILL_EXECUTION_IMAGE`. It inspects both results and
+fails unless both have the expected entrypoint and numeric non-root identity
 `65532:65532`.
 
 Both images contain only a statically linked service binary and CA
@@ -342,7 +344,7 @@ resources.
 
 ## Local control-plane deployment
 
-The first deployment baseline runs one Job-service Pod and one executor Pod in
+The first deployment baseline runs one Job Pod and one execution Pod in
 kind. It requires an existing PostgreSQL database that is already migrated and
 reachable from Pods, plus an `s3://` output root. It does not deploy PostgreSQL
 or object storage.
@@ -358,7 +360,7 @@ export MILL_WORKLOAD_S3_ENDPOINT="$MILL_S3_ENDPOINT"
 export AWS_ACCESS_KEY_ID='local-access-key'
 export AWS_SECRET_ACCESS_KEY='local-secret-key'
 
-./scripts/deploy-local-control-plane
+./scripts/deploy-local-control-plane.sh
 ```
 
 Do not use `127.0.0.1` for PostgreSQL or an S3 endpoint unless that service is
@@ -368,13 +370,13 @@ builds and loads both service images, creates `mill-system` and
 Deployments, and waits for both rollouts. Re-running it updates the local
 deployment without deleting its namespaces.
 
-The Job-service Pod receives the database URL and control-plane S3 credentials.
-The executor Pod does not receive them. Its service account may only create and
+The Job Pod receives the database URL and control-plane S3 credentials.
+The execution Pod does not receive them. Its service account may only create and
 get Jobs in `mill-workloads`; it cannot list or delete Jobs, read Pods, or read
 Secrets. When static AWS credentials are supplied for this local setup, a
-separate `mill-workload-storage` Secret is created in the workload namespace and
-referenced by workload Pods without granting the executor permission to read
-it.
+separate `mill-workload-storage` Secret is created in the workload namespace.
+Workload Pods may reference this Secret without granting the execution service
+permission to read its contents.
 
 The checked-in manifests are kind-specific: they use local `:dev` images with
 `imagePullPolicy: Never`, one replica per service, plaintext cluster-internal
@@ -391,7 +393,7 @@ Inspect the deployment and API:
 
 ```bash
 kubectl --context kind-mill -n mill-system get deployments,pods,service
-kubectl --context kind-mill -n mill-system logs deployment/mill-executor
+kubectl --context kind-mill -n mill-system logs deployment/mill-execution
 kubectl --context kind-mill -n mill-system port-forward service/mill-job 8080:8080
 curl http://127.0.0.1:8080/readyz
 ```
@@ -414,32 +416,33 @@ Job-process variables:
 | `MILL_PARALLELISM` | Required job concurrency captured at submission. |
 | `MILL_HTTP_ADDR` | Optional listen address; default `:8080`. |
 | `MILL_GRPC_ADDR` | Optional internal execution gRPC listen address; empty disables it. |
-| `AWS_REGION` | Enables S3 in the planner/workload storage adapter. |
+| `AWS_REGION` | Enables S3 in the partitioner/workload storage adapter. |
 | `MILL_S3_ENDPOINT` | Optional custom S3-compatible endpoint. |
 
-Task execution always runs in the standalone executor. Start `cmd/mill` with
-`MILL_GRPC_ADDR` set, then configure and start the executor in another shell:
+Task execution always runs in the standalone execution service. Start
+`cmd/mill-job` with `MILL_GRPC_ADDR` set, then configure and start the
+execution service in another shell:
 
 ```bash
 export MILL_JOB_GRPC_TARGET='127.0.0.1:9090'
 export MILL_KUBE_CONTEXT='kind-mill'
 export MILL_KUBE_NAMESPACE='default'
-go run ./cmd/mill-executor
+go run ./cmd/mill-execution
 ```
 
-The standalone executor uses these RPC variables:
+The standalone execution service uses these RPC variables:
 
 | Variable | Purpose |
 | --- | --- |
-| `MILL_JOB_GRPC_TARGET` | Required Job-service gRPC target. |
+| `MILL_JOB_GRPC_TARGET` | Required Job gRPC target. |
 | `MILL_EXECUTION_RPC_TIMEOUT` | Optional per-call timeout; default `3s`, range `100ms`–`30s`. |
-| `MILL_KUBE_CONTEXT` | Explicit kubeconfig context for an executor outside Kubernetes. |
-| `MILL_KUBE_IN_CLUSTER` | Set exactly to `true` to use the executor Pod's service-account credentials. |
+| `MILL_KUBE_CONTEXT` | Kubeconfig context for local execution. |
+| `MILL_KUBE_IN_CLUSTER` | Use Pod credentials when exactly `true`. |
 | `MILL_KUBE_NAMESPACE` | Namespace for Jobs. |
 
-Configure exactly one Kubernetes client mode: set `MILL_KUBE_CONTEXT` for a
-locally running executor, or set `MILL_KUBE_IN_CLUSTER=true` for an executor
-running as a Pod. In-cluster mode uses client-go's standard service-account CA,
+Configure exactly one Kubernetes client mode. Set `MILL_KUBE_CONTEXT` for a
+locally running execution service, or set `MILL_KUBE_IN_CLUSTER=true` when it
+runs as a Pod. In-cluster mode uses client-go's standard service-account CA,
 token, and API address. It does not itself create or grant the required RBAC;
 that belongs to the deployment configuration.
 
@@ -477,6 +480,23 @@ Run all hermetic tests:
 go test ./...
 ```
 
+Report coverage for handwritten Go code with:
+
+```bash
+./scripts/test-coverage.sh
+```
+
+This command still compiles and exercises the committed Protobuf bindings
+through Mill's RPC tests, but excludes generated `*.pb.go` statements from the
+reported coverage percentage. Test the handwritten RPC client/server adapters
+and domain behavior rather than generated getters and descriptors.
+
+Coverage is weighted by statements, not averaged across files or packages. The
+hermetic run skips PostgreSQL integration tests, so its total does not represent
+coverage of the durable repository. Mill uses small `Store` fakes when testing
+HTTP, coordinator, and transport behavior, but tests repository SQL against a
+real PostgreSQL instance instead of mocking expected SQL calls.
+
 Prepare a disposable migrated database and enable PostgreSQL integration tests:
 
 ```bash
@@ -487,7 +507,24 @@ done
 MILL_TEST_DATABASE_URL='postgresql:///mill_test' go test -race ./...
 ```
 
+With the same environment variable set, include PostgreSQL behavior in the
+handwritten coverage report:
+
+```bash
+MILL_TEST_DATABASE_URL='postgresql:///mill_test' ./scripts/test-coverage.sh
+```
+
 Tests requiring PostgreSQL skip when `MILL_TEST_DATABASE_URL` is absent.
+The opt-in suite also builds and launches the real Job executable,
+verifies liveness and readiness, submits and replays a job through HTTP,
+claims and transitions an attempt through the public gRPC API, observes the
+durable progress through HTTP, and requires graceful SIGTERM shutdown. Direct
+database access is limited to removing its fixture afterward.
+The hermetic suite separately builds and launches the real execution
+executable against in-memory gRPC and Kubernetes HTTP test servers. It verifies
+that a claimed attempt becomes a correctly addressed Kubernetes Job and that
+the execution service reports the returned Job UID before shutting down
+cleanly. No cluster is required for this process-boundary test.
 Kubernetes demonstrations are explicit scripts rather than part of the normal
 unit suite.
 
@@ -500,7 +537,7 @@ and regenerate from the repository root:
 ```bash
 go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
 go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
-PATH="$(go env GOPATH)/bin:$PATH" protoc -I api/proto \
+PATH="$(go env GOPATH)/bin:$PATH" protoc -I . \
   --go_out=. --go_opt=module=github.com/purinliang/mill \
   --go-grpc_out=. --go-grpc_opt=module=github.com/purinliang/mill \
   api/proto/mill/execution/v1/execution.proto
@@ -512,71 +549,32 @@ headers. Review both the schema and generated diff together.
 ## Repository structure
 
 ```text
-cmd/mill/
-  Dockerfile                      minimal non-root Job-service image
-  main.go                         process composition and HTTP lifecycle
-  grpc.go                         optional bounded execution gRPC listener
-cmd/mill-executor/
-  Dockerfile                      minimal non-root executor image
-  main.go                         standalone gRPC-to-Kubernetes coordinator
-deploy/kubernetes/local/
-  namespaces-rbac.yaml            local namespaces and executor Job permissions
-  control-plane.yaml              one-replica kind service Deployments
-api/proto/mill/execution/v1/
-  execution.proto                 versioned internal lease/state RPC schema
-docs/
-  architecture.md                 domain, correctness, and availability design
-  development.md                  local setup, demos, tests, and structure
-examples/jsonl-copy/
-  cmd/jsonl-copy/                 minimal range-copy workload and Dockerfile
-examples/word-count/
-  cmd/word-count/                 S3/file mapper and Dockerfile
-  cmd/merge/                      example-specific local result merger
-  cmd/fault-injection/            deterministic test wrapper and Dockerfile
-  generate/                       reproducible JSONL input generator
-  walden-economy.txt              committed source fixture
-  record-config.json              deterministic grouping configuration
-  job.yaml.template               manual single-task manifest template
-internal/job/
-  model.go                        public job/submission model
-  validation.go                   submission and URI normalization
-  partition.go                    streaming JSONL logical-shard planner
-  repository.go                   PostgreSQL job/task persistence
-  attempt_repository.go           claims, fenced transitions, and retry policy
-  execution_repository.go         lease renewal/takeover and successful results
-  handler.go                      HTTP transport
-internal/execution/
-  model.go                        executor-facing attempt and executable model
-  store.go                        durable executor store contract
-internal/executionrpc/
-  client.go                       deadline-bound execution Store client
-  server.go                       Job-side backend and gRPC status mapping
-  convert.go                      domain/Protobuf conversion
-  v1/                             generated versioned Go bindings
-internal/coordinator/
-  coordinator.go                  observe active attempts and fill free slots
-internal/kubernetes/
-  executor.go                     create and observe native Kubernetes Jobs
-internal/objectstore/
-  store.go                        file and S3-compatible object access
-internal/workload/
-  contract.go                     language-neutral CLI protocol implementation
-migrations/                       ordered PostgreSQL schema and lease history
-scripts/
-  setup                           pinned local kind/kubectl preparation
-  build-control-plane-images      build and inspect both Mill service images
-  deploy-local-control-plane      build, configure, and roll out services in kind
-  demo-word-count-deployed        complete S3 batch through deployed Mill Pods
-  demo-word-count-single-task     one manual Kubernetes task
-  demo-word-count-batch           complete node-local control-plane batch
-  demo-word-count-s3              complete shared-storage batch
-README.md                         concise project entry point and roadmap
-AGENTS.md                         engineering, Git, and agent conventions
+cmd/                    runnable Mill service composition roots
+api/proto/              versioned internal RPC schemas
+deploy/                 Kubernetes deployment definitions
+docs/                   system design and developer operations
+examples/               trusted workloads and demonstrations
+internal/job/            Job workflow, policy, ports, and adapters
+internal/execution/      attempt reconciliation, ownership, and adapters
+internal/objectstore/    file and S3-compatible object access
+internal/workload/       stable workload command-line contract
+migrations/             ordered PostgreSQL schema history
+scripts/                repeatable setup, deployment, and demo commands
+test/integration/        database, transport, adapter, and process tests
 ```
 
 Keep Mill as one Go module. Package boundaries are not automatically deployment
 boundaries. Example executables remain under `examples`; top-level `cmd` is
 reserved for Mill-owned services.
+
+Detailed package graphs and file responsibilities are maintained beside the
+code:
+
+- [Job package](../internal/job/README.md)
+- [Execution package](../internal/execution/README.md)
+- [Object-store package](../internal/objectstore/README.md)
+- [Workload contract](../internal/workload/README.md)
+- [Integration tests](../test/integration/README.md)
 
 The lightweight Git workflow and commit conventions are defined in
 [AGENTS.md](../AGENTS.md).

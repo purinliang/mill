@@ -1,3 +1,4 @@
+// This file adapts the word-count example to Mill's workload contract.
 package main
 
 import (

@@ -1,6 +1,8 @@
+// This file owns job submission, URI, identity, and shard-set rules.
 package job
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"net/url"
@@ -25,12 +27,18 @@ func (e *ValidationError) InvalidArgument() bool {
 	return true
 }
 
-func normalizeSubmission(submission Submission) (Submission, error) {
-	if submission.Executable.Image == "" || submission.Executable.Image != strings.TrimSpace(submission.Executable.Image) {
-		return Submission{}, &ValidationError{Field: "executable.image", Problem: "must be non-empty and have no surrounding whitespace"}
+func NormalizeSubmission(submission Submission) (Submission, error) {
+	if submission.Executable.Image == "" ||
+		submission.Executable.Image != strings.TrimSpace(
+			submission.Executable.Image,
+		) {
+		return Submission{}, &ValidationError{
+			Field:   "executable.image",
+			Problem: "must be non-empty and have no surrounding whitespace",
+		}
 	}
 
-	inputURI, err := normalizeInputURI(submission.Input.URI)
+	inputURI, err := NormalizeInputURI(submission.Input.URI)
 	if err != nil {
 		return Submission{}, &ValidationError{Field: "input.uri", Problem: err.Error()}
 	}
@@ -44,8 +52,11 @@ func normalizeSubmission(submission Submission) (Submission, error) {
 	if resourceClass == "" {
 		resourceClass = ResourceClassSmall
 	}
-	if _, valid := resolveResources(resourceClass); !valid {
-		return Submission{}, &ValidationError{Field: "resource_class", Problem: "must be small, medium, or large"}
+	if !validResourceClass(resourceClass) {
+		return Submission{}, &ValidationError{
+			Field:   "resource_class",
+			Problem: "must be small, medium, or large",
+		}
 	}
 
 	return Submission{
@@ -58,7 +69,16 @@ func normalizeSubmission(submission Submission) (Submission, error) {
 	}, nil
 }
 
-func validateIdempotencyKey(key string) error {
+func validResourceClass(class ResourceClass) bool {
+	switch class {
+	case ResourceClassSmall, ResourceClassMedium, ResourceClassLarge:
+		return true
+	default:
+		return false
+	}
+}
+
+func ValidateIdempotencyKey(key string) error {
 	if key == "" {
 		return &ValidationError{Field: "Idempotency-Key", Problem: "is required"}
 	}
@@ -71,11 +91,11 @@ func validateIdempotencyKey(key string) error {
 	return nil
 }
 
-func normalizeOutputRootURI(raw string) (string, error) {
+func NormalizeOutputRootURI(raw string) (string, error) {
 	return normalizeObjectURI(raw, false)
 }
 
-func normalizeInputURI(raw string) (string, error) {
+func NormalizeInputURI(raw string) (string, error) {
 	normalized, err := normalizeObjectURI(raw, true)
 	if err != nil {
 		return "", err
@@ -132,7 +152,7 @@ func normalizeObjectURI(raw string, requireObject bool) (string, error) {
 	}
 }
 
-func deriveOutputRootURI(outputRootURI, id string) (string, error) {
+func DeriveOutputRootURI(outputRootURI, id string) (string, error) {
 	outputURI, err := url.JoinPath(outputRootURI, "jobs", id)
 	if err != nil {
 		return "", fmt.Errorf("derive output URI: %w", err)
@@ -140,11 +160,71 @@ func deriveOutputRootURI(outputRootURI, id string) (string, error) {
 	return outputURI + "/", nil
 }
 
-func validJobID(id string) bool {
+func ValidID(id string) bool {
 	if len(id) != 36 || id[8] != '-' || id[13] != '-' || id[18] != '-' || id[23] != '-' {
 		return false
 	}
 	compact := id[:8] + id[9:13] + id[14:18] + id[19:23] + id[24:]
 	_, err := hex.DecodeString(compact)
 	return err == nil
+}
+
+func ValidateInputIdentity(inputSHA256 string, recordCount int64) error {
+	decodedSHA256, err := hex.DecodeString(inputSHA256)
+	if err != nil || len(decodedSHA256) != sha256.Size ||
+		inputSHA256 != strings.ToLower(inputSHA256) {
+		return &ValidationError{
+			Field:   "input SHA-256",
+			Problem: "must be 64 lowercase hexadecimal characters",
+		}
+	}
+	if recordCount < 1 {
+		return &ValidationError{
+			Field:   "input record count",
+			Problem: "must be positive",
+		}
+	}
+	return nil
+}
+
+// ValidateParallelism reports whether parallelism is within Mill's supported
+// per-job execution range.
+func ValidateParallelism(parallelism int) error {
+	if parallelism < 1 || parallelism > MaxParallelism {
+		return &ValidationError{
+			Field:   "parallelism",
+			Problem: fmt.Sprintf("must be between 1 and %d", MaxParallelism),
+		}
+	}
+	return nil
+}
+
+// ValidateShardSet reports whether shards completely and contiguously cover a
+// non-empty input object.
+func ValidateShardSet(shards ShardSet) error {
+	if err := ValidateInputIdentity(
+		shards.InputSHA256,
+		shards.RecordCount,
+	); err != nil {
+		return err
+	}
+	if len(shards.Shards) < 1 || len(shards.Shards) > MaxTasksPerJob {
+		return &ValidationError{
+			Field: "logical shards",
+			Problem: fmt.Sprintf(
+				"must contain between 1 and %d ranges", MaxTasksPerJob,
+			),
+		}
+	}
+	var previousEnd int64
+	for index, shard := range shards.Shards {
+		if shard.StartByte != previousEnd || shard.EndByte <= shard.StartByte {
+			return &ValidationError{
+				Field:   fmt.Sprintf("logical shard %d", index),
+				Problem: "must be a contiguous non-empty byte range",
+			}
+		}
+		previousEnd = shard.EndByte
+	}
+	return nil
 }

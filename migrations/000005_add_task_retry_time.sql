@@ -1,3 +1,4 @@
+-- Adds durable task eligibility timestamps for bounded retry delays.
 BEGIN;
 
 -- A retry waits durably without occupying a running task slot. Existing tasks

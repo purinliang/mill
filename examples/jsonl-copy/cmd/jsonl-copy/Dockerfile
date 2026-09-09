@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1
+# Builds the minimal non-root JSONL copy example image.
 
 FROM golang:1.27.1 AS build
 

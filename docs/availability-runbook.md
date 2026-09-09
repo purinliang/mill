@@ -25,9 +25,9 @@ chmod 600 mill-k3s-token
 ```
 
 Move that file to each node over a trusted channel and delete the copies when
-installation is complete. `scripts/install-k3s-node` verifies a pinned official
-K3s installer before running it. It installs K3s `v1.36.3+k3s1`; review the
-upstream release notes before changing the pin.
+installation is complete. The `scripts/install-k3s-node.sh` script verifies a
+pinned official K3s installer before running it. It installs K3s
+`v1.36.3+k3s1`; review the upstream release notes before changing the pin.
 
 ## Two-laptop profile
 
@@ -38,7 +38,7 @@ embedded etcd datastore:
 sudo env MILL_NODE_NAME=mill-a \
   K3S_TOKEN_FILE=/secure/path/mill-k3s-token \
   K3S_TLS_SAN=<server-lan-ip> \
-  ./scripts/install-k3s-node server-init
+  ./scripts/install-k3s-node.sh server-init
 ```
 
 Join the second laptop as an agent:
@@ -47,7 +47,7 @@ Join the second laptop as an agent:
 sudo env MILL_NODE_NAME=mill-b \
   K3S_TOKEN_FILE=/secure/path/mill-k3s-token \
   K3S_SERVER_URL=https://<server-lan-ip>:6443 \
-  ./scripts/install-k3s-node agent
+  ./scripts/install-k3s-node.sh agent
 ```
 
 This topology can survive one Mill Pod or a controlled PostgreSQL primary Pod
@@ -64,13 +64,13 @@ sudo env MILL_NODE_NAME=mill-b \
   K3S_TOKEN_FILE=/secure/path/mill-k3s-token \
   K3S_SERVER_URL=https://<first-server-lan-ip>:6443 \
   K3S_TLS_SAN=<stable-api-address> \
-  ./scripts/install-k3s-node server-join
+  ./scripts/install-k3s-node.sh server-join
 
 sudo env MILL_NODE_NAME=mill-c \
   K3S_TOKEN_FILE=/secure/path/mill-k3s-token \
   K3S_SERVER_URL=https://<first-server-lan-ip>:6443 \
   K3S_TLS_SAN=<stable-api-address> \
-  ./scripts/install-k3s-node server-join
+  ./scripts/install-k3s-node.sh server-join
 ```
 
 All server nodes must use the same network- and component-related K3s flags.
@@ -113,16 +113,16 @@ two-laptop learning demonstration, the same images may instead be imported
 directly into K3s on both nodes. Build one archive on the first laptop:
 
 ```bash
-MILL_JOB_IMAGE=mill/job-service:m7 \
-MILL_EXECUTOR_IMAGE=mill/executor:m7 \
-  ./scripts/build-control-plane-images
+MILL_JOB_IMAGE=mill/job:m7 \
+MILL_EXECUTION_IMAGE=mill/execution:m7 \
+  ./scripts/build-control-plane-images.sh
 
 docker build \
   --file examples/word-count/cmd/fault-injection/Dockerfile \
   --tag mill/word-count-fault:m7 .
 
 docker save --output /tmp/mill-m7-images.tar \
-  mill/job-service:m7 mill/executor:m7 mill/word-count-fault:m7
+  mill/job:m7 mill/execution:m7 mill/word-count-fault:m7
 sudo k3s ctr images import /tmp/mill-m7-images.tar
 scp /tmp/mill-m7-images.tar <second-laptop>:/tmp/mill-m7-images.tar
 ```
@@ -169,10 +169,10 @@ for deployment and verification.
 First install the pinned CloudNativePG operator:
 
 ```bash
-MILL_KUBE_CONTEXT=<context> ./scripts/install-cloudnative-pg
+MILL_KUBE_CONTEXT=<context> ./scripts/install-cloudnative-pg.sh
 ```
 
-Push `mill/job-service` and `mill/executor` images to a registry reachable by
+Push `mill/job` and `mill/execution` images to a registry reachable by
 every node, and use S3 or another S3-compatible endpoint reachable from every
 Pod. Then deploy one profile:
 
@@ -180,13 +180,13 @@ Pod. Then deploy one profile:
 export MILL_KUBE_CONTEXT=<context>
 export MILL_AVAILABILITY_PROFILE=two-node  # or three-node
 export MILL_DATABASE_PASSWORD="$(openssl rand -hex 24)"
-export MILL_JOB_IMAGE=<registry>/mill/job-service:<immutable-tag>
-export MILL_EXECUTOR_IMAGE=<registry>/mill/executor:<immutable-tag>
+export MILL_JOB_IMAGE=<registry>/mill/job:<immutable-tag>
+export MILL_EXECUTION_IMAGE=<registry>/mill/execution:<immutable-tag>
 export MILL_OUTPUT_ROOT_URI=s3://<output-bucket>
 export AWS_REGION=<region>
 export AWS_ACCESS_KEY_ID=<temporary-or-scoped-key>
 export AWS_SECRET_ACCESS_KEY=<secret>
-./scripts/deploy-availability
+./scripts/deploy-availability.sh
 ```
 
 Use `MILL_S3_ENDPOINT` and `MILL_WORKLOAD_S3_ENDPOINT` for a compatible service.
@@ -205,11 +205,11 @@ For the registry-free two-laptop commands above, use:
 export MILL_KUBE_CONTEXT=mill-k3s
 export MILL_AVAILABILITY_PROFILE=two-node
 export MILL_DATABASE_PASSWORD="$(openssl rand -hex 24)"
-export MILL_JOB_IMAGE=mill/job-service:m7
-export MILL_EXECUTOR_IMAGE=mill/executor:m7
+export MILL_JOB_IMAGE=mill/job:m7
+export MILL_EXECUTION_IMAGE=mill/execution:m7
 export MILL_OUTPUT_ROOT_URI=s3://mill-output
 export MILL_WORKLOAD_S3_ENDPOINT="$MILL_S3_ENDPOINT"
-./scripts/deploy-availability
+./scripts/deploy-availability.sh
 ```
 
 After it reports two replicas of each component on distinct nodes, run the
@@ -218,12 +218,12 @@ destructive acceptance exercise:
 ```bash
 export MILL_WORKLOAD_IMAGE=mill/word-count-fault:m7
 export MILL_DEMO_INPUT_ROOT_URI=s3://mill-input
-./scripts/demo-availability
+./scripts/demo-availability.sh
 ```
 
 The demonstration creates one 12-task batch and, while its first wave is held
-open, deletes an active executor Pod, its current Job-service endpoint Pod, and
-the CloudNativePG primary Pod. It requires fenced executor takeover, REST and
+open, deletes an active execution Pod, its current Job service endpoint Pod, and
+the CloudNativePG primary Pod. It requires fenced execution takeover, REST and
 database reconnection, a different promoted primary, unchanged attempt and
 Kubernetes Job identities, exactly 12 first attempts, and byte-exact merged
 output. It does not delete the job or its objects afterward. All snapshots and

@@ -1,3 +1,4 @@
+-- Adds logical tasks, progress metadata, and task lookup indexes.
 BEGIN;
 
 ALTER TABLE public.jobs

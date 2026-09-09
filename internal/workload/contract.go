@@ -1,3 +1,5 @@
+// Package workload defines the command-line contract between Mill and a
+// workload container. It does not schedule or execute containers.
 package workload
 
 import (
@@ -24,13 +26,28 @@ const (
 // Invocation is the information Mill passes to one workload execution.
 // ExecutableArgs contains the user's original arguments after the -- separator.
 type Invocation struct {
-	JobID          string
-	TaskID         string
-	ShardIndex     int
-	InputURI       string
+	// JobID identifies the batch job that owns this execution.
+	JobID string
+
+	// TaskID identifies the logical shard-processing task.
+	TaskID string
+
+	// ShardIndex is the task's zero-based position within the job.
+	ShardIndex int
+
+	// InputURI identifies the complete input object shared by the job.
+	InputURI string
+
+	// InputStartByte is the inclusive start of the task's input range.
 	InputStartByte int64
-	InputEndByte   int64
-	OutputURI      string
+
+	// InputEndByte is the exclusive end of the task's input range.
+	InputEndByte int64
+
+	// OutputURI identifies the destination for this attempt's output.
+	OutputURI string
+
+	// ExecutableArgs contains arguments supplied by the user for the workload.
 	ExecutableArgs []string
 }
 
@@ -87,6 +104,7 @@ func ParseArgs(arguments []string) (Invocation, error) {
 	return invocation, nil
 }
 
+// Validate reports whether invocation satisfies the workload contract.
 func (invocation Invocation) Validate() error {
 	if strings.TrimSpace(invocation.JobID) == "" {
 		return errors.New("Mill job ID is required")

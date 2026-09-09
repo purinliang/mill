@@ -1,89 +1,90 @@
-// Package objectstore opens Mill inputs and publishes workload outputs by URI.
+// Package objectstore opens Mill inputs and publishes workload outputs through
+// absolute file:// and s3:// URIs.
 package objectstore
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
-	"net/url"
-	"os"
-	"path/filepath"
-	"strings"
-
-	"github.com/aws/aws-sdk-go-v2/aws"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
+// Config configures the optional S3 backend. Its zero value enables only local
+// file access.
 type Config struct {
-	Region   string
+	// Region enables S3 access using the default AWS configuration chain.
+	Region string
+
+	// Endpoint selects an S3-compatible service instead of the AWS endpoint.
+	// It requires Region to be set.
 	Endpoint string
 }
 
+// Store reads inputs and publishes outputs through supported object URIs. A
+// Store is safe for concurrent use, but it does not coordinate writes to the
+// same URI.
 type Store struct {
-	s3 *s3.Client
+	s3 *s3Backend
 }
 
-// New creates a file-only store when Region and Endpoint are empty. Setting a
-// region enables S3; Endpoint is only needed by S3-compatible local services.
+type sectionReadCloser struct {
+	io.Reader
+	closer io.Closer
+}
+
+func (r *sectionReadCloser) Close() error {
+	return r.closer.Close()
+}
+
+// New constructs a Store from config. An empty Region creates a file-only
+// store; a non-empty Region loads the default AWS configuration for S3.
 func New(ctx context.Context, config Config) (*Store, error) {
 	if config.Endpoint != "" && config.Region == "" {
-		return nil, errors.New("S3 region is required when a custom endpoint is configured")
+		return nil, errors.New(
+			"S3 region is required when a custom endpoint is configured",
+		)
 	}
 	if config.Region == "" {
 		return &Store{}, nil
 	}
 
-	awsConfig, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(config.Region))
+	s3, err := newS3Backend(ctx, config.Region, config.Endpoint)
 	if err != nil {
-		return nil, fmt.Errorf("load AWS configuration: %w", err)
+		return nil, err
 	}
-	client := s3.NewFromConfig(awsConfig, func(options *s3.Options) {
-		if config.Endpoint != "" {
-			options.BaseEndpoint = aws.String(config.Endpoint)
-			options.UsePathStyle = true
-		}
-	})
-	return &Store{s3: client}, nil
+	return &Store{s3: s3}, nil
 }
 
-func (s *Store) Open(ctx context.Context, rawURI string) (io.ReadCloser, error) {
+// Open opens the complete object at rawURI. The caller must close the returned
+// reader.
+func (s *Store) Open(
+	ctx context.Context,
+	rawURI string,
+) (io.ReadCloser, error) {
 	location, err := parseURI(rawURI)
 	if err != nil {
 		return nil, err
 	}
 	switch location.scheme {
 	case "file":
-		file, err := os.Open(location.filename)
-		if err != nil {
-			return nil, err
-		}
-		info, err := file.Stat()
-		if err != nil {
-			_ = file.Close()
-			return nil, err
-		}
-		if !info.Mode().IsRegular() {
-			_ = file.Close()
-			return nil, errors.New("file URI must refer to a regular file")
-		}
-		return file, nil
+		return openFile(location.filename)
 	case "s3":
 		if s.s3 == nil {
 			return nil, errors.New("S3 is not configured")
 		}
-		output, err := s.s3.GetObject(ctx, &s3.GetObjectInput{Bucket: &location.bucket, Key: &location.key})
-		if err != nil {
-			return nil, err
-		}
-		return output.Body, nil
+		return s.s3.open(ctx, location.bucket, location.key)
 	default:
 		panic("validated URI has unknown scheme")
 	}
 }
 
-func (s *Store) OpenRange(ctx context.Context, rawURI string, start, end int64) (io.ReadCloser, error) {
+// OpenRange opens the byte range [start, end) from the object at rawURI. The
+// caller must close the returned reader. The range must be non-negative and
+// non-empty.
+func (s *Store) OpenRange(
+	ctx context.Context,
+	rawURI string,
+	start, end int64,
+) (io.ReadCloser, error) {
 	if start < 0 || end <= start {
 		return nil, errors.New("byte range must be non-negative and non-empty")
 	}
@@ -93,46 +94,32 @@ func (s *Store) OpenRange(ctx context.Context, rawURI string, start, end int64) 
 	}
 	switch location.scheme {
 	case "file":
-		file, err := os.Open(location.filename)
-		if err != nil {
-			return nil, err
-		}
-		info, err := file.Stat()
-		if err != nil {
-			_ = file.Close()
-			return nil, err
-		}
-		if !info.Mode().IsRegular() {
-			_ = file.Close()
-			return nil, errors.New("file URI must refer to a regular file")
-		}
-		if end > info.Size() {
-			_ = file.Close()
-			return nil, fmt.Errorf("byte range ends at %d beyond object size %d", end, info.Size())
-		}
-		return &sectionReadCloser{Reader: io.NewSectionReader(file, start, end-start), closer: file}, nil
+		return openFileRange(location.filename, start, end)
 	case "s3":
 		if s.s3 == nil {
 			return nil, errors.New("S3 is not configured")
 		}
-		byteRange := fmt.Sprintf("bytes=%d-%d", start, end-1)
-		output, err := s.s3.GetObject(ctx, &s3.GetObjectInput{
-			Bucket: &location.bucket,
-			Key:    &location.key,
-			Range:  &byteRange,
-		})
-		if err != nil {
-			return nil, err
-		}
-		return output.Body, nil
+		return s.s3.openRange(
+			ctx,
+			location.bucket,
+			location.key,
+			start,
+			end,
+		)
 	default:
 		panic("validated URI has unknown scheme")
 	}
 }
 
-// Put publishes one complete object. File writes use rename for local atomicity;
-// S3 PutObject exposes the replacement only after the request succeeds.
-func (s *Store) Put(ctx context.Context, rawURI string, body io.ReadSeeker) error {
+// Put atomically publishes one complete object at rawURI from body's current
+// position. It does not coordinate concurrent writers: callers must assign a
+// unique URI to each logical write. If writers target the same URI, a complete
+// later write may replace an earlier one.
+func (s *Store) Put(
+	ctx context.Context,
+	rawURI string,
+	body io.ReadSeeker,
+) error {
 	location, err := parseURI(rawURI)
 	if err != nil {
 		return err
@@ -144,81 +131,8 @@ func (s *Store) Put(ctx context.Context, rawURI string, body io.ReadSeeker) erro
 		if s.s3 == nil {
 			return errors.New("S3 is not configured")
 		}
-		_, err := s.s3.PutObject(ctx, &s3.PutObjectInput{Bucket: &location.bucket, Key: &location.key, Body: body})
-		return err
+		return s.s3.put(ctx, location.bucket, location.key, body)
 	default:
 		panic("validated URI has unknown scheme")
 	}
-}
-
-type location struct {
-	scheme   string
-	filename string
-	bucket   string
-	key      string
-}
-
-func parseURI(raw string) (location, error) {
-	parsed, err := url.ParseRequestURI(raw)
-	if err != nil || parsed.User != nil || parsed.Opaque != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return location{}, errors.New("object URI must be an absolute file:// or s3:// URI without a query or fragment")
-	}
-	switch parsed.Scheme {
-	case "file":
-		if parsed.Host != "" {
-			return location{}, errors.New("file URI must not contain a host")
-		}
-		filename, err := url.PathUnescape(parsed.EscapedPath())
-		if err != nil || !filepath.IsAbs(filename) || filepath.Clean(filename) == "/" {
-			return location{}, errors.New("file URI must contain an absolute path other than /")
-		}
-		return location{scheme: "file", filename: filepath.Clean(filename)}, nil
-	case "s3":
-		if parsed.Host == "" || parsed.Port() != "" || strings.Contains(parsed.Host, ":") {
-			return location{}, errors.New("S3 URI must contain one bucket name")
-		}
-		key, err := url.PathUnescape(strings.TrimPrefix(parsed.EscapedPath(), "/"))
-		if err != nil || key == "" || strings.HasSuffix(parsed.Path, "/") {
-			return location{}, errors.New("S3 URI must contain an object key")
-		}
-		return location{scheme: "s3", bucket: parsed.Host, key: key}, nil
-	default:
-		return location{}, errors.New("object URI scheme must be file or s3")
-	}
-}
-
-type sectionReadCloser struct {
-	io.Reader
-	closer io.Closer
-}
-
-func (r *sectionReadCloser) Close() error { return r.closer.Close() }
-
-func putFile(filename string, body io.Reader) error {
-	if err := os.MkdirAll(filepath.Dir(filename), 0o755); err != nil {
-		return fmt.Errorf("create output directory: %w", err)
-	}
-	temporary, err := os.CreateTemp(filepath.Dir(filename), ".mill-output-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temporary output: %w", err)
-	}
-	temporaryFilename := temporary.Name()
-	committed := false
-	defer func() {
-		_ = temporary.Close()
-		if !committed {
-			_ = os.Remove(temporaryFilename)
-		}
-	}()
-	if _, err := io.Copy(temporary, body); err != nil {
-		return fmt.Errorf("write output: %w", err)
-	}
-	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("close output: %w", err)
-	}
-	if err := os.Rename(temporaryFilename, filename); err != nil {
-		return fmt.Errorf("publish output: %w", err)
-	}
-	committed = true
-	return nil
 }

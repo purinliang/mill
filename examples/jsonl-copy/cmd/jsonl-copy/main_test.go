@@ -1,3 +1,4 @@
+// This file tests the JSONL copy workload through its command interface.
 package main
 
 import (

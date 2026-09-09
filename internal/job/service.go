@@ -1,32 +1,53 @@
+// This file coordinates submission, partitioning, persistence, and status.
 package job
 
 import (
 	"context"
 	"errors"
+	"fmt"
+
+	"github.com/purinliang/mill/internal/execution"
 )
 
+const mebibyte int64 = 1024 * 1024
+
 type Service struct {
-	repository  *Repository
-	partitioner JSONLPartitioner
+	store       Store
+	partitioner DatasetPartitioner
 	parallelism int
 }
 
-func NewService(repository *Repository, partitioner JSONLPartitioner, parallelism int) (*Service, error) {
-	if repository == nil {
-		return nil, errors.New("job repository is required")
+func NewService(
+	store Store,
+	partitioner DatasetPartitioner,
+	parallelism int,
+) (*Service, error) {
+	if store == nil {
+		return nil, errors.New("job store is required")
 	}
-	if parallelism < 1 || parallelism > maxParallelism {
-		return nil, errors.New("MILL_PARALLELISM must be between 1 and 10000")
+	if partitioner == nil {
+		return nil, errors.New("dataset partitioner is required")
 	}
-	return &Service{repository: repository, partitioner: partitioner, parallelism: parallelism}, nil
+	if err := ValidateParallelism(parallelism); err != nil {
+		return nil, fmt.Errorf("MILL_PARALLELISM: %w", err)
+	}
+	return &Service{
+		store:       store,
+		partitioner: partitioner,
+		parallelism: parallelism,
+	}, nil
 }
 
-func (s *Service) Create(ctx context.Context, idempotencyKey string, submission Submission) (Job, bool, error) {
-	normalizedSubmission, err := normalizeSubmission(submission)
+func (s *Service) Create(
+	ctx context.Context,
+	idempotencyKey string,
+	submission Submission,
+) (Job, bool, error) {
+	normalizedSubmission, err := NormalizeSubmission(submission)
 	if err != nil {
 		return Job{}, false, err
 	}
-	existingJob, found, err := s.repository.FindSubmission(ctx, idempotencyKey, normalizedSubmission)
+	existingJob, found, err := s.store.FindSubmission(ctx, idempotencyKey, normalizedSubmission)
 	if err != nil {
 		return Job{}, false, err
 	}
@@ -38,22 +59,32 @@ func (s *Service) Create(ctx context.Context, idempotencyKey string, submission 
 	if found {
 		parallelism = existingJob.Parallelism
 	}
-	plan, err := s.partitioner.Plan(ctx, normalizedSubmission.Input.URI, parallelism)
+	shards, err := s.partitioner.Partition(
+		ctx,
+		normalizedSubmission.Input.URI,
+		parallelism,
+	)
 	if err != nil {
 		return Job{}, false, err
 	}
 	if found {
-		materializedJob, err := s.repository.Materialize(ctx, existingJob.ID, plan)
+		materializedJob, err := s.store.Materialize(
+			ctx,
+			existingJob.ID,
+			shards,
+		)
 		return materializedJob, false, err
 	}
+	resources := resolveResources(normalizedSubmission.ResourceClass)
 
-	createdJob, created, err := s.repository.Create(
+	createdJob, created, err := s.store.Create(
 		ctx,
 		idempotencyKey,
 		normalizedSubmission,
-		plan.InputSHA256,
-		plan.RecordCount,
+		shards.InputSHA256,
+		shards.RecordCount,
 		parallelism,
+		resources,
 	)
 	if err != nil {
 		return Job{}, false, err
@@ -62,26 +93,52 @@ func (s *Service) Create(ctx context.Context, idempotencyKey string, submission 
 		return createdJob, created, nil
 	}
 	if createdJob.Parallelism != parallelism {
-		plan, err = s.partitioner.Plan(ctx, normalizedSubmission.Input.URI, createdJob.Parallelism)
+		shards, err = s.partitioner.Partition(
+			ctx,
+			normalizedSubmission.Input.URI,
+			createdJob.Parallelism,
+		)
 		if err != nil {
 			return Job{}, false, err
 		}
 	}
 
-	materializedJob, err := s.repository.Materialize(ctx, createdJob.ID, plan)
+	materializedJob, err := s.store.Materialize(
+		ctx,
+		createdJob.ID,
+		shards,
+	)
 	if err != nil {
 		return Job{}, false, err
 	}
 	return materializedJob, created, nil
 }
 
+func resolveResources(class ResourceClass) execution.Resources {
+	memory := int64(0)
+	switch class {
+	case ResourceClassSmall:
+		memory = 128 * mebibyte
+	case ResourceClassMedium:
+		memory = 512 * mebibyte
+	case ResourceClassLarge:
+		memory = 2 * 1024 * mebibyte
+	}
+	return execution.Resources{
+		CPURequestMillis:   100,
+		CPULimitMillis:     1000,
+		MemoryRequestBytes: memory,
+		MemoryLimitBytes:   memory,
+	}
+}
+
 func (s *Service) Get(ctx context.Context, id string) (Job, error) {
-	value, err := s.repository.Get(ctx, id)
+	value, err := s.store.Get(ctx, id)
 	if err != nil {
 		return Job{}, err
 	}
 	if value.State == StateCompleted {
-		value.Results, err = s.repository.CompletedResults(ctx, id)
+		value.Results, err = s.store.CompletedResults(ctx, id)
 	}
 	return value, err
 }

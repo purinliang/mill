@@ -1,3 +1,4 @@
+// This file tests the word-count workload command and storage behavior.
 package main
 
 import (

@@ -1,3 +1,4 @@
+-- Adds durable execution attempts and lifecycle consistency constraints.
 BEGIN;
 
 CREATE TABLE public.attempts (

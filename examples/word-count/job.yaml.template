@@ -1,3 +1,4 @@
+# Templates one manual word-count task for the single-task demonstration.
 apiVersion: batch/v1
 kind: Job
 metadata:

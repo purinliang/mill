@@ -1,3 +1,4 @@
+// This file tests deterministic merging of word-count task outputs.
 package main
 
 import (

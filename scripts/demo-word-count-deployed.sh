@@ -1,0 +1,468 @@
+#!/usr/bin/env bash
+# Runs word count through the deployed Mill control-plane services.
+
+set -euo pipefail
+
+failover_mode=none
+if [[ $# -eq 1 ]]; then
+	case "$1" in
+	--execution-failover) failover_mode=execution ;;
+	--job-failover) failover_mode=job ;;
+	*) printf 'Usage: %s [--execution-failover|--job-failover]\n' "$0" >&2; exit 1 ;;
+	esac
+elif [[ $# -ne 0 ]]; then
+	printf 'Usage: %s [--execution-failover|--job-failover]\n' "$0" >&2
+	exit 1
+fi
+cd "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+for required in go docker kind kubectl psql curl jq mktemp wc openssl cmp grep tr head; do
+	command -v "${required}" >/dev/null || { printf 'Missing command: %s\n' "${required}" >&2; exit 1; }
+done
+curl --help all | grep -q -- '--aws-sigv4' || { printf 'curl must support --aws-sigv4\n' >&2; exit 1; }
+docker info >/dev/null
+docker network inspect kind >/dev/null
+kubectl --context kind-mill get nodes >/dev/null
+
+readonly parallelism=3
+port="${MILL_DEMO_PORT:-18083}"
+[[ "${port}" =~ ^[0-9]+$ ]] && (( port > 1024 && port < 65536 )) || { printf 'Invalid MILL_DEMO_PORT\n' >&2; exit 1; }
+
+run_directory="$(mktemp -d /tmp/mill-deployed.XXXXXXXX)"
+run_token="$(basename "${run_directory}" | tr '[:upper:]' '[:lower:]' | tr '.' '-')"
+system_namespace="${run_token}-system"
+workload_namespace="${run_token}-workloads"
+storage_container="${run_token}-storage"
+postgres_container="${run_token}-postgres"
+port_forward_pid=""
+storage_started=false
+postgres_started=false
+namespaces_owned=false
+job_id=""
+
+cleanup() {
+	local status=$?
+	if [[ -n "${port_forward_pid}" ]]; then
+		kill -TERM "${port_forward_pid}" 2>/dev/null || true
+		wait "${port_forward_pid}" 2>/dev/null || true
+	fi
+	if [[ "${namespaces_owned}" == true ]]; then
+		kubectl --context kind-mill -n "${system_namespace}" logs deployment/mill-job \
+			> "${run_directory}/job.log" 2>&1 || true
+		kubectl --context kind-mill -n "${system_namespace}" logs deployment/mill-execution \
+			> "${run_directory}/execution.log" 2>&1 || true
+		kubectl --context kind-mill get all -n "${system_namespace}" \
+			> "${run_directory}/control-plane-resources.txt" 2>&1 || true
+		kubectl --context kind-mill get jobs,pods -n "${workload_namespace}" \
+			> "${run_directory}/workload-resources.txt" 2>&1 || true
+		kubectl --context kind-mill delete namespace "${system_namespace}" "${workload_namespace}" \
+			--ignore-not-found --wait=false >/dev/null 2>&1 || true
+	fi
+	if [[ "${storage_started}" == true ]]; then
+		docker logs "${storage_container}" > "${run_directory}/storage.log" 2>&1 || true
+		docker rm -f "${storage_container}" >/dev/null 2>&1 || true
+	fi
+	if [[ "${postgres_started}" == true ]]; then
+		docker logs "${postgres_container}" > "${run_directory}/postgres.log" 2>&1 || true
+		docker rm -f "${postgres_container}" >/dev/null 2>&1 || true
+	fi
+	if (( status != 0 )); then
+		printf '\nDemo failed; retained diagnostics in %s\n' "${run_directory}" >&2
+	fi
+	exit "${status}"
+}
+trap cleanup EXIT
+
+printf 'Demo files: %s\nControl plane: %s\nWorkloads: %s\n' \
+	"${run_directory}" "${system_namespace}" "${workload_namespace}"
+mkdir "${run_directory}/input" "${run_directory}/output" "${run_directory}/storage"
+go run ./examples/word-count/generate --output "${run_directory}/input/records.jsonl"
+workload_image=mill/word-count:dev
+workload_dockerfile=examples/word-count/cmd/word-count/Dockerfile
+workload_mode=none
+if [[ "${failover_mode}" != none ]]; then
+	workload_image=mill/word-count-fault:dev
+	workload_dockerfile=examples/word-count/cmd/fault-injection/Dockerfile
+	workload_mode=delay
+fi
+docker build --file "${workload_dockerfile}" --tag "${workload_image}" .
+kind load docker-image "${workload_image}" --name mill
+
+region=us-east-1
+access_key="mill$(openssl rand -hex 8)"
+secret_key="$(openssl rand -hex 32)"
+database_password="$(openssl rand -hex 24)"
+
+# These single containers are disposable integration fixtures, not the
+# replicated storage design planned for Milestones 7 and 8.
+docker run --detach --name "${postgres_container}" --network kind \
+	--publish 127.0.0.1::5432 \
+	--env POSTGRES_USER=mill --env "POSTGRES_PASSWORD=${database_password}" \
+	--env POSTGRES_DB=mill postgres:18 > "${run_directory}/postgres-container-id"
+postgres_started=true
+database_host="$(docker port "${postgres_container}" 5432/tcp | head -n 1)"
+database_pod_address="$(docker inspect --format '{{(index .NetworkSettings.Networks "kind").IPAddress}}' "${postgres_container}")"
+host_database_url="postgresql://mill:${database_password}@${database_host}/mill?sslmode=disable"
+pod_database_url="postgresql://mill:${database_password}@${database_pod_address}:5432/mill?sslmode=disable"
+ready=false
+for _ in {1..120}; do
+	if PGPASSWORD="${database_password}" psql "${host_database_url}" -XAt -c 'SELECT 1' >/dev/null 2>&1; then
+		ready=true
+		break
+	fi
+	sleep 0.5
+done
+[[ "${ready}" == true ]] || { printf 'PostgreSQL did not become ready\n' >&2; exit 1; }
+for migration in migrations/*.sql; do
+	PGPASSWORD="${database_password}" psql "${host_database_url}" -v ON_ERROR_STOP=1 -f "${migration}" >/dev/null
+done
+
+docker run --detach --name "${storage_container}" --network kind \
+	--publish 127.0.0.1::8333 --volume "${run_directory}/storage:/data" \
+	--env "AWS_ACCESS_KEY_ID=${access_key}" --env "AWS_SECRET_ACCESS_KEY=${secret_key}" \
+	--env 'S3_BUCKET=mill-input,mill-output' chrislusf/seaweedfs:4.44 \
+	mini -dir=/data > "${run_directory}/storage-container-id"
+storage_started=true
+storage_host="$(docker port "${storage_container}" 8333/tcp | head -n 1)"
+host_endpoint="http://${storage_host}"
+storage_pod_address="$(docker inspect --format '{{(index .NetworkSettings.Networks "kind").IPAddress}}' "${storage_container}")"
+pod_endpoint="http://${storage_pod_address}:8333"
+ready=false
+for _ in {1..120}; do
+	if curl --silent --show-error "${host_endpoint}/" >/dev/null 2>&1; then ready=true; break; fi
+	sleep 0.5
+done
+[[ "${ready}" == true ]] || { printf 'Object storage did not become ready\n' >&2; exit 1; }
+
+curl_signature=(--silent --show-error --fail --aws-sigv4 "aws:amz:${region}:s3" --user "${access_key}:${secret_key}")
+curl "${curl_signature[@]}" --upload-file "${run_directory}/input/records.jsonl" \
+	"${host_endpoint}/mill-input/records.jsonl" >/dev/null
+
+namespaces_owned=true
+MILL_KUBE_CONTEXT=kind-mill MILL_KIND_CLUSTER=mill \
+	MILL_SYSTEM_NAMESPACE="${system_namespace}" MILL_WORKLOAD_NAMESPACE="${workload_namespace}" \
+	MILL_DATABASE_URL="${pod_database_url}" MILL_OUTPUT_ROOT_URI=s3://mill-output \
+	AWS_REGION="${region}" MILL_S3_ENDPOINT="${pod_endpoint}" \
+	MILL_WORKLOAD_S3_REGION="${region}" MILL_WORKLOAD_S3_ENDPOINT="${pod_endpoint}" \
+	AWS_ACCESS_KEY_ID="${access_key}" AWS_SECRET_ACCESS_KEY="${secret_key}" \
+	./scripts/deploy-local-control-plane.sh > "${run_directory}/deploy.log"
+
+start_port_forward() {
+	if [[ -n "${port_forward_pid}" ]]; then
+		kill -TERM "${port_forward_pid}" 2>/dev/null || true
+		wait "${port_forward_pid}" 2>/dev/null || true
+	fi
+	kubectl --context kind-mill -n "${system_namespace}" port-forward service/mill-job "${port}:8080" \
+		>> "${run_directory}/port-forward.log" 2>&1 &
+	port_forward_pid=$!
+}
+
+wait_for_job_service() {
+	local ready=false
+	for _ in {1..60}; do
+		if curl -fsS "http://127.0.0.1:${port}/readyz" >/dev/null 2>&1; then
+			ready=true
+			break
+		fi
+		if ! kill -0 "${port_forward_pid}" 2>/dev/null; then
+			start_port_forward
+		fi
+		sleep 0.5
+	done
+	[[ "${ready}" == true ]] || { printf 'Deployed Job service did not become reachable\n' >&2; exit 1; }
+}
+
+start_port_forward
+wait_for_job_service
+
+jq -n --arg image "${workload_image}" --arg uri s3://mill-input/records.jsonl --arg mode "${workload_mode}" \
+	'{executable:{image:$image,args:(if $mode == "none" then [] else [$mode] end)},input:{uri:$uri}}' \
+	> "${run_directory}/submission.json"
+curl -fsS "http://127.0.0.1:${port}/jobs" -H 'Content-Type: application/json' \
+	-H "Idempotency-Key: ${run_token}" --data-binary "@${run_directory}/submission.json" \
+	> "${run_directory}/job.json"
+job_id="$(jq -er '.id' "${run_directory}/job.json")"
+expected_tasks="$(jq -er '.progress.total' "${run_directory}/job.json")"
+[[ "${expected_tasks}" == 12 ]] || { printf 'Expected 12 tasks, got %s\n' "${expected_tasks}" >&2; exit 1; }
+printf '\nMill job: %s (%s tasks, parallelism %s)\n' "${job_id}" "${expected_tasks}" "${parallelism}"
+
+snapshot_initial_attempts() {
+	local destination="$1"
+	PGPASSWORD="${database_password}" psql "${host_database_url}" -XAt -v ON_ERROR_STOP=1 \
+		-v job_id="${job_id}" -v shard_limit="${parallelism}" > "${destination}" <<'SQL'
+SELECT COALESCE(json_agg(snapshot ORDER BY shard_index), '[]'::json)
+FROM (
+    SELECT t.shard_index, t.id::text AS task_id, a.id::text AS attempt_id,
+        a.attempt_number, a.external_id, a.state, a.lease_owner,
+        a.lease_token::text
+    FROM tasks t JOIN attempts a ON a.task_id = t.id
+    WHERE t.job_id = :'job_id'::uuid
+        AND t.shard_index < :'shard_limit'::integer
+        AND a.attempt_number = 1
+) snapshot;
+SQL
+}
+
+snapshot_kubernetes_jobs() {
+	local destination="$1"
+	local attempt_snapshot="$2"
+	kubectl --context kind-mill -n "${workload_namespace}" get jobs \
+		-l "mill.dev/job-id=${job_id}" -o json |
+		jq --slurpfile attempts "${attempt_snapshot}" '
+			($attempts[0] | map("mill-" + .attempt_id)) as $initial_jobs
+			| [.items[]
+				| select(.metadata.name as $name | $initial_jobs | index($name))
+				| {name:.metadata.name,uid:.metadata.uid}]
+			| sort_by(.name)' \
+		> "${destination}"
+}
+
+peak=0
+finished=false
+failover_started=false
+failover_observed=false
+failed_lease_owner=""
+deadline=$((SECONDS + 240))
+while (( SECONDS < deadline )); do
+	available="$(kubectl --context kind-mill -n "${system_namespace}" get deployment mill-execution -o jsonpath='{.status.availableReplicas}')"
+	(( ${available:-0} >= 1 )) || { printf 'Execution Deployment became unavailable\n' >&2; exit 1; }
+	job_service_available="$(kubectl --context kind-mill -n "${system_namespace}" get deployment mill-job -o jsonpath='{.status.availableReplicas}')"
+	(( ${job_service_available:-0} >= 1 )) || { printf 'Job Deployment became unavailable\n' >&2; exit 1; }
+	curl -fsS "http://127.0.0.1:${port}/jobs/${job_id}" > "${run_directory}/status.json"
+	state="$(jq -r '.state' "${run_directory}/status.json")"
+	running="$(jq -r '.progress.running' "${run_directory}/status.json")"
+	(( running <= parallelism )) || { printf 'Concurrency limit exceeded\n' >&2; exit 1; }
+	if (( running > peak )); then peak=${running}; fi
+	jq -c '{state,progress}' "${run_directory}/status.json"
+	if [[ "${failover_mode}" == execution && "${failover_started}" == false && "${running}" == "${parallelism}" ]]; then
+		snapshot_initial_attempts "${run_directory}/failover-attempts-before.json"
+		if jq -e --argjson expected "${parallelism}" '
+			length == $expected
+			and ([.[].lease_owner] | unique | length) == 1
+			and all(.[]; .state == "running" and .attempt_number == 1
+				and (.external_id | length > 0) and (.lease_token | length > 0))
+		' "${run_directory}/failover-attempts-before.json" >/dev/null; then
+			failed_lease_owner="$(jq -er '.[0].lease_owner' "${run_directory}/failover-attempts-before.json")"
+			snapshot_kubernetes_jobs "${run_directory}/failover-kubernetes-before.json" \
+				"${run_directory}/failover-attempts-before.json"
+			jq -e --argjson expected "${parallelism}" \
+				--slurpfile jobs "${run_directory}/failover-kubernetes-before.json" '
+				length == $expected
+				and all(.[]; . as $attempt | any($jobs[0][];
+					.name == ("mill-" + $attempt.attempt_id)
+					and .uid == $attempt.external_id))
+			' "${run_directory}/failover-attempts-before.json" >/dev/null
+
+			printf '\nScaling to two execution Pods while the first owns %s live leases...\n' "${parallelism}"
+			kubectl --context kind-mill -n "${system_namespace}" scale deployment/mill-execution --replicas=2 >/dev/null
+			kubectl --context kind-mill -n "${system_namespace}" rollout status deployment/mill-execution --timeout=60s >/dev/null
+			sleep 2
+			snapshot_initial_attempts "${run_directory}/failover-attempts-contended.json"
+			cmp "${run_directory}/failover-attempts-before.json" "${run_directory}/failover-attempts-contended.json"
+			snapshot_kubernetes_jobs "${run_directory}/failover-kubernetes-contended.json" \
+				"${run_directory}/failover-attempts-before.json"
+			cmp "${run_directory}/failover-kubernetes-before.json" "${run_directory}/failover-kubernetes-contended.json"
+
+			mapfile -t execution_pods < <(kubectl --context kind-mill -n "${system_namespace}" get pods \
+				-l app.kubernetes.io/name=mill-execution -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+			[[ "${#execution_pods[@]}" == 2 ]] || { printf 'Expected two execution Pods\n' >&2; exit 1; }
+			owner_pod=""
+			standby_pod=""
+			for pod in "${execution_pods[@]}"; do
+				if kubectl --context kind-mill -n "${system_namespace}" logs "${pod}" |
+					grep -Fq "instance=${failed_lease_owner} "; then
+					owner_pod="${pod}"
+				else
+					standby_pod="${pod}"
+				fi
+			done
+			[[ -n "${owner_pod}" && -n "${standby_pod}" ]] || { printf 'Could not map leases to execution Pods\n' >&2; exit 1; }
+			kubectl --context kind-mill -n "${system_namespace}" get pod "${standby_pod}" >/dev/null
+			kubectl --context kind-mill -n "${system_namespace}" logs "${owner_pod}" \
+				> "${run_directory}/failover-owner-before-deletion.log"
+			kubectl --context kind-mill -n "${system_namespace}" logs "${standby_pod}" \
+				> "${run_directory}/failover-standby-before-takeover.log"
+			printf 'Standby did not steal live leases. Deleting active execution Pod %s...\n' "${owner_pod}"
+			kubectl --context kind-mill -n "${system_namespace}" delete pod "${owner_pod}" --wait=false >/dev/null
+			snapshot_kubernetes_jobs "${run_directory}/failover-kubernetes-without-owner.json" \
+				"${run_directory}/failover-attempts-before.json"
+			cmp "${run_directory}/failover-kubernetes-before.json" "${run_directory}/failover-kubernetes-without-owner.json"
+			kubectl --context kind-mill -n "${system_namespace}" wait --for=delete "pod/${owner_pod}" --timeout=60s >/dev/null
+			failover_started=true
+		fi
+	fi
+	if [[ "${failover_mode}" == job && "${failover_started}" == false && "${running}" == "${parallelism}" ]]; then
+		snapshot_initial_attempts "${run_directory}/job-attempts-before.json"
+		if jq -e --argjson expected "${parallelism}" '
+			length == $expected
+			and all(.[]; .state == "running" and .attempt_number == 1
+				and (.external_id | length > 0) and (.lease_owner | length > 0)
+				and (.lease_token | length > 0))
+		' "${run_directory}/job-attempts-before.json" >/dev/null; then
+			snapshot_kubernetes_jobs "${run_directory}/job-kubernetes-before.json" \
+				"${run_directory}/job-attempts-before.json"
+			jq -e --argjson expected "${parallelism}" \
+				--slurpfile jobs "${run_directory}/job-kubernetes-before.json" '
+				length == $expected
+				and all(.[]; . as $attempt | any($jobs[0][];
+					.name == ("mill-" + $attempt.attempt_id)
+					and .uid == $attempt.external_id))
+			' "${run_directory}/job-attempts-before.json" >/dev/null
+
+			mapfile -t original_job_service_pods < <(kubectl --context kind-mill -n "${system_namespace}" get pods \
+				-l app.kubernetes.io/name=mill-job -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+			[[ "${#original_job_service_pods[@]}" == 1 ]] || { printf 'Expected one initial Job Pod\n' >&2; exit 1; }
+			failed_job_service_pod="${original_job_service_pods[0]}"
+			kubectl --context kind-mill -n "${system_namespace}" logs "${failed_job_service_pod}" \
+				> "${run_directory}/job-owner-before-deletion.log"
+
+			printf '\nScaling to two Job Pods before deleting the original gRPC endpoint...\n'
+			kubectl --context kind-mill -n "${system_namespace}" scale deployment/mill-job --replicas=2 >/dev/null
+			kubectl --context kind-mill -n "${system_namespace}" rollout status deployment/mill-job --timeout=60s >/dev/null
+			mapfile -t job_service_pods < <(kubectl --context kind-mill -n "${system_namespace}" get pods \
+				-l app.kubernetes.io/name=mill-job -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+			[[ "${#job_service_pods[@]}" == 2 ]] || { printf 'Expected two Job Pods\n' >&2; exit 1; }
+			standby_job_service_pod=""
+			for pod in "${job_service_pods[@]}"; do
+				if [[ "${pod}" != "${failed_job_service_pod}" ]]; then standby_job_service_pod="${pod}"; fi
+			done
+			[[ -n "${standby_job_service_pod}" ]] || { printf 'Could not identify standby Job Pod\n' >&2; exit 1; }
+			[[ "$(kubectl --context kind-mill -n "${system_namespace}" get pod "${standby_job_service_pod}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')" == True ]] || {
+				printf 'Standby Job Pod is not ready\n' >&2; exit 1;
+			}
+			kubectl --context kind-mill -n "${system_namespace}" logs "${standby_job_service_pod}" \
+				> "${run_directory}/job-standby-before-failure.log"
+			snapshot_initial_attempts "${run_directory}/job-attempts-contended.json"
+			cmp "${run_directory}/job-attempts-before.json" "${run_directory}/job-attempts-contended.json"
+			snapshot_kubernetes_jobs "${run_directory}/job-kubernetes-contended.json" \
+				"${run_directory}/job-attempts-before.json"
+			cmp "${run_directory}/job-kubernetes-before.json" "${run_directory}/job-kubernetes-contended.json"
+
+			printf 'Deleting original Job Pod %s...\n' "${failed_job_service_pod}"
+			kubectl --context kind-mill -n "${system_namespace}" delete pod "${failed_job_service_pod}" --wait=false >/dev/null
+			kubectl --context kind-mill -n "${system_namespace}" wait --for=delete "pod/${failed_job_service_pod}" --timeout=60s >/dev/null
+			[[ "$(kubectl --context kind-mill -n "${system_namespace}" get pod "${standby_job_service_pod}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')" == True ]] || {
+				printf 'Standby Job Pod did not survive\n' >&2; exit 1;
+			}
+			snapshot_kubernetes_jobs "${run_directory}/job-kubernetes-without-original.json" \
+				"${run_directory}/job-attempts-before.json"
+			cmp "${run_directory}/job-kubernetes-before.json" "${run_directory}/job-kubernetes-without-original.json"
+			start_port_forward
+			wait_for_job_service
+			curl -fsS "http://127.0.0.1:${port}/jobs/${job_id}" \
+				> "${run_directory}/job-status-after-reconnect.json"
+			failover_started=true
+		fi
+	fi
+	if [[ "${failover_mode}" == execution && "${failover_started}" == true && "${failover_observed}" == false ]]; then
+		snapshot_initial_attempts "${run_directory}/failover-attempts-after.json"
+		if jq -e --arg owner "${failed_lease_owner}" --slurpfile before "${run_directory}/failover-attempts-before.json" '
+			map({shard_index,task_id,attempt_id,attempt_number,external_id})
+				== ($before[0] | map({shard_index,task_id,attempt_id,attempt_number,external_id}))
+			and ([.[].lease_owner] | unique | length) == 1
+			and .[0].lease_owner != $owner
+			and ([., $before[0]] | transpose
+				| all(.[]; .[0].lease_token != .[1].lease_token))
+		' "${run_directory}/failover-attempts-after.json" >/dev/null; then
+			new_lease_owner="$(jq -er '.[0].lease_owner' "${run_directory}/failover-attempts-after.json")"
+			new_owner_pod=""
+			mapfile -t current_execution_pods < <(kubectl --context kind-mill -n "${system_namespace}" get pods \
+				-l app.kubernetes.io/name=mill-execution --field-selector=status.phase=Running \
+				-o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+			for pod in "${current_execution_pods[@]}"; do
+				if kubectl --context kind-mill -n "${system_namespace}" logs "${pod}" |
+					grep -Fq "instance=${new_lease_owner} "; then
+					new_owner_pod="${pod}"
+					break
+				fi
+			done
+			[[ -n "${new_owner_pod}" ]] || { printf 'New lease owner is not a running execution Pod\n' >&2; exit 1; }
+			kubectl --context kind-mill -n "${system_namespace}" logs "${new_owner_pod}" \
+				> "${run_directory}/failover-takeover-owner.log"
+			snapshot_kubernetes_jobs "${run_directory}/failover-kubernetes-after.json" \
+				"${run_directory}/failover-attempts-before.json"
+			cmp "${run_directory}/failover-kubernetes-before.json" "${run_directory}/failover-kubernetes-after.json"
+			failover_observed=true
+			printf 'Another execution acquired new fencing tokens for the same attempts and Kubernetes Jobs.\n\n'
+		fi
+	fi
+	if [[ "${failover_mode}" == job && "${failover_started}" == true && "${failover_observed}" == false ]]; then
+		snapshot_initial_attempts "${run_directory}/job-attempts-after.json"
+		if jq -e --slurpfile before "${run_directory}/job-attempts-before.json" '
+			map({shard_index,task_id,attempt_id,attempt_number,external_id,lease_owner,lease_token})
+				== ($before[0] | map({shard_index,task_id,attempt_id,attempt_number,external_id,lease_owner,lease_token}))
+			and all(.[]; .state == "completed")
+		' "${run_directory}/job-attempts-after.json" >/dev/null; then
+			snapshot_kubernetes_jobs "${run_directory}/job-kubernetes-after.json" \
+				"${run_directory}/job-attempts-before.json"
+			cmp "${run_directory}/job-kubernetes-before.json" "${run_directory}/job-kubernetes-after.json"
+			kubectl --context kind-mill -n "${system_namespace}" logs "${standby_job_service_pod}" \
+				> "${run_directory}/job-survivor-after-failure.log"
+			failover_observed=true
+			printf 'Execution reconnected through the Service and completed the same leased attempts.\n\n'
+		fi
+	fi
+	if [[ "${state}" == completed ]]; then finished=true; break; fi
+	if [[ "${state}" == failed && "${running}" == 0 ]]; then break; fi
+	sleep 0.5
+done
+[[ "${finished}" == true ]] || { printf 'Job did not complete\n' >&2; exit 1; }
+if [[ "${failover_mode}" == execution && ( "${failover_started}" != true || "${failover_observed}" != true ) ]]; then
+	printf 'Execution Pod failover was not observed\n' >&2
+	exit 1
+fi
+if [[ "${failover_mode}" == job && ( "${failover_started}" != true || "${failover_observed}" != true ) ]]; then
+	printf 'Job Pod failover was not observed\n' >&2
+	exit 1
+fi
+if [[ "${failover_mode}" != none ]]; then
+	final_attempt_shape="$(PGPASSWORD="${database_password}" psql "${host_database_url}" -XAt -v ON_ERROR_STOP=1 \
+		-v job_id="${job_id}" <<'SQL'
+SELECT count(*)::text || '|' || max(a.attempt_number)::text
+FROM attempts a JOIN tasks t ON t.id = a.task_id
+WHERE t.job_id = :'job_id'::uuid;
+SQL
+)"
+	[[ "${final_attempt_shape}" == "12|1" ]] || { printf 'Failover created unexpected attempts: %s\n' "${final_attempt_shape}" >&2; exit 1; }
+fi
+if [[ "${failover_mode}" == execution ]]; then
+	final_available="$(kubectl --context kind-mill -n "${system_namespace}" get deployment mill-execution -o jsonpath='{.status.availableReplicas}')"
+	[[ "${final_available}" == 2 ]] || { printf 'Execution Deployment did not restore two available replicas\n' >&2; exit 1; }
+fi
+if [[ "${failover_mode}" == job ]]; then
+	final_available="$(kubectl --context kind-mill -n "${system_namespace}" get deployment mill-job -o jsonpath='{.status.availableReplicas}')"
+	[[ "${final_available}" == 2 ]] || { printf 'Job Deployment did not restore two available replicas\n' >&2; exit 1; }
+fi
+jq -e --argjson tasks "${expected_tasks}" '.progress.completed == $tasks and (.results | length) == $tasks' \
+	"${run_directory}/status.json" >/dev/null
+
+kubectl --context kind-mill -n "${workload_namespace}" get jobs -l "mill.dev/job-id=${job_id}" -o json \
+	> "${run_directory}/kubernetes-jobs.json"
+jq -e --argjson tasks "${expected_tasks}" '.items | length == $tasks and all(.[];
+  ((.spec.template.spec.nodeSelector // {}) | length) == 0 and
+  ((.spec.template.spec.volumes // []) | length) == 0)' \
+	"${run_directory}/kubernetes-jobs.json" >/dev/null
+
+mapfile -t result_uris < <(jq -r '.results[].uri' "${run_directory}/status.json")
+partials=()
+for index in "${!result_uris[@]}"; do
+	object_path="${result_uris[index]#s3://}"
+	partial="${run_directory}/output/task-${index}.jsonl"
+	curl "${curl_signature[@]}" "${host_endpoint}/${object_path}" > "${partial}"
+	partials+=("${partial}")
+done
+go run ./examples/word-count/cmd/merge "${partials[@]}" > "${run_directory}/counts.jsonl"
+input_size="$(wc -c < "${run_directory}/input/records.jsonl")"
+go run ./examples/word-count/cmd/word-count --job-id "${job_id}" --task-id local-baseline --shard-index 0 \
+	--input-uri "file://${run_directory}/input/records.jsonl" --input-start-byte 0 --input-end-byte "${input_size}" \
+	--output-uri "file://${run_directory}/baseline.jsonl" --
+cmp "${run_directory}/baseline.jsonl" "${run_directory}/counts.jsonl"
+
+printf '\nPASS: deployed Job and execution Pods completed %s S3-backed tasks.\n' "${expected_tasks}"
+if [[ "${failover_mode}" == execution ]]; then
+	printf 'PASS: an active execution Pod was deleted and fenced lease takeover preserved attempt and Job identities.\n'
+fi
+if [[ "${failover_mode}" == job ]]; then
+	printf 'PASS: an active Job Pod was deleted and REST/gRPC reconnection preserved attempt and Job identities.\n'
+fi
+printf 'Observed peak running tasks: %s\nExact merged result: %s/counts.jsonl\n' "${peak}" "${run_directory}"
+printf 'Pod, Job, service, database, and storage diagnostics are retained in %s\n' "${run_directory}"

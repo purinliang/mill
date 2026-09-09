@@ -1,14 +1,15 @@
+# Deploys the single-node kind baseline for local Mill development.
 apiVersion: v1
 kind: Service
 metadata:
   name: mill-job
   namespace: mill-system
   labels:
-    app.kubernetes.io/name: mill-job-service
+    app.kubernetes.io/name: mill-job
     app.kubernetes.io/part-of: mill
 spec:
   selector:
-    app.kubernetes.io/name: mill-job-service
+    app.kubernetes.io/name: mill-job
   ports:
     - name: http
       port: 8080
@@ -20,21 +21,21 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mill-job-service
+  name: mill-job
   namespace: mill-system
   labels:
-    app.kubernetes.io/name: mill-job-service
+    app.kubernetes.io/name: mill-job
     app.kubernetes.io/part-of: mill
 spec:
   replicas: 1
   revisionHistoryLimit: 2
   selector:
     matchLabels:
-      app.kubernetes.io/name: mill-job-service
+      app.kubernetes.io/name: mill-job
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: mill-job-service
+        app.kubernetes.io/name: mill-job
         app.kubernetes.io/part-of: mill
     spec:
       automountServiceAccountToken: false
@@ -46,8 +47,8 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: job-service
-          image: mill/job-service:dev
+        - name: job
+          image: mill/job:dev
           imagePullPolicy: Never
           envFrom:
             - secretRef:
@@ -94,24 +95,24 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mill-executor
+  name: mill-execution
   namespace: mill-system
   labels:
-    app.kubernetes.io/name: mill-executor
+    app.kubernetes.io/name: mill-execution
     app.kubernetes.io/part-of: mill
 spec:
   replicas: 1
   revisionHistoryLimit: 2
   selector:
     matchLabels:
-      app.kubernetes.io/name: mill-executor
+      app.kubernetes.io/name: mill-execution
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: mill-executor
+        app.kubernetes.io/name: mill-execution
         app.kubernetes.io/part-of: mill
     spec:
-      serviceAccountName: mill-executor
+      serviceAccountName: mill-execution
       terminationGracePeriodSeconds: 10
       securityContext:
         runAsNonRoot: true
@@ -120,12 +121,12 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: executor
-          image: mill/executor:dev
+        - name: execution
+          image: mill/execution:dev
           imagePullPolicy: Never
           envFrom:
             - secretRef:
-                name: mill-executor-config
+                name: mill-execution-config
           env:
             - name: MILL_JOB_GRPC_TARGET
               value: mill-job:9090

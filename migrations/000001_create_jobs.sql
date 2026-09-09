@@ -1,3 +1,4 @@
+-- Creates the durable jobs table and initial submission constraints.
 BEGIN;
 
 CREATE TABLE public.jobs (

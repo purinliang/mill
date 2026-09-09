@@ -1,3 +1,4 @@
+-- Adds persisted resource classes and workload resource limits.
 BEGIN;
 
 -- Store resolved values with each job so retries preserve their original Pod

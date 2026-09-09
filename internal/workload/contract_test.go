@@ -1,13 +1,17 @@
-package workload
+// This file tests workload argument serialization and parsing details.
+
+package workload_test
 
 import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/purinliang/mill/internal/workload"
 )
 
 func TestInvocationCommandArgsRoundTrip(t *testing.T) {
-	want := Invocation{
+	want := workload.Invocation{
 		JobID:          "job-001",
 		TaskID:         "task-007",
 		ShardIndex:     7,
@@ -22,7 +26,7 @@ func TestInvocationCommandArgsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build command arguments: %v", err)
 	}
-	got, err := ParseArgs(arguments)
+	got, err := workload.ParseArgs(arguments)
 	if err != nil {
 		t.Fatalf("parse command arguments: %v", err)
 	}
@@ -39,7 +43,7 @@ func TestInvocationCommandArgsUsesSeparatorForExecutableArguments(t *testing.T) 
 	if err != nil {
 		t.Fatalf("build command arguments: %v", err)
 	}
-	parsed, err := ParseArgs(arguments)
+	parsed, err := workload.ParseArgs(arguments)
 	if err != nil {
 		t.Fatalf("parse command arguments: %v", err)
 	}
@@ -65,7 +69,7 @@ func TestParseArgsRejectsInvalidContract(t *testing.T) {
 
 	for name, arguments := range tests {
 		t.Run(name, func(t *testing.T) {
-			if _, err := ParseArgs(arguments); err == nil {
+			if _, err := workload.ParseArgs(arguments); err == nil {
 				t.Fatal("ParseArgs succeeded, want an error")
 			}
 		})
@@ -77,7 +81,7 @@ func TestParseArgsProducesNonNilEmptyExecutableArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build command arguments: %v", err)
 	}
-	parsed, err := ParseArgs(arguments)
+	parsed, err := workload.ParseArgs(arguments)
 	if err != nil {
 		t.Fatalf("parse command arguments: %v", err)
 	}
@@ -86,8 +90,74 @@ func TestParseArgsProducesNonNilEmptyExecutableArgs(t *testing.T) {
 	}
 }
 
-func validInvocation() Invocation {
-	return Invocation{
+func TestPublicContractRejectsEveryInvalidInvocationField(t *testing.T) {
+	tests := map[string]func(*workload.Invocation){
+		"missing job ID": func(invocation *workload.Invocation) {
+			invocation.JobID = "  "
+		},
+		"missing task ID": func(invocation *workload.Invocation) {
+			invocation.TaskID = "  "
+		},
+		"negative shard index": func(invocation *workload.Invocation) {
+			invocation.ShardIndex = -1
+		},
+		"negative input start": func(invocation *workload.Invocation) {
+			invocation.InputStartByte = -1
+		},
+		"empty input range": func(invocation *workload.Invocation) {
+			invocation.InputEndByte = invocation.InputStartByte
+		},
+		"relative input URI": func(invocation *workload.Invocation) {
+			invocation.InputURI = "input.jsonl"
+		},
+		"relative output URI": func(invocation *workload.Invocation) {
+			invocation.OutputURI = "output.jsonl"
+		},
+	}
+
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			invocation := validInvocation()
+			mutate(&invocation)
+
+			if _, err := invocation.CommandArgs(); err == nil {
+				t.Fatal("CommandArgs succeeded, want validation error")
+			}
+		})
+	}
+}
+
+func TestParseArgsRejectsPositionalMillArguments(t *testing.T) {
+	arguments, err := validInvocation().CommandArgs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	separator := -1
+	for index, argument := range arguments {
+		if argument == "--" {
+			separator = index
+			break
+		}
+	}
+	if separator < 0 {
+		t.Fatal("serialized arguments have no separator")
+	}
+	arguments = append(
+		arguments[:separator],
+		append([]string{"unexpected"}, arguments[separator:]...)...,
+	)
+
+	_, err = workload.ParseArgs(arguments)
+	if err == nil || !strings.Contains(err.Error(), "named flags") {
+		t.Fatalf(
+			"ParseArgs error = %v, want named-flags validation error",
+			err,
+		)
+	}
+}
+
+func validInvocation() workload.Invocation {
+	return workload.Invocation{
 		JobID:          "job-001",
 		TaskID:         "task-001",
 		ShardIndex:     0,

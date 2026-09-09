@@ -1,3 +1,4 @@
+// This file merges successful word-count task outputs for the demo.
 package main
 
 import (
