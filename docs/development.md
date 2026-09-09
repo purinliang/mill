@@ -588,7 +588,10 @@ internal/job/
   postgres/status.go              durable job status and progress reads
   postgres/results.go             successful output queries
 internal/execution/
-  model.go                        runtime-neutral attempt and executable model
+  attempt.go                      durable attempt identity and lifecycle
+  claim.go                        work assigned to an execution replica
+  workload.go                     executable and resource requirements
+  errors.go                       shared execution-domain errors
   store.go                        durable execution-state contract
   coordinator/
     coordinator.go                observe active attempts and fill free slots
