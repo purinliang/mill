@@ -1,5 +1,5 @@
 // This file tests durable and idempotent submissions against PostgreSQL.
-package integration_test
+package postgres_test
 
 import (
 	"context"

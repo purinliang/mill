@@ -1,5 +1,5 @@
 // This file tests invalid claims at the Kubernetes adapter boundary.
-package integration_test
+package kubernetes_test
 
 import (
 	"context"

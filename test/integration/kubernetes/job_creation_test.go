@@ -1,5 +1,5 @@
 // This file tests Kubernetes Job creation through the adapter's public API.
-package integration_test
+package kubernetes_test
 
 import (
 	"context"

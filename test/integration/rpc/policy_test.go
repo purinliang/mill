@@ -1,5 +1,5 @@
 // This file tests error mapping, information hiding, and client deadlines.
-package integration_test
+package rpc_test
 
 import (
 	"context"
