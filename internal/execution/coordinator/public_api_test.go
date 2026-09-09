@@ -196,7 +196,10 @@ func TestTickReturnsRunningTransitionFailure(t *testing.T) {
 	}
 }
 
-func newPublicCoordinator(store execution.Store, execute publicExecutor) *coordinator.Coordinator {
+func newPublicCoordinator(
+	store coordinator.Store,
+	execute publicExecutor,
+) *coordinator.Coordinator {
 	return &coordinator.Coordinator{
 		Store: store, Runtime: execute, LeaseOwner: "executor-a",
 		Logger: log.New(io.Discard, "", 0),

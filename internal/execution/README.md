@@ -30,12 +30,10 @@ prove that a replacement attempt is safe.
 
 ## File map
 
-- `attempt.go` defines attempt identity and lifecycle state.
-- `claim.go` describes one leased task invocation.
+- `attempt.go` defines attempt identity, lifecycle, and leased invocation.
 - `workload.go` defines executable and resolved resource requirements.
-- `store.go` defines the durable execution-state port.
 - `errors.go` defines transport-independent execution failures.
-- `coordinator/` owns observation order and bounded work claiming.
+- `coordinator/` owns observation order, bounded claims, and its Store port.
 - `kubernetes/` creates and observes native Kubernetes Jobs.
 - `postgres/` implements leases, fencing, transitions, and retries.
 - `rpc/` carries the execution Store contract over Protobuf/gRPC.

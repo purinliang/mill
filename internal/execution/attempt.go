@@ -39,3 +39,15 @@ type Attempt struct {
 	LeaseToken     string
 	LeaseExpiresAt *time.Time
 }
+
+// ClaimedAttempt combines durable attempt identity with its workload input.
+type ClaimedAttempt struct {
+	Attempt        Attempt
+	Executable     Executable
+	ShardIndex     int
+	InputURI       string
+	InputStartByte int64
+	InputEndByte   int64
+	OutputURI      string
+	Resources      Resources
+}

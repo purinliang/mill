@@ -24,7 +24,7 @@ type Runtime interface {
 }
 
 type Coordinator struct {
-	Store      execution.Store
+	Store      Store
 	Runtime    Runtime
 	Logger     *log.Logger
 	LeaseOwner string
