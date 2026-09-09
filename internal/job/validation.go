@@ -52,7 +52,7 @@ func NormalizeSubmission(submission Submission) (Submission, error) {
 	if resourceClass == "" {
 		resourceClass = ResourceClassSmall
 	}
-	if _, valid := ResolveResources(resourceClass); !valid {
+	if !validResourceClass(resourceClass) {
 		return Submission{}, &ValidationError{
 			Field:   "resource_class",
 			Problem: "must be small, medium, or large",
@@ -67,6 +67,15 @@ func NormalizeSubmission(submission Submission) (Submission, error) {
 		Input:         InputSpec{URI: inputURI},
 		ResourceClass: resourceClass,
 	}, nil
+}
+
+func validResourceClass(class ResourceClass) bool {
+	switch class {
+	case ResourceClassSmall, ResourceClassMedium, ResourceClassLarge:
+		return true
+	default:
+		return false
+	}
 }
 
 func ValidateIdempotencyKey(key string) error {

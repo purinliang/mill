@@ -5,7 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	"github.com/purinliang/mill/internal/execution"
 )
+
+const mebibyte int64 = 1024 * 1024
 
 type Service struct {
 	store       Store
@@ -71,6 +75,7 @@ func (s *Service) Create(
 		)
 		return materializedJob, false, err
 	}
+	resources := resolveResources(normalizedSubmission.ResourceClass)
 
 	createdJob, created, err := s.store.Create(
 		ctx,
@@ -79,6 +84,7 @@ func (s *Service) Create(
 		shards.InputSHA256,
 		shards.RecordCount,
 		parallelism,
+		resources,
 	)
 	if err != nil {
 		return Job{}, false, err
@@ -106,6 +112,24 @@ func (s *Service) Create(
 		return Job{}, false, err
 	}
 	return materializedJob, created, nil
+}
+
+func resolveResources(class ResourceClass) execution.Resources {
+	memory := int64(0)
+	switch class {
+	case ResourceClassSmall:
+		memory = 128 * mebibyte
+	case ResourceClassMedium:
+		memory = 512 * mebibyte
+	case ResourceClassLarge:
+		memory = 2 * 1024 * mebibyte
+	}
+	return execution.Resources{
+		CPURequestMillis:   100,
+		CPULimitMillis:     1000,
+		MemoryRequestBytes: memory,
+		MemoryLimitBytes:   memory,
+	}
 }
 
 func (s *Service) Get(ctx context.Context, id string) (Job, error) {

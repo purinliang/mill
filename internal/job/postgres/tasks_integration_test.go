@@ -36,6 +36,7 @@ func TestRepositoryMaterializeLogicalShardsAndReportProgress(t *testing.T) {
 		testInputSHA256,
 		30,
 		3,
+		testResources,
 	)
 	if err != nil {
 		t.Fatalf("create job: %v", err)

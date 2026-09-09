@@ -1,7 +1,11 @@
 // This file defines the durable metadata operations required by the Job service.
 package job
 
-import "context"
+import (
+	"context"
+
+	"github.com/purinliang/mill/internal/execution"
+)
 
 // Store persists jobs and their logical tasks, progress, and results.
 type Store interface {
@@ -20,6 +24,7 @@ type Store interface {
 		inputSHA256 string,
 		inputRecordCount int64,
 		parallelism int,
+		resources execution.Resources,
 	) (Job, bool, error)
 
 	// Materialize persists logical tasks and makes their job runnable.

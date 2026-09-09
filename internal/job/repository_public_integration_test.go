@@ -25,6 +25,13 @@ const (
 	missingUUID      = "00000000-0000-7000-8000-000000000001"
 )
 
+var publicResources = execution.Resources{
+	CPURequestMillis:   100,
+	CPULimitMillis:     1000,
+	MemoryRequestBytes: 128 << 20,
+	MemoryLimitBytes:   128 << 20,
+}
+
 func TestPublicRepositoryValidationContracts(t *testing.T) {
 	repository, pool, _ := newPublicRepository(t)
 	validSubmission := publicSubmission()
@@ -64,23 +71,38 @@ func TestPublicRepositoryValidationContracts(t *testing.T) {
 			return err
 		},
 		"create missing idempotency key": func() error {
-			_, _, err := repository.Create(context.Background(), "", validSubmission, publicTestSHA256, 1, 1)
+			_, _, err := repository.Create(
+				context.Background(), "", validSubmission,
+				publicTestSHA256, 1, 1, publicResources,
+			)
 			return err
 		},
 		"create invalid submission": func() error {
-			_, _, err := repository.Create(context.Background(), "public-validation", job.Submission{}, publicTestSHA256, 1, 1)
+			_, _, err := repository.Create(
+				context.Background(), "public-validation", job.Submission{},
+				publicTestSHA256, 1, 1, publicResources,
+			)
 			return err
 		},
 		"create invalid input digest": func() error {
-			_, _, err := repository.Create(context.Background(), "public-validation", validSubmission, "not-a-digest", 1, 1)
+			_, _, err := repository.Create(
+				context.Background(), "public-validation", validSubmission,
+				"not-a-digest", 1, 1, publicResources,
+			)
 			return err
 		},
 		"create empty input": func() error {
-			_, _, err := repository.Create(context.Background(), "public-validation", validSubmission, publicTestSHA256, 0, 1)
+			_, _, err := repository.Create(
+				context.Background(), "public-validation", validSubmission,
+				publicTestSHA256, 0, 1, publicResources,
+			)
 			return err
 		},
 		"create invalid parallelism": func() error {
-			_, _, err := repository.Create(context.Background(), "public-validation", validSubmission, publicTestSHA256, 1, 0)
+			_, _, err := repository.Create(
+				context.Background(), "public-validation", validSubmission,
+				publicTestSHA256, 1, 0, publicResources,
+			)
 			return err
 		},
 		"materialize invalid job ID": func() error {
@@ -189,7 +211,9 @@ func TestPublicRepositoryNotFoundAndSubmissionLookup(t *testing.T) {
 	if foundJob, found, err := repository.FindSubmission(ctx, key, submission); err != nil || found || foundJob.ID != "" {
 		t.Fatalf("initial FindSubmission = job %+v found %t error %v", foundJob, found, err)
 	}
-	created, wasCreated, err := repository.Create(ctx, key, submission, publicTestSHA256, 1, 1)
+	created, wasCreated, err := repository.Create(
+		ctx, key, submission, publicTestSHA256, 1, 1, publicResources,
+	)
 	if err != nil || !wasCreated {
 		t.Fatalf("Create = job %+v created %t error %v", created, wasCreated, err)
 	}
@@ -259,7 +283,10 @@ func TestPublicRepositorySurfacesDatabaseUnavailability(t *testing.T) {
 			return err
 		},
 		"create": func() error {
-			_, _, err := repository.Create(ctx, "closed-create", validSubmission, publicTestSHA256, 1, 1)
+			_, _, err := repository.Create(
+				ctx, "closed-create", validSubmission,
+				publicTestSHA256, 1, 1, publicResources,
+			)
 			return err
 		},
 		"materialize": func() error {
@@ -317,7 +344,10 @@ func TestPublicRepositorySurfacesDatabaseUnavailability(t *testing.T) {
 func TestPublicAttemptLeaseExpiryAndStartingTransition(t *testing.T) {
 	repository, _, key := newPublicRepository(t)
 	ctx := context.Background()
-	created, _, err := repository.Create(ctx, key, publicSubmission(), publicTestSHA256, 1, 1)
+	created, _, err := repository.Create(
+		ctx, key, publicSubmission(),
+		publicTestSHA256, 1, 1, publicResources,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +383,10 @@ func TestPublicAttemptLeaseExpiryAndStartingTransition(t *testing.T) {
 func TestPublicMaterializationReplayRejectsChangedShardCount(t *testing.T) {
 	repository, _, key := newPublicRepository(t)
 	ctx := context.Background()
-	created, _, err := repository.Create(ctx, key, publicSubmission(), publicTestSHA256, 1, 1)
+	created, _, err := repository.Create(
+		ctx, key, publicSubmission(),
+		publicTestSHA256, 1, 1, publicResources,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -428,6 +461,7 @@ func (r *publicRepositories) Create(
 	digest string,
 	recordCount int64,
 	parallelism int,
+	resources execution.Resources,
 ) (job.Job, bool, error) {
 	return r.jobs.Create(
 		ctx,
@@ -436,6 +470,7 @@ func (r *publicRepositories) Create(
 		digest,
 		recordCount,
 		parallelism,
+		resources,
 	)
 }
 

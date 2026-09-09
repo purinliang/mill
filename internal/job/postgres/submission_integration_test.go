@@ -33,6 +33,7 @@ func TestRepositoryCreateReplayGetAndPersist(t *testing.T) {
 		testInputSHA256,
 		100,
 		3,
+		testResources,
 	)
 	if err != nil {
 		t.Fatalf("create job: %v", err)
@@ -96,7 +97,8 @@ func TestRepositoryCreateReplayGetAndPersist(t *testing.T) {
 	}
 
 	replayedJob, replayCreated, err := restartedRepository.Create(
-		context.Background(), key, submission, strings.Repeat("b", 64), 200, 9,
+		context.Background(), key, submission,
+		strings.Repeat("b", 64), 200, 9, testResources,
 	)
 	if err != nil {
 		t.Fatalf("replay job: %v", err)
@@ -146,6 +148,7 @@ func TestRepositoryCreateReplayGetAndPersist(t *testing.T) {
 				testInputSHA256,
 				100,
 				3,
+				testResources,
 			); !errors.Is(err, ErrIdempotencyConflict) {
 				t.Fatalf(
 					"conflicting create error = %v, want %v",
@@ -203,6 +206,7 @@ func TestRepositoryConcurrentIdempotentCreate(t *testing.T) {
 				testInputSHA256,
 				100,
 				3,
+				testResources,
 			)
 			results <- createResult{job: job, created: created, err: err}
 		}()

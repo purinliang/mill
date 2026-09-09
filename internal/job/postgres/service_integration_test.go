@@ -227,6 +227,7 @@ func TestServiceResumesPreparingJobWithStoredParallelism(t *testing.T) {
 		shards.InputSHA256,
 		shards.RecordCount,
 		3,
+		testResources,
 	)
 	if err != nil {
 		t.Fatalf("create preparing job: %v", err)

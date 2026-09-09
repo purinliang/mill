@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	executionmodel "github.com/purinliang/mill/internal/execution"
 	jobmodel "github.com/purinliang/mill/internal/job"
 	jobpostgres "github.com/purinliang/mill/internal/job/postgres"
 )
@@ -250,6 +251,12 @@ func createAttemptTestJob(
 		testInputSHA256,
 		int64(taskCount),
 		parallelism,
+		executionmodel.Resources{
+			CPURequestMillis:   100,
+			CPULimitMillis:     1000,
+			MemoryRequestBytes: 128 << 20,
+			MemoryLimitBytes:   128 << 20,
+		},
 	)
 	if err != nil {
 		t.Fatalf("create test job: %v", err)

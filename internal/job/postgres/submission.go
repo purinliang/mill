@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/purinliang/mill/internal/execution"
 	"github.com/purinliang/mill/internal/job"
 )
 
@@ -50,6 +51,7 @@ func (r *Repository) Create(
 	inputSHA256 string,
 	inputRecordCount int64,
 	parallelism int,
+	resources execution.Resources,
 ) (job.Job, bool, error) {
 	if err := job.ValidateIdempotencyKey(idempotencyKey); err != nil {
 		return job.Job{}, false, err
@@ -67,16 +69,6 @@ func (r *Repository) Create(
 	if err := job.ValidateParallelism(parallelism); err != nil {
 		return job.Job{}, false, err
 	}
-	resources, valid := job.ResolveResources(
-		normalizedSubmission.ResourceClass,
-	)
-	if !valid {
-		return job.Job{}, false, &job.ValidationError{
-			Field:   "resource_class",
-			Problem: "must be small, medium, or large",
-		}
-	}
-
 	tx, err := r.database.Begin(ctx)
 	if err != nil {
 		return job.Job{}, false, fmt.Errorf(

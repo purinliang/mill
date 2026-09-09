@@ -9,9 +9,18 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/purinliang/mill/internal/execution"
 )
 
 var testInputSHA256 = strings.Repeat("a", 64)
+
+var testResources = execution.Resources{
+	CPURequestMillis:   100,
+	CPULimitMillis:     1000,
+	MemoryRequestBytes: 128 << 20,
+	MemoryLimitBytes:   128 << 20,
+}
 
 func integrationDatabaseURL(t *testing.T) string {
 	t.Helper()

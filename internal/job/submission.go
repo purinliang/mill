@@ -6,6 +6,20 @@ import "github.com/purinliang/mill/internal/execution"
 // Executable identifies the trusted OCI image and its user arguments.
 type Executable = execution.Executable
 
+// ResourceClass names one server-defined workload resource profile.
+type ResourceClass string
+
+const (
+	// ResourceClassSmall is the default low-memory workload profile.
+	ResourceClassSmall ResourceClass = "small"
+
+	// ResourceClassMedium is the intermediate workload profile.
+	ResourceClassMedium ResourceClass = "medium"
+
+	// ResourceClassLarge permits the largest V1 workload memory allocation.
+	ResourceClassLarge ResourceClass = "large"
+)
+
 // InputSpec is the input supplied when submitting a job.
 type InputSpec struct {
 	URI string `json:"uri"`
