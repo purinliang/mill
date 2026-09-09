@@ -1,5 +1,5 @@
-// This file tests REST routing, validation, and error responses.
-package httpapi
+// This file tests public routing and provides shared HTTP fixtures.
+package httpapi_test
 
 import (
 	"context"
@@ -10,272 +10,150 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/purinliang/mill/internal/job"
-	"time"
+	"github.com/purinliang/mill/internal/job/httpapi"
 )
 
 const testJobID = "0198b7c9-1d24-7000-8000-000000000001"
 
 type fakeStore struct {
-	create func(context.Context, string, job.Submission) (job.Job, bool, error)
-	get    func(context.Context, string) (job.Job, error)
+	create func(
+		context.Context,
+		string,
+		job.Submission,
+	) (job.Job, bool, error)
+	get func(context.Context, string) (job.Job, error)
 }
 
-func (s fakeStore) Create(ctx context.Context, key string, submission job.Submission) (job.Job, bool, error) {
+func (s fakeStore) Create(
+	ctx context.Context,
+	key string,
+	submission job.Submission,
+) (job.Job, bool, error) {
 	return s.create(ctx, key, submission)
 }
 
-func (s fakeStore) Get(ctx context.Context, id string) (job.Job, error) {
+func (s fakeStore) Get(
+	ctx context.Context,
+	id string,
+) (job.Job, error) {
 	return s.get(ctx, id)
 }
 
-func TestCreateJob(t *testing.T) {
+func TestHandlerUsesDefaultLoggerWhenNoneIsProvided(t *testing.T) {
 	store := fakeStore{
-		create: func(_ context.Context, key string, submission job.Submission) (job.Job, bool, error) {
-			if key != "request-001" {
-				t.Errorf("idempotency key = %q, want %q", key, "request-001")
-			}
-			if submission.Executable.Image != "mill/example:dev" {
-				t.Errorf("image = %q, want %q", submission.Executable.Image, "mill/example:dev")
-			}
-			if submission.Executable.Args == nil {
-				t.Error("args are nil, want an empty array")
-			}
-			return exampleJob(), true, nil
+		get: func(context.Context, string) (job.Job, error) {
+			return job.Job{ID: testJobID, State: job.StateRunning}, nil
 		},
 	}
-
-	response := serveRequest(store, http.MethodPost, "/jobs", `{
-		"executable":{"image":"mill/example:dev"},
-		"input":{"uri":"file:///data/records.jsonl"}
-	}`, map[string]string{
-		"Content-Type":    "application/json; charset=utf-8",
-		"Idempotency-Key": "request-001",
-	})
-
-	if response.Code != http.StatusCreated {
-		t.Fatalf("status code = %d, want %d", response.Code, http.StatusCreated)
-	}
-	if location := response.Header().Get("Location"); location != "/jobs/"+testJobID {
-		t.Errorf("Location = %q, want %q", location, "/jobs/"+testJobID)
-	}
-
-	var got job.Job
-	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if got.ID != testJobID {
-		t.Errorf("job ID = %q, want %q", got.ID, testJobID)
-	}
-	if got.Executable.Args == nil {
-		t.Error("response args are null, want an empty array")
-	}
-}
-
-func TestCreateJobReplay(t *testing.T) {
-	store := fakeStore{
-		create: func(context.Context, string, job.Submission) (job.Job, bool, error) {
-			return exampleJob(), false, nil
-		},
-	}
-
-	response := serveValidCreate(store)
-
+	mux := http.NewServeMux()
+	httpapi.NewHandler(store, nil).RegisterRoutes(mux)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/jobs/"+testJobID,
+		nil,
+	)
+	mux.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
-		t.Fatalf("status code = %d, want %d", response.Code, http.StatusOK)
-	}
-	if location := response.Header().Get("Location"); location != "/jobs/"+testJobID {
-		t.Errorf("Location = %q, want %q", location, "/jobs/"+testJobID)
+		t.Fatalf(
+			"status = %d, body = %s",
+			response.Code,
+			response.Body.String(),
+		)
 	}
 }
 
-func TestCreateJobConflict(t *testing.T) {
-	store := fakeStore{
-		create: func(context.Context, string, job.Submission) (job.Job, bool, error) {
-			return job.Job{}, false, job.ErrIdempotencyConflict
-		},
-	}
-
-	response := serveValidCreate(store)
-
-	assertErrorResponse(t, response, http.StatusConflict, "idempotency_conflict")
-}
-
-func TestCreateJobInputErrors(t *testing.T) {
-	t.Run("invalid input", func(t *testing.T) {
-		store := fakeStore{
-			create: func(context.Context, string, job.Submission) (job.Job, bool, error) {
-				return job.Job{}, false, &job.ValidationError{Field: "input record 0", Problem: "must be valid JSON"}
-			},
-		}
-		response := serveValidCreate(store)
-		assertErrorResponse(t, response, http.StatusBadRequest, "invalid_input")
-	})
-
-	t.Run("input changed after planning", func(t *testing.T) {
-		store := fakeStore{
-			create: func(context.Context, string, job.Submission) (job.Job, bool, error) {
-				return job.Job{}, false, job.ErrInputConflict
-			},
-		}
-		response := serveValidCreate(store)
-		assertErrorResponse(t, response, http.StatusConflict, "input_conflict")
-	})
-}
-
-func TestCreateJobValidation(t *testing.T) {
-	unusedStore := fakeStore{
-		create: func(context.Context, string, job.Submission) (job.Job, bool, error) {
-			t.Fatal("store was called for an invalid request")
-			return job.Job{}, false, nil
-		},
-	}
-
+func TestJobRoutesRejectUnsupportedMethods(t *testing.T) {
 	tests := []struct {
 		name    string
-		body    string
-		headers map[string]string
-		status  int
-		code    string
+		method  string
+		target  string
+		allowed string
 	}{
 		{
-			name:   "missing content type",
-			body:   `{}`,
-			status: http.StatusUnsupportedMediaType,
-			code:   "unsupported_media_type",
+			name:    "collection",
+			method:  http.MethodGet,
+			target:  "/jobs",
+			allowed: http.MethodPost,
 		},
 		{
-			name: "missing idempotency key",
-			body: `{}`,
-			headers: map[string]string{
-				"Content-Type": "application/json",
-			},
-			status: http.StatusBadRequest,
-			code:   "missing_idempotency_key",
-		},
-		{
-			name: "unknown field",
-			body: `{"executable":{"image":"mill/example:dev"},"input":{"uri":"file:///data/records.jsonl"},"unknown":true}`,
-			headers: map[string]string{
-				"Content-Type":    "application/json",
-				"Idempotency-Key": "request-001",
-			},
-			status: http.StatusBadRequest,
-			code:   "invalid_request",
-		},
-		{
-			name: "multiple JSON values",
-			body: `{} {}`,
-			headers: map[string]string{
-				"Content-Type":    "application/json",
-				"Idempotency-Key": "request-001",
-			},
-			status: http.StatusBadRequest,
-			code:   "invalid_request",
-		},
-		{
-			name: "unsupported input scheme",
-			body: `{"executable":{"image":"mill/example:dev"},"input":{"uri":"https://example.com/records.jsonl"}}`,
-			headers: map[string]string{
-				"Content-Type":    "application/json",
-				"Idempotency-Key": "request-001",
-			},
-			status: http.StatusBadRequest,
-			code:   "invalid_request",
-		},
-		{
-			name: "body too large",
-			body: strings.Repeat(" ", maxRequestBodyBytes+1),
-			headers: map[string]string{
-				"Content-Type":    "application/json",
-				"Idempotency-Key": "request-001",
-			},
-			status: http.StatusBadRequest,
-			code:   "invalid_request",
+			name:    "resource",
+			method:  http.MethodPost,
+			target:  "/jobs/" + testJobID,
+			allowed: http.MethodGet,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			response := serveRequest(unusedStore, http.MethodPost, "/jobs", test.body, test.headers)
-			assertErrorResponse(t, response, test.status, test.code)
+			response := serveRequest(
+				t,
+				fakeStore{},
+				test.method,
+				test.target,
+				"",
+				nil,
+			)
+			assertAPIError(
+				t,
+				response,
+				http.StatusMethodNotAllowed,
+				"method_not_allowed",
+			)
+			if allow := response.Header().Get("Allow"); allow != test.allowed {
+				t.Errorf("Allow = %q, want %q", allow, test.allowed)
+			}
 		})
 	}
 }
 
-func TestGetJob(t *testing.T) {
-	store := fakeStore{
-		get: func(_ context.Context, id string) (job.Job, error) {
-			if id != testJobID {
-				t.Errorf("job ID = %q, want %q", id, testJobID)
-			}
-			return exampleJob(), nil
-		},
-	}
-
-	response := serveRequest(store, http.MethodGet, "/jobs/"+testJobID, "", nil)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("status code = %d, want %d", response.Code, http.StatusOK)
-	}
-}
-
-func TestGetJobErrors(t *testing.T) {
-	t.Run("invalid ID", func(t *testing.T) {
-		store := fakeStore{get: func(context.Context, string) (job.Job, error) {
-			t.Fatal("store was called for an invalid ID")
-			return job.Job{}, nil
-		}}
-		response := serveRequest(store, http.MethodGet, "/jobs/not-a-uuid", "", nil)
-		assertErrorResponse(t, response, http.StatusBadRequest, "invalid_job_id")
-	})
-
-	t.Run("not found", func(t *testing.T) {
-		store := fakeStore{get: func(context.Context, string) (job.Job, error) {
-			return job.Job{}, job.ErrNotFound
-		}}
-		response := serveRequest(store, http.MethodGet, "/jobs/"+testJobID, "", nil)
-		assertErrorResponse(t, response, http.StatusNotFound, "job_not_found")
-	})
-}
-
-func TestJobMethodNotAllowed(t *testing.T) {
-	store := fakeStore{}
-	response := serveRequest(store, http.MethodGet, "/jobs", "", nil)
-
-	assertErrorResponse(t, response, http.StatusMethodNotAllowed, "method_not_allowed")
-	if allow := response.Header().Get("Allow"); allow != http.MethodPost {
-		t.Errorf("Allow = %q, want %q", allow, http.MethodPost)
-	}
-}
-
-func serveValidCreate(store Store) *httptest.ResponseRecorder {
-	return serveRequest(store, http.MethodPost, "/jobs", `{
-		"executable":{"image":"mill/example:dev","args":[]},
-		"input":{"uri":"file:///data/records.jsonl"}
-	}`, map[string]string{
-		"Content-Type":    "application/json",
-		"Idempotency-Key": "request-001",
-	})
-}
-
-func serveRequest(store Store, method, target, body string, headers map[string]string) *httptest.ResponseRecorder {
+func serveRequest(
+	t *testing.T,
+	store httpapi.Store,
+	method string,
+	target string,
+	body string,
+	headers map[string]string,
+) *httptest.ResponseRecorder {
+	t.Helper()
 	request := httptest.NewRequest(method, target, strings.NewReader(body))
 	for name, value := range headers {
 		request.Header.Set(name, value)
 	}
-	response := httptest.NewRecorder()
+	return serveHTTP(t, store, request)
+}
+
+func serveHTTP(
+	t *testing.T,
+	store httpapi.Store,
+	request *http.Request,
+) *httptest.ResponseRecorder {
+	t.Helper()
 	mux := http.NewServeMux()
-	NewHandler(store, log.New(io.Discard, "", 0)).RegisterRoutes(mux)
+	logger := log.New(io.Discard, "", 0)
+	httpapi.NewHandler(store, logger).RegisterRoutes(mux)
+	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, request)
 	return response
 }
 
-func assertErrorResponse(t *testing.T, response *httptest.ResponseRecorder, status int, code string) {
+func assertAPIError(
+	t *testing.T,
+	response *httptest.ResponseRecorder,
+	status int,
+	code string,
+) {
 	t.Helper()
 	if response.Code != status {
-		t.Fatalf("status code = %d, want %d; body = %s", response.Code, status, response.Body.String())
+		t.Fatalf(
+			"status = %d, want %d; body = %s",
+			response.Code,
+			status,
+			response.Body.String(),
+		)
 	}
 
 	var body struct {
@@ -292,7 +170,16 @@ func assertErrorResponse(t *testing.T, response *httptest.ResponseRecorder, stat
 }
 
 func exampleJob() job.Job {
-	timestamp := time.Date(2026, time.September, 4, 2, 0, 0, 0, time.UTC)
+	timestamp := time.Date(
+		2026,
+		time.September,
+		4,
+		2,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
 	return job.Job{
 		ID:    testJobID,
 		State: job.StatePreparing,
@@ -300,8 +187,12 @@ func exampleJob() job.Job {
 			Image: "mill/example:dev",
 			Args:  []string{},
 		},
-		Input:       job.Input{URI: "file:///data/records.jsonl"},
-		Output:      job.Output{URI: "file:///var/lib/mill/output/jobs/" + testJobID + "/"},
+		Input: job.Input{
+			URI: "file:///data/records.jsonl",
+		},
+		Output: job.Output{
+			URI: "file:///var/lib/mill/output/jobs/" + testJobID + "/",
+		},
 		Parallelism: 3,
 		CreatedAt:   timestamp,
 		UpdatedAt:   timestamp,
