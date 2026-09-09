@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,9 +19,9 @@ import (
 const (
 	testLeaseOwner    = "test-executor"
 	testLeaseDuration = 30 * time.Second
-	testInputSHA256   = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" +
-		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 )
+
+var testInputSHA256 = strings.Repeat("a", 64)
 
 func TestAttemptSuccessfulLifecycle(t *testing.T) {
 	repository, job := createAttemptTestJob(t, "integration:attempt-success", 1, 1)
