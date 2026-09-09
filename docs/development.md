@@ -1,4 +1,4 @@
-# Developing Mill
+# Development
 
 This guide covers the implemented local environment, demonstrations, tests,
 configuration, and repository organization. Availability design is described
