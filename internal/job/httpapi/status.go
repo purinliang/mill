@@ -8,7 +8,7 @@ import (
 	"github.com/purinliang/mill/internal/job"
 )
 
-func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) getJobStatus(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !job.ValidID(id) {
 		writeError(

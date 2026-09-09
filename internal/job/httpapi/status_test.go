@@ -15,7 +15,7 @@ import (
 	"github.com/purinliang/mill/internal/job"
 )
 
-func TestGetJob(t *testing.T) {
+func TestGetJobStatus(t *testing.T) {
 	store := fakeStore{
 		get: func(_ context.Context, id string) (job.Job, error) {
 			if id != testJobID {
@@ -42,7 +42,7 @@ func TestGetJob(t *testing.T) {
 	}
 }
 
-func TestGetCompletedJobPreservesPublicJSONContract(t *testing.T) {
+func TestCompletedJobStatusPreservesPublicJSONContract(t *testing.T) {
 	now := time.Date(2026, 9, 8, 3, 4, 5, 0, time.UTC)
 	want := job.Job{
 		ID:    testJobID,
@@ -124,7 +124,7 @@ func TestGetCompletedJobPreservesPublicJSONContract(t *testing.T) {
 	}
 }
 
-func TestGetJobErrors(t *testing.T) {
+func TestGetJobStatusErrors(t *testing.T) {
 	t.Run("invalid ID", func(t *testing.T) {
 		store := fakeStore{
 			get: func(context.Context, string) (job.Job, error) {
@@ -171,7 +171,7 @@ func TestGetJobErrors(t *testing.T) {
 	})
 }
 
-func TestGetHidesUnexpectedStoreErrors(t *testing.T) {
+func TestJobStatusHidesUnexpectedStoreErrors(t *testing.T) {
 	backendFailure := errors.New(
 		"postgresql://admin:secret@database/mill",
 	)

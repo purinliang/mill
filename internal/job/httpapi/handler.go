@@ -48,5 +48,5 @@ func (h *Handler) handleResource(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, http.MethodGet)
 		return
 	}
-	h.get(w, r)
+	h.getJobStatus(w, r)
 }
