@@ -88,11 +88,8 @@ func (r *Repository) Create(
 	if err := job.ValidateInputIdentity(inputSHA256, inputRecordCount); err != nil {
 		return job.Job{}, false, err
 	}
-	if parallelism < 1 || parallelism > job.MaxParallelism {
-		return job.Job{}, false, &job.ValidationError{
-			Field:   "parallelism",
-			Problem: "must be between 1 and 10000",
-		}
+	if err := job.ValidateParallelism(parallelism); err != nil {
+		return job.Job{}, false, err
 	}
 	resources, valid := job.ResolveResources(normalizedSubmission.ResourceClass)
 	if !valid {

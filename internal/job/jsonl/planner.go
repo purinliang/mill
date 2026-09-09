@@ -1,4 +1,4 @@
-// This file scans JSONL inputs and plans record-aligned logical shards.
+// Package jsonl plans record-aligned shards for JSON Lines datasets.
 package jsonl
 
 import (
@@ -25,10 +25,13 @@ type inputOpener interface {
 	Open(context.Context, string) (io.ReadCloser, error)
 }
 
+// Planner scans JSONL objects and produces bounded-memory partition plans. It
+// reads the input twice so it need not retain every record boundary in memory.
 type Planner struct {
 	objects inputOpener
 }
 
+// NewPlanner constructs a Planner that reads inputs through objects.
 func NewPlanner(objects inputOpener) Planner {
 	return Planner{objects: objects}
 }
@@ -38,11 +41,8 @@ func (p Planner) Plan(
 	inputURI string,
 	parallelism int,
 ) (job.PartitionPlan, error) {
-	if parallelism < 1 || parallelism > job.MaxParallelism {
-		return job.PartitionPlan{}, &job.ValidationError{
-			Field:   "parallelism",
-			Problem: "must be between 1 and 10000",
-		}
+	if err := job.ValidateParallelism(parallelism); err != nil {
+		return job.PartitionPlan{}, err
 	}
 	normalizedURI, err := job.NormalizeInputURI(inputURI)
 	if err != nil {

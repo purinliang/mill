@@ -166,8 +166,11 @@ func parseParallelism(value string) (int, error) {
 		return 0, errors.New("MILL_PARALLELISM is required")
 	}
 	parallelism, err := strconv.Atoi(value)
-	if err != nil || parallelism < 1 || parallelism > 10000 {
-		return 0, errors.New("MILL_PARALLELISM must be an integer between 1 and 10000")
+	if err != nil || job.ValidateParallelism(parallelism) != nil {
+		return 0, fmt.Errorf(
+			"MILL_PARALLELISM must be an integer between 1 and %d",
+			job.MaxParallelism,
+		)
 	}
 	return parallelism, nil
 }

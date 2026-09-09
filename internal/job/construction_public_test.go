@@ -2,6 +2,8 @@
 package job_test
 
 import (
+	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -39,12 +41,39 @@ func TestPublicConstructorsRejectInvalidDependenciesAndPolicy(t *testing.T) {
 		!strings.Contains(err.Error(), "planner") {
 		t.Fatalf("NewService nil-planner error = %v", err)
 	}
-	for _, parallelism := range []int{0, 10_001} {
-		if _, err := job.NewService(repository, jsonl.Planner{}, parallelism); err == nil || !strings.Contains(err.Error(), "MILL_PARALLELISM") {
+	for _, parallelism := range []int{0, job.MaxParallelism + 1} {
+		_, err := job.NewService(repository, jsonl.Planner{}, parallelism)
+		if err == nil || !strings.Contains(err.Error(), "MILL_PARALLELISM") {
 			t.Fatalf("NewService parallelism %d error = %v", parallelism, err)
 		}
 	}
 	if _, err := job.NewService(repository, jsonl.Planner{}, 3); err != nil {
 		t.Fatalf("NewService valid configuration: %v", err)
+	}
+}
+
+func TestValidateParallelismUsesDocumentedBounds(t *testing.T) {
+	for _, parallelism := range []int{1, job.MaxParallelism} {
+		if err := job.ValidateParallelism(parallelism); err != nil {
+			t.Fatalf("ValidateParallelism(%d): %v", parallelism, err)
+		}
+	}
+
+	for _, parallelism := range []int{0, job.MaxParallelism + 1} {
+		err := job.ValidateParallelism(parallelism)
+		var validationError *job.ValidationError
+		if !errors.As(err, &validationError) {
+			t.Fatalf(
+				"ValidateParallelism(%d) error = %T, want ValidationError",
+				parallelism,
+				err,
+			)
+		}
+		if validationError.Field != "parallelism" || !strings.Contains(
+			validationError.Problem,
+			strconv.Itoa(job.MaxParallelism),
+		) {
+			t.Fatalf("validation error = %+v", validationError)
+		}
 	}
 }

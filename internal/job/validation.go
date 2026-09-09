@@ -178,14 +178,28 @@ func ValidateInputIdentity(inputSHA256 string, recordCount int64) error {
 	return nil
 }
 
+// ValidateParallelism reports whether parallelism is within Mill's supported
+// per-job execution range.
+func ValidateParallelism(parallelism int) error {
+	if parallelism < 1 || parallelism > MaxParallelism {
+		return &ValidationError{
+			Field:   "parallelism",
+			Problem: fmt.Sprintf("must be between 1 and %d", MaxParallelism),
+		}
+	}
+	return nil
+}
+
 func ValidatePartitionPlan(plan PartitionPlan) error {
 	if err := ValidateInputIdentity(plan.InputSHA256, plan.RecordCount); err != nil {
 		return err
 	}
 	if len(plan.Shards) < 1 || len(plan.Shards) > MaxTasksPerJob {
 		return &ValidationError{
-			Field:   "logical shards",
-			Problem: "must contain between 1 and 10000 ranges",
+			Field: "logical shards",
+			Problem: fmt.Sprintf(
+				"must contain between 1 and %d ranges", MaxTasksPerJob,
+			),
 		}
 	}
 	var previousEnd int64

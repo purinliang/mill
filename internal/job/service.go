@@ -4,6 +4,7 @@ package job
 import (
 	"context"
 	"errors"
+	"fmt"
 )
 
 type Service struct {
@@ -19,8 +20,8 @@ func NewService(store Store, planner Planner, parallelism int) (*Service, error)
 	if planner == nil {
 		return nil, errors.New("dataset planner is required")
 	}
-	if parallelism < 1 || parallelism > MaxParallelism {
-		return nil, errors.New("MILL_PARALLELISM must be between 1 and 10000")
+	if err := ValidateParallelism(parallelism); err != nil {
+		return nil, fmt.Errorf("MILL_PARALLELISM: %w", err)
 	}
 	return &Service{store: store, planner: planner, parallelism: parallelism}, nil
 }
