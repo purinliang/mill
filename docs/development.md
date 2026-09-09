@@ -575,7 +575,8 @@ examples/word-count/
   job.yaml.template               manual single-task manifest template
 internal/job/
   model.go                        public job and submission model
-  ports.go                        job storage and partitioning boundaries
+  store.go                        durable Job-service storage contract
+  partition.go                    partitioning contract and shard model
   service.go                      job creation and status workflow
   validation.go                   submission and URI rules
   httpapi/handler.go              REST submission and status adapter

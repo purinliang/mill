@@ -1,4 +1,4 @@
-// This file defines the storage and dataset-partitioning ports used by jobs.
+// This file defines dataset partitioning and logical shard descriptions.
 package job
 
 import "context"
@@ -9,18 +9,14 @@ const MaxParallelism = 10_000
 // MaxTasksPerJob limits logical shard materialization for each job.
 const MaxTasksPerJob = 10_000
 
-type Store interface {
-	FindSubmission(context.Context, string, Submission) (Job, bool, error)
-	Create(context.Context, string, Submission, string, int64, int) (Job, bool, error)
-	Materialize(context.Context, string, ShardSet) (Job, error)
-	Get(context.Context, string) (Job, error)
-	CompletedResults(context.Context, string) ([]Result, error)
-}
-
 // DatasetPartitioner divides one dataset into record-aligned logical shards. It
 // describes work without copying the input or executing tasks.
 type DatasetPartitioner interface {
-	Partition(context.Context, string, int) (ShardSet, error)
+	Partition(
+		ctx context.Context,
+		inputURI string,
+		parallelism int,
+	) (ShardSet, error)
 }
 
 // ShardSet records the stable input identity and logical shard ranges chosen

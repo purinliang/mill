@@ -263,8 +263,8 @@ job, task, shard, attempt, or state-transition semantics.
   dependency construction, route assembly, process lifecycle, and shutdown
   belong there. Do not put job or execution policy in `main.go`.
 - Organize `internal` by cohesive capability, not by generic technical layers.
-  Keep job policy and ports in `internal/job`, then place concrete adapters in
-  `internal/job/httpapi`, `internal/job/partition`, and
+  Keep job policy and required contracts in `internal/job`, then place concrete
+  adapters in `internal/job/httpapi`, `internal/job/partition`, and
   `internal/job/postgres`. Keep attempt persistence in
   `internal/execution/postgres`, beside the execution domain whose transitions
   and ownership rules it implements.

@@ -235,11 +235,11 @@ observation and never accesses Mill tables directly. A separate partition
 service is unjustified while partitioning remains a bounded streaming
 operation inside the Job workflow.
 
-`internal/job` owns the job model, policy, workflow, and the ports required by
-that workflow. HTTP submission, dataset partitioning, and PostgreSQL persistence
-live in adapter subpackages. `internal/execution` owns the backend-independent
-attempt model and store contract; its PostgreSQL adapter owns durable attempt
-transitions, retries, fencing, and lease takeover.
+`internal/job` owns the job model, policy, workflow, and interfaces required by
+that workflow. HTTP submission, dataset partitioning, and PostgreSQL
+persistence live in adapter subpackages. `internal/execution` owns the
+backend-independent attempt model and store contract; its PostgreSQL adapter
+owns durable attempt transitions, retries, fencing, and lease takeover.
 
 The versioned gRPC API is defined in
 `api/proto/mill/execution/v1/execution.proto`. It exposes the implemented lease
@@ -309,10 +309,10 @@ After step 5, the two-service system was reviewed before further feature work.
 The review traced one submitted job through REST, partitioning, PostgreSQL,
 gRPC, reconciliation, Kubernetes, and output publication. A first
 learning-oriented refactor then made those boundaries visible in the package
-tree: the job core depends on `Store` and `DatasetPartitioner` ports, while
-HTTP, partitioning, and PostgreSQL remain adapters. Attempt persistence moved
-beside the execution domain. These package boundaries do not create additional
-deployed services.
+tree: the job core depends on the `Store` and `DatasetPartitioner` contracts,
+while HTTP, partitioning, and PostgreSQL remain adapters. Attempt persistence
+moved beside the execution domain. These package boundaries do not create
+additional deployed services.
 
 This checkpoint demonstrates execution-process availability and a real service
 boundary. It does not demonstrate complete infrastructure availability. A Job
