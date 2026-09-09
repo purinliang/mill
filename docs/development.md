@@ -560,7 +560,7 @@ internal/objectstore/    file and S3-compatible object access
 internal/workload/       stable workload command-line contract
 migrations/             ordered PostgreSQL schema history
 scripts/                repeatable setup, deployment, and demo commands
-test/integration/        workflows spanning multiple Mill packages
+test/integration/        database, transport, adapter, and process tests
 ```
 
 Keep Mill as one Go module. Package boundaries are not automatically deployment
@@ -574,7 +574,7 @@ code:
 - [Execution package](../internal/execution/README.md)
 - [Object-store package](../internal/objectstore/README.md)
 - [Workload contract](../internal/workload/README.md)
-- [Cross-package integration tests](../test/integration/README.md)
+- [Integration tests](../test/integration/README.md)
 
 The lightweight Git workflow and commit conventions are defined in
 [AGENTS.md](../AGENTS.md).

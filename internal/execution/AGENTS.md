@@ -2,8 +2,8 @@
 
 These instructions apply to `internal/execution` and its subpackages.
 
-- Keep attempt types, errors, and the Store port independent of PostgreSQL,
-  gRPC, and Kubernetes.
+- Keep attempt types and errors independent of PostgreSQL, gRPC, and
+  Kubernetes. Keep the Store port with its coordinator consumer.
 - Keep coordinator policy backend-independent. Reconcile active attempts before
   claiming new work, and bound the number of claims per tick.
 - Keep the runnable execution service free of PostgreSQL configuration. It
@@ -17,7 +17,7 @@ These instructions apply to `internal/execution` and its subpackages.
 - Keep Kubernetes code limited to runtime translation and observation.
 - Keep gRPC messages bounded and deadline-bearing, and map domain failures
   without exposing database details.
-- Put every PostgreSQL-backed or cross-package lifecycle test under
-  `test/integration`.
+- Put PostgreSQL-backed, RPC round-trip, process-boundary, and Kubernetes API
+  adapter tests under `test/integration`.
 
 See [README.md](README.md) for the package graph and file responsibilities.

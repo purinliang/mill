@@ -50,7 +50,7 @@ Package-specific rules live with their code:
 - [Execution](internal/execution/README.md)
 - [Object storage](internal/objectstore/README.md)
 - [Workload contract](internal/workload/README.md)
-- [Cross-package integration tests](test/integration/README.md)
+- [Integration tests](test/integration/README.md)
 
 ## Go code quality
 
@@ -69,8 +69,9 @@ Package-specific rules live with their code:
 ## Test organization
 
 - Keep unit and within-package tests beside the production package.
-- Put all Go tests requiring PostgreSQL or multiple package/process boundaries
-  in `test/integration`; do not add `_integration` to filenames there.
+- Put Go tests requiring PostgreSQL, an external-system protocol, or multiple
+  package/process boundaries in `test/integration`. Do not add `_integration`
+  to filenames there.
 - Put executable test and demonstration runners in `scripts`, using a `.sh`
   extension. Test logic, fixtures, and assertions belong in Go tests when
   practical.

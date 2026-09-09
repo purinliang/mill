@@ -8,7 +8,7 @@ mill-execution
       |
       v
  coordinator.Tick
-      +--> execution.Store --> gRPC client --> Job service --> PostgreSQL
+      +--> coordinator.Store --> gRPC client --> Job service --> PostgreSQL
       `--> Runtime ---------> Kubernetes adapter --> Job --> workload Pod
 ```
 
@@ -38,5 +38,5 @@ prove that a replacement attempt is safe.
 - `postgres/` implements leases, fencing, transitions, and retries.
 - `rpc/` carries the execution Store contract over Protobuf/gRPC.
 
-Unit and within-package tests remain beside these packages. PostgreSQL-backed
-and cross-package workflows live under `test/integration`.
+Unit tests remain beside these packages. PostgreSQL, RPC, process, and
+Kubernetes API adapter tests live under `test/integration`.
