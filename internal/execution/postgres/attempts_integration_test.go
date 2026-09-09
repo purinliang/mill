@@ -4,11 +4,7 @@ package postgres
 import (
 	"context"
 	"errors"
-	"fmt"
-	"net/url"
 	"os"
-	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,13 +12,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	jobmodel "github.com/purinliang/mill/internal/job"
-	"github.com/purinliang/mill/internal/job/partition"
 	jobpostgres "github.com/purinliang/mill/internal/job/postgres"
-	"github.com/purinliang/mill/internal/objectstore"
 )
 
-const testLeaseOwner = "test-executor"
-const testLeaseDuration = 30 * time.Second
+const (
+	testLeaseOwner    = "test-executor"
+	testLeaseDuration = 30 * time.Second
+	testInputSHA256   = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" +
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+)
 
 func TestAttemptSuccessfulLifecycle(t *testing.T) {
 	repository, job := createAttemptTestJob(t, "integration:attempt-success", 1, 1)
@@ -218,7 +216,7 @@ func (r *testRepositories) CompletedResults(
 func createAttemptTestJob(
 	t *testing.T,
 	key string,
-	records, parallelism int,
+	taskCount, parallelism int,
 ) (*testRepositories, jobmodel.Job) {
 	t.Helper()
 	pool := openIntegrationDatabase(t, integrationDatabaseURL(t))
@@ -226,8 +224,6 @@ func createAttemptTestJob(
 	deleteJobByKey(t, pool, key)
 	t.Cleanup(func() { deleteJobByKey(t, pool, key) })
 
-	inputFilename := filepath.Join(t.TempDir(), "records.jsonl")
-	writeTestJSONL(t, inputFilename, records)
 	jobStore, err := jobpostgres.NewRepository(
 		pool,
 		"file:///tmp/mill-attempt-output",
@@ -239,23 +235,45 @@ func createAttemptTestJob(
 	if err != nil {
 		t.Fatalf("create execution repository: %v", err)
 	}
-	service, err := jobmodel.NewService(
-		jobStore,
-		partition.New(&objectstore.Store{}),
+	createdJob, created, err := jobStore.Create(
+		context.Background(),
+		key,
+		jobmodel.Submission{
+			Executable: jobmodel.Executable{
+				Image: "mill/jsonl-copy:dev",
+			},
+			Input: jobmodel.InputSpec{
+				URI: "file:///tmp/mill-attempt-input.jsonl",
+			},
+		},
+		testInputSHA256,
+		int64(taskCount),
 		parallelism,
 	)
 	if err != nil {
-		t.Fatalf("create job service: %v", err)
-	}
-	createdJob, created, err := service.Create(context.Background(), key, jobmodel.Submission{
-		Executable: jobmodel.Executable{Image: "mill/jsonl-copy:dev"},
-		Input:      jobmodel.InputSpec{URI: fileURI(inputFilename)},
-	})
-	if err != nil {
-		t.Fatalf("create materialized job: %v", err)
+		t.Fatalf("create test job: %v", err)
 	}
 	if !created {
 		t.Fatal("created = false, want true")
+	}
+	shards := make([]jobmodel.LogicalShard, taskCount)
+	for index := range taskCount {
+		shards[index] = jobmodel.LogicalShard{
+			StartByte: int64(index),
+			EndByte:   int64(index + 1),
+		}
+	}
+	createdJob, err = jobStore.Materialize(
+		context.Background(),
+		createdJob.ID,
+		jobmodel.ShardSet{
+			InputSHA256: testInputSHA256,
+			RecordCount: int64(taskCount),
+			Shards:      shards,
+		},
+	)
+	if err != nil {
+		t.Fatalf("materialize test tasks: %v", err)
 	}
 	return &testRepositories{
 		Repository: executionStore,
@@ -311,19 +329,4 @@ func deleteJobByKey(t *testing.T, pool *pgxpool.Pool, key string) {
 	); err != nil {
 		t.Fatalf("delete integration test job: %v", err)
 	}
-}
-
-func writeTestJSONL(t *testing.T, filename string, records int) {
-	t.Helper()
-	var contents strings.Builder
-	for index := range records {
-		fmt.Fprintf(&contents, `{"record":%d}`+"\n", index)
-	}
-	if err := os.WriteFile(filename, []byte(contents.String()), 0o600); err != nil {
-		t.Fatalf("write test JSONL: %v", err)
-	}
-}
-
-func fileURI(filename string) string {
-	return (&url.URL{Scheme: "file", Path: filename}).String()
 }

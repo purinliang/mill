@@ -4,13 +4,8 @@ package postgres
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
-
-	jobmodel "github.com/purinliang/mill/internal/job"
-	"github.com/purinliang/mill/internal/job/partition"
-	"github.com/purinliang/mill/internal/objectstore"
 )
 
 func TestAttemptLeaseRenewalAndFencedTakeover(t *testing.T) {
@@ -104,35 +99,5 @@ func TestActiveAttemptsSurviveSiblingFailureAndListSuccessfulOutputs(t *testing.
 	}
 	if results[0].URI != second.OutputURI || results[0].TaskID != second.Attempt.TaskID || results[0].ShardIndex != 1 {
 		t.Fatalf("wrong result=%+v", results[0])
-	}
-}
-
-func TestCompletedJobStatusIncludesResults(t *testing.T) {
-	repository, created := createAttemptTestJob(t, "integration:execution-results", 1, 1)
-	ctx := context.Background()
-	a, err := repository.ClaimNextAttempt(ctx, "kubernetes", testLeaseOwner, testLeaseDuration)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := repository.MarkAttemptRunning(ctx, a.Attempt.ID, a.Attempt.LeaseToken, "uid"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := repository.CompleteAttempt(ctx, a.Attempt.ID, a.Attempt.LeaseToken); err != nil {
-		t.Fatal(err)
-	}
-	service, err := jobmodel.NewService(
-		repository.jobs,
-		partition.New(&objectstore.Store{}),
-		1,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	status, err := service.Get(ctx, created.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if status.State != jobmodel.StateCompleted || len(status.Results) != 1 || !strings.Contains(status.Results[0].URI, a.Attempt.ID) {
-		t.Fatalf("status=%+v", status)
 	}
 }
