@@ -415,7 +415,7 @@ Job-process variables:
 | `MILL_PARALLELISM` | Required job concurrency captured at submission. |
 | `MILL_HTTP_ADDR` | Optional listen address; default `:8080`. |
 | `MILL_GRPC_ADDR` | Optional internal execution gRPC listen address; empty disables it. |
-| `AWS_REGION` | Enables S3 in the planner/workload storage adapter. |
+| `AWS_REGION` | Enables S3 in the partitioner/workload storage adapter. |
 | `MILL_S3_ENDPOINT` | Optional custom S3-compatible endpoint. |
 
 Task execution always runs in the standalone execution service. Start
@@ -575,11 +575,12 @@ examples/word-count/
   job.yaml.template               manual single-task manifest template
 internal/job/
   model.go                        public job and submission model
-  ports.go                        job storage and dataset-planning boundaries
+  ports.go                        job storage and partitioning boundaries
   service.go                      job creation and status workflow
   validation.go                   submission and URI rules
   httpapi/handler.go              REST submission and status adapter
-  jsonl/planner.go                streaming logical-shard planner
+  partition/partitioner.go        public dataset-partitioning adapter
+  partition/jsonl.go              private JSONL record scanner
   postgres/repository.go          job repository construction
   postgres/jobs.go                durable job and task persistence
   postgres/results.go             successful output queries

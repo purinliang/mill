@@ -183,12 +183,12 @@ func (r *Repository) Create(
 func (r *Repository) Materialize(
 	ctx context.Context,
 	id string,
-	plan job.PartitionPlan,
+	shards job.ShardSet,
 ) (job.Job, error) {
 	if !job.ValidID(id) {
 		return job.Job{}, &job.ValidationError{Field: "job ID", Problem: "must be a UUID"}
 	}
-	if err := job.ValidatePartitionPlan(plan); err != nil {
+	if err := job.ValidateShardSet(shards); err != nil {
 		return job.Job{}, err
 	}
 
@@ -217,12 +217,14 @@ func (r *Repository) Materialize(
 		return job.Job{}, fmt.Errorf("lock job for task materialization: %w", err)
 	}
 	if existingSHA256 == nil || existingRecordCount == nil ||
-		*existingSHA256 != plan.InputSHA256 || *existingRecordCount != plan.RecordCount {
+		*existingSHA256 != shards.InputSHA256 ||
+		*existingRecordCount != shards.RecordCount {
 		return job.Job{}, job.ErrInputConflict
 	}
 
 	if state != job.StatePreparing {
-		if existingTaskCount == nil || *existingTaskCount != len(plan.Shards) {
+		if existingTaskCount == nil ||
+			*existingTaskCount != len(shards.Shards) {
 			return job.Job{}, job.ErrInputConflict
 		}
 		materializedJob, err := queryJob(ctx, tx, jobSelectByID, id)
@@ -235,8 +237,8 @@ func (r *Repository) Materialize(
 		return materializedJob, nil
 	}
 
-	rows := make([][]any, len(plan.Shards))
-	for index, shard := range plan.Shards {
+	rows := make([][]any, len(shards.Shards))
+	for index, shard := range shards.Shards {
 		rows[index] = []any{id, index, shard.StartByte, shard.EndByte}
 	}
 	inserted, err := tx.CopyFrom(
@@ -258,7 +260,7 @@ func (r *Repository) Materialize(
 			state = 'running',
 			updated_at = now()
 		WHERE id = $1::uuid AND state = 'preparing'
-	`, id, len(plan.Shards))
+	`, id, len(shards.Shards))
 	if err != nil {
 		return job.Job{}, fmt.Errorf("finalize task materialization: %w", err)
 	}

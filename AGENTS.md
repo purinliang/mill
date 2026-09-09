@@ -217,8 +217,9 @@ operational and maintenance cost.
 - Prefer deterministic tests where practical. Add fault and recovery tests as
   distributed behavior is introduced.
 - The approved deployment boundary is one replicated Job service and
-  replicated execution service. Keep planning inside the Job service and do not
-  create a separate planner service without measured independent scaling need.
+  replicated execution service. Keep partitioning inside the Job service and
+  do not create a separate partition service without measured independent
+  scaling need.
   Do not split other packages into services merely to increase Pod count.
 - As the service-boundary milestone proceeds, make the Job service the sole
   owner of Mill metadata tables. Execution replicas must access the implemented
@@ -263,16 +264,18 @@ job, task, shard, attempt, or state-transition semantics.
   belong there. Do not put job or execution policy in `main.go`.
 - Organize `internal` by cohesive capability, not by generic technical layers.
   Keep job policy and ports in `internal/job`, then place concrete adapters in
-  `internal/job/httpapi`, `internal/job/jsonl`, and `internal/job/postgres`.
-  Keep attempt persistence in `internal/execution/postgres`, beside the
-  execution domain whose transitions and ownership rules it implements.
+  `internal/job/httpapi`, `internal/job/partition`, and
+  `internal/job/postgres`. Keep attempt persistence in
+  `internal/execution/postgres`, beside the execution domain whose transitions
+  and ownership rules it implements.
 - Introduce a new package only for a concrete boundary with a distinct purpose,
   such as a Kubernetes adapter or object-storage adapter. Do not pre-create
   empty packages or speculative `common`, `util`, `service`, or `manager`
   layers.
-- Keep local JSONL partition planning in `internal/job/jsonl`. It implements
-  the planner port owned by the job workflow. Logical shard boundaries must be
-  contiguous, non-empty, and aligned to complete JSONL records.
+- Keep dataset partitioning in `internal/job/partition`. Its public
+  `partitioner.go` implements the partitioner port owned by the job workflow;
+  `jsonl.go` keeps current format-specific scanning private. Logical shard
+  boundaries must be contiguous, non-empty, and aligned to complete records.
 - Keep `internal/objectstore` limited to file and S3-compatible access. A custom
   endpoint is a local-development concern; use normal AWS SDK endpoint and
   credential resolution in AWS. Close read bodies and require seekable bodies

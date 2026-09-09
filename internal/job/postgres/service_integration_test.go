@@ -1,4 +1,4 @@
-// This file tests the job workflow with JSONL planning and PostgreSQL.
+// This file tests dataset partitioning and job persistence with PostgreSQL.
 package postgres
 
 import (
@@ -13,7 +13,8 @@ import (
 	"testing"
 
 	. "github.com/purinliang/mill/internal/job"
-	"github.com/purinliang/mill/internal/job/jsonl"
+	"github.com/purinliang/mill/internal/job/partition"
+	"github.com/purinliang/mill/internal/objectstore"
 )
 
 func TestServicePlansLogicalShardsAndReplaysWithoutInputFile(t *testing.T) {
@@ -35,7 +36,11 @@ func TestServicePlansLogicalShardsAndReplaysWithoutInputFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create repository: %v", err)
 	}
-	service, err := NewService(repository, jsonl.Planner{}, 3)
+	service, err := NewService(
+		repository,
+		partition.New(&objectstore.Store{}),
+		3,
+	)
 	if err != nil {
 		t.Fatalf("create service: %v", err)
 	}
@@ -87,7 +92,11 @@ func TestServiceConcurrentCreateMaterializesOneTaskSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create repository: %v", err)
 	}
-	service, err := NewService(repository, jsonl.Planner{}, 3)
+	service, err := NewService(
+		repository,
+		partition.New(&objectstore.Store{}),
+		3,
+	)
 	if err != nil {
 		t.Fatalf("create service: %v", err)
 	}
@@ -160,7 +169,11 @@ func TestServiceRejectsInvalidInputBeforeCreatingJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create repository: %v", err)
 	}
-	service, err := NewService(repository, jsonl.Planner{}, 3)
+	service, err := NewService(
+		repository,
+		partition.New(&objectstore.Store{}),
+		3,
+	)
 	if err != nil {
 		t.Fatalf("create service: %v", err)
 	}
@@ -195,16 +208,25 @@ func TestServiceResumesPreparingJobWithStoredParallelism(t *testing.T) {
 		Executable: Executable{Image: "mill/example:dev"},
 		Input:      InputSpec{URI: fileURI(inputFilename)},
 	}
-	plan, err := (jsonl.Planner{}).Plan(context.Background(), submission.Input.URI, 3)
+	shards, err := partition.New(&objectstore.Store{}).Partition(
+		context.Background(),
+		submission.Input.URI,
+		3,
+	)
 	if err != nil {
-		t.Fatalf("plan input: %v", err)
+		t.Fatalf("partition input: %v", err)
 	}
 	repository, err := NewRepository(pool, "file:///tmp/mill-output")
 	if err != nil {
 		t.Fatalf("create repository: %v", err)
 	}
 	preparingJob, created, err := repository.Create(
-		context.Background(), key, submission, plan.InputSHA256, plan.RecordCount, 3,
+		context.Background(),
+		key,
+		submission,
+		shards.InputSHA256,
+		shards.RecordCount,
+		3,
 	)
 	if err != nil {
 		t.Fatalf("create preparing job: %v", err)
@@ -217,7 +239,11 @@ func TestServiceResumesPreparingJobWithStoredParallelism(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create restarted repository: %v", err)
 	}
-	restartedService, err := NewService(restartedRepository, jsonl.Planner{}, 9)
+	restartedService, err := NewService(
+		restartedRepository,
+		partition.New(&objectstore.Store{}),
+		9,
+	)
 	if err != nil {
 		t.Fatalf("create restarted service: %v", err)
 	}

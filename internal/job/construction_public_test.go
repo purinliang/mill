@@ -11,7 +11,7 @@ import (
 
 	executionpostgres "github.com/purinliang/mill/internal/execution/postgres"
 	"github.com/purinliang/mill/internal/job"
-	"github.com/purinliang/mill/internal/job/jsonl"
+	"github.com/purinliang/mill/internal/job/partition"
 	jobpostgres "github.com/purinliang/mill/internal/job/postgres"
 )
 
@@ -33,21 +33,29 @@ func TestPublicConstructorsRejectInvalidDependenciesAndPolicy(t *testing.T) {
 		t.Fatalf("NewRepository: %v", err)
 	}
 
-	if _, err := job.NewService(nil, jsonl.Planner{}, 3); err == nil ||
+	if _, err := job.NewService(nil, partition.Partitioner{}, 3); err == nil ||
 		!strings.Contains(err.Error(), "store") {
 		t.Fatalf("NewService nil-repository error = %v", err)
 	}
 	if _, err := job.NewService(repository, nil, 3); err == nil ||
-		!strings.Contains(err.Error(), "planner") {
-		t.Fatalf("NewService nil-planner error = %v", err)
+		!strings.Contains(err.Error(), "partitioner") {
+		t.Fatalf("NewService nil-partitioner error = %v", err)
 	}
 	for _, parallelism := range []int{0, job.MaxParallelism + 1} {
-		_, err := job.NewService(repository, jsonl.Planner{}, parallelism)
+		_, err := job.NewService(
+			repository,
+			partition.Partitioner{},
+			parallelism,
+		)
 		if err == nil || !strings.Contains(err.Error(), "MILL_PARALLELISM") {
 			t.Fatalf("NewService parallelism %d error = %v", parallelism, err)
 		}
 	}
-	if _, err := job.NewService(repository, jsonl.Planner{}, 3); err != nil {
+	if _, err := job.NewService(
+		repository,
+		partition.Partitioner{},
+		3,
+	); err != nil {
 		t.Fatalf("NewService valid configuration: %v", err)
 	}
 }

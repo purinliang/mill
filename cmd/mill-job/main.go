@@ -20,7 +20,7 @@ import (
 	executionpostgres "github.com/purinliang/mill/internal/execution/postgres"
 	"github.com/purinliang/mill/internal/job"
 	"github.com/purinliang/mill/internal/job/httpapi"
-	"github.com/purinliang/mill/internal/job/jsonl"
+	"github.com/purinliang/mill/internal/job/partition"
 	jobpostgres "github.com/purinliang/mill/internal/job/postgres"
 	"github.com/purinliang/mill/internal/objectstore"
 )
@@ -87,7 +87,7 @@ func run(
 	}
 	jobService, err := job.NewService(
 		jobRepository,
-		jsonl.NewPlanner(objects),
+		partition.New(objects),
 		parallelism,
 	)
 	if err != nil {

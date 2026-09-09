@@ -13,7 +13,7 @@ container lifecycle. Mill does not implement a cluster scheduler, database
 election, or arbitrary workload aggregation.
 
 The implemented runtime boundary has two Go executables. `cmd/mill-job`
-contains the HTTP API, Job service, streaming planner, PostgreSQL repository,
+contains the HTTP API, Job service, dataset partitioner, PostgreSQL repository,
 and optional internal gRPC listener. It does not import the coordinator or
 Kubernetes adapter. `cmd/mill-execution` runs the coordinator and Kubernetes
 adapter against that API without a PostgreSQL dependency. The full batch and
@@ -28,7 +28,7 @@ User
   v
 Job service (`mill-job`)
   |
-  +--> JSONL planner --> input object --> logical ranges
+  +--> dataset partitioner --> input object --> logical ranges
   |
   +--> PostgreSQL --> jobs, tasks, attempts
   |
@@ -92,7 +92,7 @@ Each attempt output is derived as
 `tasks/<shard-index>/attempts/<attempt-id>/result.jsonl`, preventing retries
 from overwriting each other.
 
-## Submission and planning
+## Submission and partitioning
 
 The implemented request is intentionally small:
 
@@ -113,11 +113,11 @@ returns the original job; changing the submission conflicts. JSONL is currently
 the only format. Shard size and parallelism are server policy rather than
 request fields.
 
-The planner streams the input twice without retaining the dataset or every line
-offset in memory. The first pass validates JSONL, counts records, and calculates
-SHA-256. The second chooses complete-record boundaries. The input must remain
-immutable after submission; S3 version IDs and runtime checksum enforcement are
-not implemented.
+The partitioner streams the input twice without retaining the dataset or every
+line offset in memory. The first pass validates JSONL, counts records, and
+calculates SHA-256. The second chooses complete-record boundaries. The input
+must remain immutable after submission; S3 version IDs and runtime checksum
+enforcement are not implemented.
 
 The current heuristic targets four waves of work:
 
@@ -129,9 +129,9 @@ actual tasks = ceil(record count / records per task)
 
 Each record is limited to 16 MiB. A 100-record input at parallelism three
 usually produces 12 tasks, while only three attempts may be active. For S3,
-two complete planning reads are intentionally accepted in this prototype;
-metadata-assisted or one-pass planning is deferred until measurements justify
-the added complexity.
+two complete partitioning reads are intentionally accepted in this prototype;
+metadata-assisted or one-pass partitioning is deferred until measurements
+justify the added complexity.
 
 ## Workload contract
 
@@ -162,7 +162,7 @@ the individual invocation.
 `internal/objectstore` implements a URI-oriented adapter using local files and
 the AWS SDK for Go v2:
 
-- whole-object reads support streaming planning;
+- whole-object reads support streaming partitioning;
 - ranged reads translate `[start, end)` into an S3 HTTP byte range;
 - complete outputs are published through atomic local rename or S3 PutObject;
 - a custom endpoint and path-style addressing support local S3-compatible
@@ -176,7 +176,7 @@ credentials. Mill assumes trusted workloads in V1, but credentials should
 still be limited to the required input/output namespaces.
 
 The storage abstraction is not a network service. It is a small client library
-used by the planner and reference workload.
+used by the partitioner and reference workload.
 
 ## Durable execution and reconciliation
 
@@ -229,14 +229,14 @@ Client --REST--> Job service replicas --PostgreSQL--> metadata
                 Execution replicas --Kubernetes API--> workload Jobs
 ```
 
-The **Job service** owns the public API, job state machine, planner, and all
+The **Job service** owns the public API, job state machine, partitioner, and all
 metadata database access. The **execution service** owns Kubernetes creation and
-observation and never accesses Mill tables directly. A separate planner service
-is unjustified while planning is a bounded streaming operation inside the Job
-workflow.
+observation and never accesses Mill tables directly. A separate partition
+service is unjustified while partitioning remains a bounded streaming
+operation inside the Job workflow.
 
 `internal/job` owns the job model, policy, workflow, and the ports required by
-that workflow. HTTP submission, JSONL planning, and job PostgreSQL persistence
+that workflow. HTTP submission, dataset partitioning, and PostgreSQL persistence
 live in adapter subpackages. `internal/execution` owns the backend-independent
 attempt model and store contract; its PostgreSQL adapter owns durable attempt
 transitions, retries, fencing, and lease takeover.
@@ -306,12 +306,13 @@ package refactor:
    Kubernetes Jobs being created.
 
 After step 5, the two-service system was reviewed before further feature work.
-The review traced one submitted job through REST, planning, PostgreSQL, gRPC,
-reconciliation, Kubernetes, and output publication. A first learning-oriented
-refactor then made those boundaries visible in the package tree: the job core
-depends on `Store` and `Planner` ports, while HTTP, JSONL, and PostgreSQL remain
-adapters. Attempt persistence moved beside the execution domain. These package
-boundaries do not create additional deployed services.
+The review traced one submitted job through REST, partitioning, PostgreSQL,
+gRPC, reconciliation, Kubernetes, and output publication. A first
+learning-oriented refactor then made those boundaries visible in the package
+tree: the job core depends on `Store` and `DatasetPartitioner` ports, while
+HTTP, partitioning, and PostgreSQL remain adapters. Attempt persistence moved
+beside the execution domain. These package boundaries do not create additional
+deployed services.
 
 This checkpoint demonstrates execution-process availability and a real service
 boundary. It does not demonstrate complete infrastructure availability. A Job
@@ -464,7 +465,7 @@ the K3s/etcd topology and failure scenarios have actually passed.
 
 ## Explicitly deferred
 
-- asynchronous planning and preparation recovery;
+- asynchronous partitioning and preparation recovery;
 - raw user-configurable Kubernetes resources;
 - arbitrary input formats or partitioning languages;
 - generic result aggregation or content validation;

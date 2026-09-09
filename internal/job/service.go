@@ -1,4 +1,4 @@
-// This file coordinates submission, planning, persistence, and status reads.
+// This file coordinates submission, partitioning, persistence, and status.
 package job
 
 import (
@@ -9,21 +9,29 @@ import (
 
 type Service struct {
 	store       Store
-	planner     Planner
+	partitioner DatasetPartitioner
 	parallelism int
 }
 
-func NewService(store Store, planner Planner, parallelism int) (*Service, error) {
+func NewService(
+	store Store,
+	partitioner DatasetPartitioner,
+	parallelism int,
+) (*Service, error) {
 	if store == nil {
 		return nil, errors.New("job store is required")
 	}
-	if planner == nil {
-		return nil, errors.New("dataset planner is required")
+	if partitioner == nil {
+		return nil, errors.New("dataset partitioner is required")
 	}
 	if err := ValidateParallelism(parallelism); err != nil {
 		return nil, fmt.Errorf("MILL_PARALLELISM: %w", err)
 	}
-	return &Service{store: store, planner: planner, parallelism: parallelism}, nil
+	return &Service{
+		store:       store,
+		partitioner: partitioner,
+		parallelism: parallelism,
+	}, nil
 }
 
 func (s *Service) Create(
@@ -47,12 +55,20 @@ func (s *Service) Create(
 	if found {
 		parallelism = existingJob.Parallelism
 	}
-	plan, err := s.planner.Plan(ctx, normalizedSubmission.Input.URI, parallelism)
+	shards, err := s.partitioner.Partition(
+		ctx,
+		normalizedSubmission.Input.URI,
+		parallelism,
+	)
 	if err != nil {
 		return Job{}, false, err
 	}
 	if found {
-		materializedJob, err := s.store.Materialize(ctx, existingJob.ID, plan)
+		materializedJob, err := s.store.Materialize(
+			ctx,
+			existingJob.ID,
+			shards,
+		)
 		return materializedJob, false, err
 	}
 
@@ -60,8 +76,8 @@ func (s *Service) Create(
 		ctx,
 		idempotencyKey,
 		normalizedSubmission,
-		plan.InputSHA256,
-		plan.RecordCount,
+		shards.InputSHA256,
+		shards.RecordCount,
 		parallelism,
 	)
 	if err != nil {
@@ -71,13 +87,21 @@ func (s *Service) Create(
 		return createdJob, created, nil
 	}
 	if createdJob.Parallelism != parallelism {
-		plan, err = s.planner.Plan(ctx, normalizedSubmission.Input.URI, createdJob.Parallelism)
+		shards, err = s.partitioner.Partition(
+			ctx,
+			normalizedSubmission.Input.URI,
+			createdJob.Parallelism,
+		)
 		if err != nil {
 			return Job{}, false, err
 		}
 	}
 
-	materializedJob, err := s.store.Materialize(ctx, createdJob.ID, plan)
+	materializedJob, err := s.store.Materialize(
+		ctx,
+		createdJob.ID,
+		shards,
+	)
 	if err != nil {
 		return Job{}, false, err
 	}

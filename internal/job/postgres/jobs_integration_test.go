@@ -201,7 +201,7 @@ func TestRepositoryMaterializeLogicalShardsAndReportProgress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create job: %v", err)
 	}
-	plan := PartitionPlan{
+	shards := ShardSet{
 		InputSHA256: testInputSHA256,
 		RecordCount: 30,
 		Shards: []LogicalShard{
@@ -211,7 +211,11 @@ func TestRepositoryMaterializeLogicalShardsAndReportProgress(t *testing.T) {
 		},
 	}
 
-	materializedJob, err := repository.Materialize(context.Background(), createdJob.ID, plan)
+	materializedJob, err := repository.Materialize(
+		context.Background(),
+		createdJob.ID,
+		shards,
+	)
 	if err != nil {
 		t.Fatalf("materialize tasks: %v", err)
 	}
@@ -240,8 +244,18 @@ func TestRepositoryMaterializeLogicalShardsAndReportProgress(t *testing.T) {
 		if len(id) != 36 || id[14] != '7' {
 			t.Errorf("task ID = %q, want a UUIDv7", id)
 		}
-		if shardIndex != index || startByte != plan.Shards[index].StartByte || endByte != plan.Shards[index].EndByte {
-			t.Errorf("task %d = shard %d range [%d,%d), want shard %d range %+v", index, shardIndex, startByte, endByte, index, plan.Shards[index])
+		if shardIndex != index ||
+			startByte != shards.Shards[index].StartByte ||
+			endByte != shards.Shards[index].EndByte {
+			t.Errorf(
+				"task %d = shard %d range [%d,%d), want shard %d range %+v",
+				index,
+				shardIndex,
+				startByte,
+				endByte,
+				index,
+				shards.Shards[index],
+			)
 		}
 		if state != "pending" {
 			t.Errorf("task state = %q, want pending", state)
@@ -251,16 +265,24 @@ func TestRepositoryMaterializeLogicalShardsAndReportProgress(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate tasks: %v", err)
 	}
-	if index != len(plan.Shards) {
-		t.Fatalf("task count = %d, want %d", index, len(plan.Shards))
+	if index != len(shards.Shards) {
+		t.Fatalf("task count = %d, want %d", index, len(shards.Shards))
 	}
 
-	if _, err := repository.Materialize(context.Background(), createdJob.ID, plan); err != nil {
+	if _, err := repository.Materialize(
+		context.Background(),
+		createdJob.ID,
+		shards,
+	); err != nil {
 		t.Fatalf("replay materialization: %v", err)
 	}
-	changedPlan := plan
-	changedPlan.InputSHA256 = strings.Repeat("b", 64)
-	if _, err := repository.Materialize(context.Background(), createdJob.ID, changedPlan); !errors.Is(err, ErrInputConflict) {
+	changedShards := shards
+	changedShards.InputSHA256 = strings.Repeat("b", 64)
+	if _, err := repository.Materialize(
+		context.Background(),
+		createdJob.ID,
+		changedShards,
+	); !errors.Is(err, ErrInputConflict) {
 		t.Fatalf("changed input error = %v, want %v", err, ErrInputConflict)
 	}
 

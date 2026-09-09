@@ -15,8 +15,9 @@ import (
 	"github.com/purinliang/mill/internal/execution"
 	executionpostgres "github.com/purinliang/mill/internal/execution/postgres"
 	"github.com/purinliang/mill/internal/job"
-	"github.com/purinliang/mill/internal/job/jsonl"
+	"github.com/purinliang/mill/internal/job/partition"
 	jobpostgres "github.com/purinliang/mill/internal/job/postgres"
+	"github.com/purinliang/mill/internal/objectstore"
 )
 
 const (
@@ -27,7 +28,7 @@ const (
 func TestPublicRepositoryValidationContracts(t *testing.T) {
 	repository, pool, _ := newPublicRepository(t)
 	validSubmission := publicSubmission()
-	validPlan := publicPlan()
+	validShards := publicShardSet()
 
 	tests := map[string]func() error{
 		"find missing idempotency key": func() error {
@@ -83,25 +84,33 @@ func TestPublicRepositoryValidationContracts(t *testing.T) {
 			return err
 		},
 		"materialize invalid job ID": func() error {
-			_, err := repository.Materialize(context.Background(), "not-a-uuid", validPlan)
+			_, err := repository.Materialize(
+				context.Background(), "not-a-uuid", validShards,
+			)
 			return err
 		},
 		"materialize invalid digest": func() error {
-			plan := validPlan
-			plan.InputSHA256 = "invalid"
-			_, err := repository.Materialize(context.Background(), missingUUID, plan)
+			shards := validShards
+			shards.InputSHA256 = "invalid"
+			_, err := repository.Materialize(
+				context.Background(), missingUUID, shards,
+			)
 			return err
 		},
 		"materialize no shards": func() error {
-			plan := validPlan
-			plan.Shards = nil
-			_, err := repository.Materialize(context.Background(), missingUUID, plan)
+			shards := validShards
+			shards.Shards = nil
+			_, err := repository.Materialize(
+				context.Background(), missingUUID, shards,
+			)
 			return err
 		},
 		"materialize discontinuous shards": func() error {
-			plan := validPlan
-			plan.Shards = []job.LogicalShard{{StartByte: 1, EndByte: 2}}
-			_, err := repository.Materialize(context.Background(), missingUUID, plan)
+			shards := validShards
+			shards.Shards = []job.LogicalShard{{StartByte: 1, EndByte: 2}}
+			_, err := repository.Materialize(
+				context.Background(), missingUUID, shards,
+			)
 			return err
 		},
 		"get invalid job ID": func() error {
@@ -197,7 +206,9 @@ func TestPublicRepositoryNotFoundAndSubmissionLookup(t *testing.T) {
 	if _, err := repository.Get(ctx, missingUUID); !errors.Is(err, job.ErrNotFound) {
 		t.Fatalf("Get missing error = %v", err)
 	}
-	if _, err := repository.Materialize(ctx, missingUUID, publicPlan()); !errors.Is(err, job.ErrNotFound) {
+	if _, err := repository.Materialize(
+		ctx, missingUUID, publicShardSet(),
+	); !errors.Is(err, job.ErrNotFound) {
 		t.Fatalf("Materialize missing error = %v", err)
 	}
 	if _, err := repository.GetAttempt(ctx, missingUUID); !errors.Is(err, execution.ErrAttemptNotFound) {
@@ -229,7 +240,11 @@ func TestPublicRepositorySurfacesDatabaseUnavailability(t *testing.T) {
 		pool.Close()
 		t.Fatal(err)
 	}
-	service, err := job.NewService(repository, jsonl.Planner{}, 1)
+	service, err := job.NewService(
+		repository,
+		partition.New(&objectstore.Store{}),
+		1,
+	)
 	if err != nil {
 		pool.Close()
 		t.Fatal(err)
@@ -248,7 +263,9 @@ func TestPublicRepositorySurfacesDatabaseUnavailability(t *testing.T) {
 			return err
 		},
 		"materialize": func() error {
-			_, err := repository.Materialize(ctx, missingUUID, publicPlan())
+			_, err := repository.Materialize(
+				ctx, missingUUID, publicShardSet(),
+			)
 			return err
 		},
 		"get job": func() error {
@@ -304,7 +321,9 @@ func TestPublicAttemptLeaseExpiryAndStartingTransition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.Materialize(ctx, created.ID, publicPlan()); err != nil {
+	if _, err := repository.Materialize(
+		ctx, created.ID, publicShardSet(),
+	); err != nil {
 		t.Fatal(err)
 	}
 	claimed, err := repository.ClaimNextAttempt(ctx, "kubernetes", "initial-owner", time.Second)
@@ -338,10 +357,12 @@ func TestPublicMaterializationReplayRejectsChangedShardCount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.Materialize(ctx, created.ID, publicPlan()); err != nil {
+	if _, err := repository.Materialize(
+		ctx, created.ID, publicShardSet(),
+	); err != nil {
 		t.Fatal(err)
 	}
-	changed := publicPlan()
+	changed := publicShardSet()
 	changed.Shards = []job.LogicalShard{{StartByte: 0, EndByte: 5}, {StartByte: 5, EndByte: 10}}
 	if _, err := repository.Materialize(ctx, created.ID, changed); !errors.Is(err, job.ErrInputConflict) {
 		t.Fatalf("Materialize changed shard count error = %v", err)
@@ -421,9 +442,9 @@ func (r *publicRepositories) Create(
 func (r *publicRepositories) Materialize(
 	ctx context.Context,
 	id string,
-	plan job.PartitionPlan,
+	shards job.ShardSet,
 ) (job.Job, error) {
-	return r.jobs.Materialize(ctx, id, plan)
+	return r.jobs.Materialize(ctx, id, shards)
 }
 
 func (r *publicRepositories) Get(ctx context.Context, id string) (job.Job, error) {
@@ -497,8 +518,8 @@ func publicSubmission() job.Submission {
 	}
 }
 
-func publicPlan() job.PartitionPlan {
-	return job.PartitionPlan{
+func publicShardSet() job.ShardSet {
+	return job.ShardSet{
 		InputSHA256: publicTestSHA256,
 		RecordCount: 1,
 		Shards:      []job.LogicalShard{{StartByte: 0, EndByte: 10}},

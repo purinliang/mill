@@ -9,7 +9,8 @@ import (
 	"time"
 
 	jobmodel "github.com/purinliang/mill/internal/job"
-	"github.com/purinliang/mill/internal/job/jsonl"
+	"github.com/purinliang/mill/internal/job/partition"
+	"github.com/purinliang/mill/internal/objectstore"
 )
 
 func TestAttemptLeaseRenewalAndFencedTakeover(t *testing.T) {
@@ -119,7 +120,11 @@ func TestCompletedJobStatusIncludesResults(t *testing.T) {
 	if _, err := repository.CompleteAttempt(ctx, a.Attempt.ID, a.Attempt.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
-	service, err := jobmodel.NewService(repository.jobs, jsonl.Planner{}, 1)
+	service, err := jobmodel.NewService(
+		repository.jobs,
+		partition.New(&objectstore.Store{}),
+		1,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

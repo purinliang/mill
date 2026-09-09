@@ -30,7 +30,7 @@ User
   v
 Job service (`mill-job`)
   |
-  +--> streaming JSONL planner --> record-aligned byte ranges
+  +--> dataset partitioner --> record-aligned JSONL byte ranges
   |
   +--> PostgreSQL --> jobs, tasks, attempts, retry eligibility
   |
@@ -43,7 +43,7 @@ Job service (`mill-job`)
                                                 `--> per-attempt file/S3 output
 ```
 
-The Job service owns REST, planning, PostgreSQL, and the internal execution
+The Job service owns REST, partitioning, PostgreSQL, and the internal execution
 API; it does not import the coordinator or Kubernetes adapter. Standalone
 execution replicas access state exclusively through bounded Protobuf/gRPC
 calls. An execution replica persists an attempt through the Job service before
@@ -179,7 +179,7 @@ Implemented:
 
 - one Go HTTP process with liveness and PostgreSQL-backed readiness;
 - idempotent `POST /jobs` and `GET /jobs/{id}` endpoints;
-- streaming JSONL validation, SHA-256 identity, and logical byte-range planning;
+- streaming JSONL validation, SHA-256 identity, and logical partitioning;
 - local-file and S3-compatible input/output adapters;
 - atomic job/task materialization and durable progress;
 - concurrency-safe task claims and attempt state transitions;

@@ -16,8 +16,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	jobmodel "github.com/purinliang/mill/internal/job"
-	"github.com/purinliang/mill/internal/job/jsonl"
+	"github.com/purinliang/mill/internal/job/partition"
 	jobpostgres "github.com/purinliang/mill/internal/job/postgres"
+	"github.com/purinliang/mill/internal/objectstore"
 )
 
 const testLeaseOwner = "test-executor"
@@ -238,7 +239,11 @@ func createAttemptTestJob(
 	if err != nil {
 		t.Fatalf("create execution repository: %v", err)
 	}
-	service, err := jobmodel.NewService(jobStore, jsonl.Planner{}, parallelism)
+	service, err := jobmodel.NewService(
+		jobStore,
+		partition.New(&objectstore.Store{}),
+		parallelism,
+	)
 	if err != nil {
 		t.Fatalf("create job service: %v", err)
 	}

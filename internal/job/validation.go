@@ -1,4 +1,4 @@
-// This file owns job submission, URI, identity, and shard-plan rules.
+// This file owns job submission, URI, identity, and shard-set rules.
 package job
 
 import (
@@ -190,11 +190,16 @@ func ValidateParallelism(parallelism int) error {
 	return nil
 }
 
-func ValidatePartitionPlan(plan PartitionPlan) error {
-	if err := ValidateInputIdentity(plan.InputSHA256, plan.RecordCount); err != nil {
+// ValidateShardSet reports whether shards completely and contiguously cover a
+// non-empty input object.
+func ValidateShardSet(shards ShardSet) error {
+	if err := ValidateInputIdentity(
+		shards.InputSHA256,
+		shards.RecordCount,
+	); err != nil {
 		return err
 	}
-	if len(plan.Shards) < 1 || len(plan.Shards) > MaxTasksPerJob {
+	if len(shards.Shards) < 1 || len(shards.Shards) > MaxTasksPerJob {
 		return &ValidationError{
 			Field: "logical shards",
 			Problem: fmt.Sprintf(
@@ -203,7 +208,7 @@ func ValidatePartitionPlan(plan PartitionPlan) error {
 		}
 	}
 	var previousEnd int64
-	for index, shard := range plan.Shards {
+	for index, shard := range shards.Shards {
 		if shard.StartByte != previousEnd || shard.EndByte <= shard.StartByte {
 			return &ValidationError{
 				Field:   fmt.Sprintf("logical shard %d", index),
