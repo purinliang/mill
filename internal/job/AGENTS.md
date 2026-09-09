@@ -14,9 +14,9 @@ These instructions apply to `internal/job` and its subpackages.
   partitioning; JSONL scanning remains a private format detail.
 - Do not import coordinator or Kubernetes packages into the Job core.
 - Preserve idempotent submission and atomic task materialization.
-- Test public workflow behavior with small fakes. Test PostgreSQL transactions,
-  constraints, concurrency, and replay against disposable PostgreSQL.
-- Put cross-package or complete lifecycle tests under `test/integration`, not
-  in this package.
+- Test public workflow behavior with small fakes.
+- Put every PostgreSQL-backed or cross-package lifecycle test under
+  `test/integration`. Use disposable PostgreSQL for transactions, constraints,
+  concurrency, and replay.
 
 See [README.md](README.md) for the package graph and file responsibilities.

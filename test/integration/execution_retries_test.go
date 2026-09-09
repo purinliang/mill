@@ -1,5 +1,5 @@
 // This file tests retry limits, delay, history, and concurrent claims.
-package postgres
+package integration_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/purinliang/mill/internal/execution/postgres"
 	jobmodel "github.com/purinliang/mill/internal/job"
 )
 

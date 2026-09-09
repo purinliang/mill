@@ -1,5 +1,5 @@
 // This file tests durable and idempotent submissions against PostgreSQL.
-package postgres
+package integration_test
 
 import (
 	"context"
@@ -9,11 +9,11 @@ import (
 	"testing"
 
 	. "github.com/purinliang/mill/internal/job"
+	. "github.com/purinliang/mill/internal/job/postgres"
 )
 
 func TestRepositoryCreateReplayGetAndPersist(t *testing.T) {
-	databaseURL := integrationDatabaseURL(t)
-	pool := openIntegrationDatabase(t, databaseURL)
+	pool := openIntegrationDatabase(t)
 	key := "integration:create-replay-get"
 	deleteJobByKey(t, pool, key)
 
@@ -30,10 +30,10 @@ func TestRepositoryCreateReplayGetAndPersist(t *testing.T) {
 		context.Background(),
 		key,
 		submission,
-		testInputSHA256,
+		integrationInputSHA256,
 		100,
 		3,
-		testResources,
+		integrationResources,
 	)
 	if err != nil {
 		t.Fatalf("create job: %v", err)
@@ -51,13 +51,13 @@ func TestRepositoryCreateReplayGetAndPersist(t *testing.T) {
 	if createdJob.Output.URI != wantOutputURI {
 		t.Errorf("output URI = %q, want %q", createdJob.Output.URI, wantOutputURI)
 	}
-	if createdJob.Input.SHA256 != testInputSHA256 ||
+	if createdJob.Input.SHA256 != integrationInputSHA256 ||
 		createdJob.Input.RecordCount != 100 {
 		t.Errorf(
 			"input identity = SHA %q records %d; want SHA %q records 100",
 			createdJob.Input.SHA256,
 			createdJob.Input.RecordCount,
-			testInputSHA256,
+			integrationInputSHA256,
 		)
 	}
 	if createdJob.Parallelism != 3 {
@@ -77,8 +77,7 @@ func TestRepositoryCreateReplayGetAndPersist(t *testing.T) {
 	}
 
 	pool.Close()
-	pool = openIntegrationDatabase(t, databaseURL)
-	defer pool.Close()
+	pool = openIntegrationDatabase(t)
 	defer deleteJobByKey(t, pool, key)
 
 	restartedRepository, err := NewRepository(pool, "file:///tmp/mill-output-b")
@@ -98,7 +97,7 @@ func TestRepositoryCreateReplayGetAndPersist(t *testing.T) {
 
 	replayedJob, replayCreated, err := restartedRepository.Create(
 		context.Background(), key, submission,
-		strings.Repeat("b", 64), 200, 9, testResources,
+		strings.Repeat("b", 64), 200, 9, integrationResources,
 	)
 	if err != nil {
 		t.Fatalf("replay job: %v", err)
@@ -145,10 +144,10 @@ func TestRepositoryCreateReplayGetAndPersist(t *testing.T) {
 				context.Background(),
 				key,
 				conflictingSubmission,
-				testInputSHA256,
+				integrationInputSHA256,
 				100,
 				3,
-				testResources,
+				integrationResources,
 			); !errors.Is(err, ErrIdempotencyConflict) {
 				t.Fatalf(
 					"conflicting create error = %v, want %v",
@@ -171,8 +170,7 @@ func TestRepositoryCreateReplayGetAndPersist(t *testing.T) {
 }
 
 func TestRepositoryFindSubmission(t *testing.T) {
-	databaseURL := integrationDatabaseURL(t)
-	pool := openIntegrationDatabase(t, databaseURL)
+	pool := openIntegrationDatabase(t)
 	defer pool.Close()
 
 	key := "integration:find-submission"
@@ -197,10 +195,10 @@ func TestRepositoryFindSubmission(t *testing.T) {
 		context.Background(),
 		key,
 		submission,
-		testInputSHA256,
+		integrationInputSHA256,
 		1,
 		1,
-		testResources,
+		integrationResources,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -222,8 +220,7 @@ func TestRepositoryFindSubmission(t *testing.T) {
 }
 
 func TestRepositoryConcurrentIdempotentCreate(t *testing.T) {
-	databaseURL := integrationDatabaseURL(t)
-	pool := openIntegrationDatabase(t, databaseURL)
+	pool := openIntegrationDatabase(t)
 	defer pool.Close()
 
 	key := "integration:concurrent-create"
@@ -254,10 +251,10 @@ func TestRepositoryConcurrentIdempotentCreate(t *testing.T) {
 				context.Background(),
 				key,
 				submission,
-				testInputSHA256,
+				integrationInputSHA256,
 				100,
 				3,
-				testResources,
+				integrationResources,
 			)
 			results <- createResult{job: job, created: created, err: err}
 		}()

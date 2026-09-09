@@ -3,6 +3,7 @@ package integration_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"net/url"
 	"os"
@@ -21,6 +22,11 @@ var integrationResources = execution.Resources{
 	MemoryRequestBytes: 128 << 20,
 	MemoryLimitBytes:   128 << 20,
 }
+
+var integrationInputSHA256 = fmt.Sprintf(
+	"%x",
+	sha256.Sum256([]byte("{\"record\":1}\n")),
+)
 
 func openIntegrationDatabase(t *testing.T) *pgxpool.Pool {
 	t.Helper()

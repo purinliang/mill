@@ -1,11 +1,13 @@
 // This file tests lease renewal and takeover against real PostgreSQL.
-package postgres
+package integration_test
 
 import (
 	"context"
 	"errors"
 	"testing"
 	"time"
+
+	. "github.com/purinliang/mill/internal/execution/postgres"
 )
 
 func TestAttemptLeaseRenewalAndFencedTakeover(t *testing.T) {

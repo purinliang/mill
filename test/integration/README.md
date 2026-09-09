@@ -1,7 +1,7 @@
 # Cross-package integration tests
 
-This directory contains tests that assemble more than one Mill package or
-service boundary.
+This directory contains tests that require PostgreSQL or assemble more than
+one Mill package, transport, or process boundary.
 
 ```text
 Job service --> Job PostgreSQL adapter
@@ -9,6 +9,11 @@ Job service --> Job PostgreSQL adapter
      `-------- completed status <-------- execution PostgreSQL adapter
 ```
 
-Single-package unit and adapter tests stay beside their production packages.
-Tests here use only exported APIs and require `MILL_TEST_DATABASE_URL` when
-PostgreSQL behavior is involved.
+Unit and within-package tests stay beside their production packages. Tests in
+this directory use exported APIs and skip PostgreSQL-backed cases when
+`MILL_TEST_DATABASE_URL` is not set.
+
+Files are named for the behavior or boundary they test. Because the directory
+already establishes the integration-test scope, filenames do not repeat an
+`_integration` suffix. Executable environment setup and suite runners belong
+under `scripts/`, not in this directory.

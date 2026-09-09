@@ -1,11 +1,9 @@
 // This file tests attempt lifecycles and concurrency against PostgreSQL.
-package postgres
+package integration_test
 
 import (
 	"context"
 	"errors"
-	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	executionmodel "github.com/purinliang/mill/internal/execution"
+	. "github.com/purinliang/mill/internal/execution/postgres"
 	jobmodel "github.com/purinliang/mill/internal/job"
 	jobpostgres "github.com/purinliang/mill/internal/job/postgres"
 )
@@ -21,8 +20,6 @@ const (
 	testLeaseOwner    = "test-executor"
 	testLeaseDuration = 30 * time.Second
 )
-
-var testInputSHA256 = strings.Repeat("a", 64)
 
 func TestAttemptSuccessfulLifecycle(t *testing.T) {
 	repository, job := createAttemptTestJob(t, "integration:attempt-success", 1, 1)
@@ -263,8 +260,7 @@ func createAttemptTestJob(
 	taskCount, parallelism int,
 ) (*testRepositories, jobmodel.Job) {
 	t.Helper()
-	pool := openIntegrationDatabase(t, integrationDatabaseURL(t))
-	t.Cleanup(pool.Close)
+	pool := openIntegrationDatabase(t)
 	deleteJobByKey(t, pool, key)
 	t.Cleanup(func() { deleteJobByKey(t, pool, key) })
 
@@ -290,7 +286,7 @@ func createAttemptTestJob(
 				URI: "file:///tmp/mill-attempt-input.jsonl",
 			},
 		},
-		testInputSHA256,
+		integrationInputSHA256,
 		int64(taskCount),
 		parallelism,
 		executionmodel.Resources{
@@ -317,7 +313,7 @@ func createAttemptTestJob(
 		context.Background(),
 		createdJob.ID,
 		jobmodel.ShardSet{
-			InputSHA256: testInputSHA256,
+			InputSHA256: integrationInputSHA256,
 			RecordCount: int64(taskCount),
 			Shards:      shards,
 		},
@@ -343,40 +339,4 @@ func getAttemptTestJob(
 		t.Fatalf("get job: %v", err)
 	}
 	return job
-}
-
-func integrationDatabaseURL(t *testing.T) string {
-	t.Helper()
-	databaseURL := os.Getenv("MILL_TEST_DATABASE_URL")
-	if databaseURL == "" {
-		t.Skip("MILL_TEST_DATABASE_URL is not set")
-	}
-	return databaseURL
-}
-
-func openIntegrationDatabase(t *testing.T, databaseURL string) *pgxpool.Pool {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	pool, err := pgxpool.New(ctx, databaseURL)
-	if err != nil {
-		t.Fatalf("create integration database pool: %v", err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		t.Fatalf("ping integration database: %v", err)
-	}
-	return pool
-}
-
-func deleteJobByKey(t *testing.T, pool *pgxpool.Pool, key string) {
-	t.Helper()
-	if _, err := pool.Exec(
-		context.Background(),
-		"DELETE FROM public.jobs WHERE idempotency_key = $1",
-		key,
-	); err != nil {
-		t.Fatalf("delete integration test job: %v", err)
-	}
 }

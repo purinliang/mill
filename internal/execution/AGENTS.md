@@ -17,6 +17,7 @@ These instructions apply to `internal/execution` and its subpackages.
 - Keep Kubernetes code limited to runtime translation and observation.
 - Keep gRPC messages bounded and deadline-bearing, and map domain failures
   without exposing database details.
-- Put cross-package or complete lifecycle tests under `test/integration`.
+- Put every PostgreSQL-backed or cross-package lifecycle test under
+  `test/integration`.
 
 See [README.md](README.md) for the package graph and file responsibilities.

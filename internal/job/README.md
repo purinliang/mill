@@ -43,5 +43,5 @@ Kubernetes execution starts only after task materialization.
 - `partition/` implements streaming JSONL partitioning.
 - `postgres/` persists jobs, tasks, progress, and results.
 
-Unit and single-adapter tests remain beside these packages. Workflows that
-assemble Job and execution persistence live under `test/integration`.
+Unit and within-package tests remain beside these packages. PostgreSQL-backed
+and cross-package workflows live under `test/integration`.

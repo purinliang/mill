@@ -1,13 +1,15 @@
 // This file tests successful-result lookup against PostgreSQL.
-package postgres
+package integration_test
 
 import (
 	"context"
 	"testing"
+
+	. "github.com/purinliang/mill/internal/job/postgres"
 )
 
 func TestCompletedResultsForMissingJobAreEmpty(t *testing.T) {
-	pool := openIntegrationDatabase(t, integrationDatabaseURL(t))
+	pool := openIntegrationDatabase(t)
 	defer pool.Close()
 	repository, err := NewRepository(pool, "file:///tmp/mill-output")
 	if err != nil {

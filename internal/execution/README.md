@@ -40,5 +40,5 @@ prove that a replacement attempt is safe.
 - `postgres/` implements leases, fencing, transitions, and retries.
 - `rpc/` carries the execution Store contract over Protobuf/gRPC.
 
-Unit and single-adapter tests remain beside these packages. Complete workflows
-that also use the Job package live under `test/integration`.
+Unit and within-package tests remain beside these packages. PostgreSQL-backed
+and cross-package workflows live under `test/integration`.

@@ -1,5 +1,5 @@
 // This file tests durable task materialization against PostgreSQL.
-package postgres
+package integration_test
 
 import (
 	"context"
@@ -10,11 +10,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	. "github.com/purinliang/mill/internal/job"
+	. "github.com/purinliang/mill/internal/job/postgres"
 )
 
 func TestRepositoryMaterializeLogicalShardsAndReportProgress(t *testing.T) {
-	databaseURL := integrationDatabaseURL(t)
-	pool := openIntegrationDatabase(t, databaseURL)
+	pool := openIntegrationDatabase(t)
 	defer pool.Close()
 
 	key := "integration:materialize-progress"
@@ -33,16 +33,16 @@ func TestRepositoryMaterializeLogicalShardsAndReportProgress(t *testing.T) {
 				URI: "file:///data/records.jsonl",
 			},
 		},
-		testInputSHA256,
+		integrationInputSHA256,
 		30,
 		3,
-		testResources,
+		integrationResources,
 	)
 	if err != nil {
 		t.Fatalf("create job: %v", err)
 	}
 	shards := ShardSet{
-		InputSHA256: testInputSHA256,
+		InputSHA256: integrationInputSHA256,
 		RecordCount: 30,
 		Shards: []LogicalShard{
 			{StartByte: 0, EndByte: 100},
