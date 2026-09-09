@@ -1,5 +1,5 @@
-// This file provides shared integration-test fixtures.
-package integration_test
+// This file provides shared PostgreSQL integration-test fixtures.
+package postgres_test
 
 import (
 	"context"

@@ -1,5 +1,5 @@
 // This file tests public gRPC construction, mapping, and failure behavior.
-package integration_test
+package rpc_test
 
 import (
 	"context"

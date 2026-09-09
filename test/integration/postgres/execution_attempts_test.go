@@ -1,5 +1,5 @@
 // This file tests attempt lifecycles and concurrency against PostgreSQL.
-package integration_test
+package postgres_test
 
 import (
 	"context"

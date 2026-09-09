@@ -1,5 +1,5 @@
 // This file tests Kubernetes observation and create-response recovery.
-package integration_test
+package kubernetes_test
 
 import (
 	"context"

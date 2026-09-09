@@ -1,5 +1,5 @@
 // This file tests lease renewal and takeover against real PostgreSQL.
-package integration_test
+package postgres_test
 
 import (
 	"context"

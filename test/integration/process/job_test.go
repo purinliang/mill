@@ -1,5 +1,5 @@
 // This file tests a running Job process through its REST and gRPC APIs.
-package integration_test
+package process_test
 
 import (
 	"bytes"
@@ -35,7 +35,7 @@ func TestJobServiceProcessServesJobsAndShutsDownGracefully(t *testing.T) {
 	}
 
 	binary := filepath.Join(t.TempDir(), "mill-job")
-	repositoryRoot, err := filepath.Abs("../..")
+	repositoryRoot, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatalf("resolve repository root: %v", err)
 	}

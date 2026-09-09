@@ -1,5 +1,5 @@
 // This file tests the execution process through its public service boundary.
-package integration_test
+package process_test
 
 import (
 	"context"
@@ -107,7 +107,7 @@ func TestExecutionProcessClaimsAndDispatchesThroughPublicServices(t *testing.T) 
 	kubeContext := writeProcessKubeconfig(t, kubernetesServer.URL)
 
 	binary := filepath.Join(t.TempDir(), "mill-execution")
-	repositoryRoot, err := filepath.Abs("../..")
+	repositoryRoot, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatalf("resolve repository root: %v", err)
 	}

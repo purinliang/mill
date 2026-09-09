@@ -1,5 +1,5 @@
 // This file tests one completed Job across Job and execution persistence.
-package integration_test
+package postgres_test
 
 import (
 	"context"

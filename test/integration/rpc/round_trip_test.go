@@ -1,5 +1,5 @@
 // This file tests the gRPC client and server together over an in-memory link.
-package integration_test
+package rpc_test
 
 import (
 	"context"

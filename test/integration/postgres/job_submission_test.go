@@ -1,5 +1,5 @@
 // This file tests submission across Job, partition, store, and PostgreSQL.
-package integration_test
+package postgres_test
 
 import (
 	"context"

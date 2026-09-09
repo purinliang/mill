@@ -1,5 +1,5 @@
-// This file provides fixtures for Kubernetes adapter integration tests.
-package integration_test
+// This file provides Kubernetes adapter integration-test fixtures.
+package kubernetes_test
 
 import (
 	"encoding/json"

@@ -1,5 +1,5 @@
 // This file tests retry limits, delay, history, and concurrent claims.
-package integration_test
+package postgres_test
 
 import (
 	"context"
