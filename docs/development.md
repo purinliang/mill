@@ -582,7 +582,9 @@ internal/job/
   partition/partitioner.go        public dataset-partitioning adapter
   partition/jsonl.go              private JSONL record scanner
   postgres/repository.go          job repository construction
-  postgres/jobs.go                durable job and task persistence
+  postgres/submission.go          idempotent job submission persistence
+  postgres/tasks.go               logical task materialization
+  postgres/status.go              durable job status and progress reads
   postgres/results.go             successful output queries
 internal/execution/
   model.go                        runtime-neutral attempt and executable model
