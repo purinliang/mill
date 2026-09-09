@@ -1,4 +1,4 @@
-// This file provides shared cross-package integration-test fixtures.
+// This file provides shared integration-test fixtures.
 package integration_test
 
 import (
