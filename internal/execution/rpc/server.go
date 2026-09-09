@@ -13,6 +13,10 @@ import (
 	executionv1 "github.com/purinliang/mill/internal/execution/rpc/v1"
 )
 
+// MaxMessageBytes bounds the execution control-plane payload on both sides of
+// the connection. Attempt instructions contain metadata, never dataset bytes.
+const MaxMessageBytes = 1 << 20
+
 // Backend is implemented by the Job service's durable metadata repository.
 // The lease duration is supplied by the server so execution replicas cannot
 // choose their own ownership policy.
