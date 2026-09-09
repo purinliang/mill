@@ -235,11 +235,10 @@ observation and never accesses Mill tables directly. A separate partition
 service is unjustified while partitioning remains a bounded streaming
 operation inside the Job workflow.
 
-`internal/job` owns the job model, policy, workflow, and interfaces required by
-that workflow. HTTP submission, dataset partitioning, and PostgreSQL
-persistence live in adapter subpackages. `internal/execution` owns the
-backend-independent attempt model and store contract; its PostgreSQL adapter
-owns durable attempt transitions, retries, fencing, and lease takeover.
+The package-level ownership and dependency graphs are documented beside the
+code in the [Job package](../internal/job/README.md) and
+[execution package](../internal/execution/README.md). Those package boundaries
+make the two service responsibilities visible without creating more services.
 
 The versioned gRPC API is defined in
 `api/proto/mill/execution/v1/execution.proto`. It exposes the implemented lease

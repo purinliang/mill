@@ -1,8 +1,9 @@
 # Developing Mill
 
 This guide covers the implemented local environment, demonstrations, tests,
-configuration, and repository organization. Planned multi-service and
-availability work is described in [Architecture](architecture.md).
+configuration, and repository organization. Availability design is described
+in [Architecture](architecture.md), and staged work is in the
+[roadmap](roadmap.md).
 
 ## Prerequisites
 
@@ -107,7 +108,7 @@ compares its output with a local run. It does not use PostgreSQL task claims.
 ```
 
 This starts private temporary PostgreSQL, Job, and standalone execution service
-processes, submits the generated 12-record Walden input, executes the planned
+processes, submits the generated 12-record Walden input, executes the resulting
 logical tasks with bounded concurrency, merges successful outputs, and compares
 them to a local full-input result. It uses hostPath storage on the single kind
 node.
@@ -548,89 +549,32 @@ headers. Review both the schema and generated diff together.
 ## Repository structure
 
 ```text
-cmd/mill-job/
-  Dockerfile                      minimal non-root Job image
-  main.go                         process composition and HTTP lifecycle
-  grpc.go                         optional bounded execution gRPC listener
-cmd/mill-execution/
-  Dockerfile                      minimal non-root execution-service image
-  main.go                         gRPC-to-Kubernetes process composition
-deploy/kubernetes/local/
-  namespaces-rbac.yaml            local namespaces and execution Job permissions
-  control-plane.yaml              one-replica kind service Deployments
-api/proto/mill/execution/v1/
-  execution.proto                 versioned internal lease/state RPC schema
-docs/
-  architecture.md                 domain, correctness, and availability design
-  development.md                  local setup, demos, tests, and structure
-examples/jsonl-copy/
-  cmd/jsonl-copy/                 minimal range-copy workload and Dockerfile
-examples/word-count/
-  cmd/word-count/                 S3/file mapper and Dockerfile
-  cmd/merge/                      example-specific local result merger
-  cmd/fault-injection/            deterministic test wrapper and Dockerfile
-  generate/                       reproducible JSONL input generator
-  walden-economy.txt              committed source fixture
-  record-config.json              deterministic grouping configuration
-  job.yaml.template               manual single-task manifest template
-internal/job/
-  job.go                          durable job status and progress
-  submission.go                   user submission and input descriptions
-  resources.go                    workload resource-class policy
-  store.go                        durable Job-service storage contract
-  partition.go                    partitioning contract and shard model
-  service.go                      job creation and status workflow
-  validation.go                   submission and URI rules
-  httpapi/handler.go              REST submission and status adapter
-  partition/partitioner.go        public dataset-partitioning adapter
-  partition/jsonl.go              private JSONL record scanner
-  postgres/repository.go          job repository construction
-  postgres/submission.go          idempotent job submission persistence
-  postgres/tasks.go               logical task materialization
-  postgres/status.go              durable job status and progress reads
-  postgres/results.go             successful output queries
-internal/execution/
-  attempt.go                      durable attempt identity and lifecycle
-  claim.go                        work assigned to an execution replica
-  workload.go                     executable and resource requirements
-  errors.go                       shared execution-domain errors
-  store.go                        durable execution-state contract
-  coordinator/
-    coordinator.go                observe active attempts and fill free slots
-  kubernetes/
-    runtime.go                    create and observe native Kubernetes Jobs
-  postgres/
-    repository.go                 execution repository construction
-    attempts.go                   claims, transitions, and retry policy
-    attempt_ownership.go          lease renewal and fenced takeover
-  rpc/
-    client.go                     deadline-bound execution Store client
-    server.go                     Job-side backend and gRPC status mapping
-    convert.go                    domain/Protobuf conversion
-    v1/                           generated versioned Go bindings
-internal/objectstore/
-  store.go                        public API and URI-scheme dispatch
-  location.go                     shared URI parsing and validation
-  file.go                         local reads, ranges, and atomic writes
-  s3.go                           AWS client and S3 object operations
-internal/workload/
-  contract.go                     language-neutral CLI protocol implementation
-migrations/                       ordered PostgreSQL schema and lease history
-scripts/
-  setup.sh                        pinned local kind/kubectl preparation
-  build-control-plane-images.sh   build and inspect Mill service images
-  deploy-local-control-plane.sh   configure and deploy services in kind
-  demo-word-count-deployed.sh     S3 batch through deployed Mill Pods
-  demo-word-count-single-task.sh  one manual Kubernetes task
-  demo-word-count-batch.sh        complete node-local control-plane batch
-  demo-word-count-s3.sh           complete shared-storage batch
-README.md                         concise project entry point and roadmap
-AGENTS.md                         engineering, Git, and agent conventions
+cmd/                    runnable Mill service composition roots
+api/proto/              versioned internal RPC schemas
+deploy/                 Kubernetes deployment definitions
+docs/                   system design and developer operations
+examples/               trusted workloads and demonstrations
+internal/job/            Job workflow, policy, ports, and adapters
+internal/execution/      attempt reconciliation, ownership, and adapters
+internal/objectstore/    file and S3-compatible object access
+internal/workload/       stable workload command-line contract
+migrations/             ordered PostgreSQL schema history
+scripts/                repeatable setup, deployment, and demo commands
+test/integration/        workflows spanning multiple Mill packages
 ```
 
 Keep Mill as one Go module. Package boundaries are not automatically deployment
 boundaries. Example executables remain under `examples`; top-level `cmd` is
 reserved for Mill-owned services.
+
+Detailed package graphs and file responsibilities are maintained beside the
+code:
+
+- [Job package](../internal/job/README.md)
+- [Execution package](../internal/execution/README.md)
+- [Object-store package](../internal/objectstore/README.md)
+- [Workload contract](../internal/workload/README.md)
+- [Cross-package integration tests](../test/integration/README.md)
 
 The lightweight Git workflow and commit conventions are defined in
 [AGENTS.md](../AGENTS.md).

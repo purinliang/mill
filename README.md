@@ -2,8 +2,8 @@
 
 Mill is a learning-oriented distributed batch execution system for running a
 trusted OCI image over independent parts of a JSON Lines dataset. A user
-submits an executable and one input URI; Mill validates and divides the input
-into logical byte-range tasks, stores durable execution state in PostgreSQL,
+submits an executable and one input URI; Mill validates and partitions the
+input into logical byte-range tasks, stores durable state in PostgreSQL,
 and runs task attempts as Kubernetes Jobs. Inputs and outputs can use local
 files or S3-compatible object storage.
 
@@ -24,23 +24,15 @@ does not replace any of those systems.
 ## Current architecture
 
 ```text
-User
-  |
-  | REST/JSON: submit or inspect a job
-  v
-Job service (`mill-job`)
-  |
-  +--> dataset partitioner --> record-aligned JSONL byte ranges
-  |
-  +--> PostgreSQL --> jobs, tasks, attempts, retry eligibility
-  |
-  `-- gRPC --> execution service replica(s) (`mill-execution`)
-                                      |
-                                      `--> Kubernetes Job per attempt
-                                         |
-                                         `--> workload Pod
-                                                +--> ranged file/S3 input
-                                                `--> per-attempt file/S3 output
+                         +-----------------------+
+User ------ REST/JSON -->| Job service           |--> PostgreSQL
+Execution ------ gRPC -->| REST + gRPC endpoints |--> dataset partitioner
+                         +-----------------------+       |
+       |                                                 `--> JSONL ranges
+       v
+Kubernetes Job per attempt --> workload Pod
+                                  +--> ranged file/S3 input
+                                  `--> per-attempt file/S3 output
 ```
 
 The Job service owns REST, partitioning, PostgreSQL, and the internal execution
@@ -61,7 +53,7 @@ and required evidence are in the [Availability runbook](docs/availability-runboo
 
 - Submit and retrieve jobs through HTTP/REST.
 - Accept a trusted OCI image and one JSONL input.
-- Plan record-aligned logical shards internally.
+- Partition the input into record-aligned logical shards internally.
 - Store metadata and execution state in PostgreSQL.
 - Store datasets and attempt outputs through `file://` or `s3://` URIs.
 - Execute attempts as Kubernetes Jobs with bounded parallelism.
@@ -102,9 +94,8 @@ export AWS_REGION='us-east-1'
 ./scripts/deploy-local-control-plane.sh
 ```
 
-This local deployment is a Milestone 7 baseline, not an HA configuration. See
-[Development](docs/development.md) for its storage, credential, and cleanup
-requirements.
+This is a single-node local baseline, not an HA configuration. See
+[Development](docs/development.md) for storage, credentials, and cleanup.
 
 Run the complete batch demonstration with node-local files:
 
@@ -173,169 +164,16 @@ Installation, API-only operation, environment variables, demonstrations,
 integration tests, and the repository layout are documented in
 [Development](docs/development.md).
 
-## Current status
+## Status
 
-Implemented:
+The local control plane, split Job and execution services, Kubernetes task
+execution, retries, leases, S3-compatible storage, and single-Pod failure
+demonstrations are implemented. Physical multi-node availability, AWS
+deployment, and production hardening are not. See the
+[roadmap](docs/roadmap.md) for detailed evidence and remaining milestones.
 
-- one Go HTTP process with liveness and PostgreSQL-backed readiness;
-- idempotent `POST /jobs` and `GET /jobs/{id}` endpoints;
-- streaming JSONL validation, SHA-256 identity, and logical partitioning;
-- local-file and S3-compatible input/output adapters;
-- atomic job/task materialization and durable progress;
-- concurrency-safe task claims and attempt state transitions;
-- one native Kubernetes Job per attempt through the official Go client;
-- bounded retries with durable five-second delay and separate attempt outputs;
-- durable attempt leases, renewal, expiry takeover, and stale-owner fencing;
-- backend-independent execution types and store contract;
-- versioned execution Protobuf schema and tested gRPC client/server adapters;
-- optional Job-side gRPC listener with bounded messages and graceful shutdown;
-- separately runnable execution process with no PostgreSQL dependency;
-- minimal non-root OCI images for the Job and execution services;
-- explicit execution-service support for either a kubeconfig context or
-  in-cluster service-account credentials;
-- a single-node kind deployment with separate namespaces, health probes,
-  resource bounds, and namespace-scoped execution RBAC;
-- demonstrated a 12-task split-process batch through one Job service
-  and two live execution replicas;
-- demonstrated execution-process failover with lease-token replacement and
-  stable attempt and Kubernetes Job identities;
-- demonstrated active execution Pod deletion and fenced takeover by another
-  deployed replica without duplicate attempts or Kubernetes Jobs;
-- demonstrated Job Pod deletion with REST/gRPC reconnection and stable
-  durable execution identities;
-- deterministic Kubernetes identity and execution-process reconciliation;
-- durable workload resource classes propagated through gRPC to Kubernetes;
-- trusted workload CLI contract and non-root example images;
-- local, container, single-task, full-batch, retry, restart, replica-failover,
-  S3-backed, and fully deployed word-count demonstrations; and
-- exact result verification against a local baseline.
+## Documentation
 
-Not implemented:
-
-- service authentication for the internal gRPC boundary;
-- multi-node replica placement and anti-affinity configuration;
-- replicated PostgreSQL or multi-node K3s deployment;
-- network-partition or physical-node failure tests;
-- generic aggregation or validation of arbitrary workload outputs;
-- AWS/EKS deployment, Terraform, or CI/CD; and
-- production security, operations, or availability guarantees.
-
-## Milestones
-
-### 0 — Foundation — implemented
-
-Define goals, non-goals, terminology, architecture, lifecycle, and repository
-conventions.
-
-### 1 — Local control plane — implemented
-
-Create and retrieve jobs, persist metadata in PostgreSQL, plan JSONL shards,
-materialize tasks, and report progress.
-
-### 2 — Workload contract — implemented
-
-Define a stable CLI contract for one task attempt, build trusted reference
-images, and verify assigned byte-range behavior.
-
-### 3 — Kubernetes execution — implemented locally
-
-Create and observe one native Kubernetes Job per Mill attempt, enforce job
-parallelism, and expose successful output URIs.
-
-### 4 — Reliable execution — in progress
-
-Bound retries, preserve attempt history, delay retry eligibility durably, and
-recover the same Kubernetes identities after execution process loss. Use
-durable leases to renew or transfer attempt ownership and reject stale state
-changes. Wider dispatch crash windows, resource deletion, long API stalls, and
-network ambiguity remain.
-
-### 5 — Shared object storage — implemented locally
-
-Read and plan JSONL through S3-compatible storage, use HTTP byte-range requests
-inside workload Pods, and publish unique attempt outputs without hostPath or
-node pinning. Real AWS S3 remains untested.
-
-### 6 — Service boundary and resource classes — implemented locally
-
-The pure execution domain contract, versioned Protobuf/gRPC adapters,
-Job-side listener, standalone execution service, removal of the direct path,
-and execution failover proof are implemented. Optional named `small`,
-`medium`, and `large` workload classes persist their resolved CPU and memory
-resources so retries remain stable if server profiles change later.
-
-### 7 — Two-laptop replica availability — in progress
-
-Use one K3s server and one K3s agent. Spread two Job replicas and two
-execution replicas across the laptops. Run a CloudNativePG primary and standby
-with availability-oriented synchronous replication. Demonstrate individual
-Mill Pod failure and controlled PostgreSQL Pod promotion. This stage will not
-claim whole-laptop or network-partition tolerance.
-
-The single-node prerequisite is implemented: both packaged services run as
-one-replica Deployments and communicate through a ClusterIP Service. Workload
-Jobs are isolated in a namespace where the execution service may only create
-and get Jobs. The complete 12-task S3 workload has run through these deployed
-services with exact result verification and bounded parallelism. A single-node
-test also scales the execution service to two replicas and deletes the Pod that
-owns three active leases. It proves takeover with new fencing tokens while
-attempt IDs, Kubernetes Job names, and Job UIDs remain unchanged. Another
-single-node test deletes the original Job Pod and proves that both the REST
-client and execution service's gRPC connection recover through the Service
-without changing durable work.
-Multi-node replica placement, K3s installation, and database replication remain
-to be exercised. Pinned role-based K3s installation, profile deployment, and a
-destructive two-node acceptance runner are implemented but have not yet been
-run on two physical laptops. A two-node kind simulation has passed execution
-and Job Pod deletion, synchronous standby promotion, connection
-recovery, stable execution identities, and byte-exact 12-task output. This is
-runtime evidence for the manifests, not a physical-laptop failure-domain claim.
-The deployable manifests are defined under
-`deploy/kubernetes/availability`: two Mill replicas per service, required
-hostname anti-affinity, disruption budgets, and distinct two- and three-node
-CloudNativePG profiles. Both profiles pass Kubernetes and CloudNativePG 1.30.0
-admission validation; the three-node profile has not yet been run.
-
-Continue with focused reviews after each slice, but defer the overall
-architecture and code-ownership refactor until after Milestone 8.
-
-### 8 — Three-node quorum availability — planned
-
-Add a third independent failure domain, run three K3s server/etcd voters, and
-place one PostgreSQL instance on each node. Use required synchronous replication
-and failover quorum, then test one physical-node loss and an isolated minority
-without conflicting writers or duplicate attempts. Full-stack claims also
-require replicated object storage or AWS S3.
-
-The three-instance CloudNativePG manifest is implemented and admission-tested,
-but the three-node runtime and its failure evidence remain planned.
-
-After this milestone, perform the overall review and refactor using evidence
-from both the two-laptop and three-node systems. Preserve Pod failure, database
-promotion, node-loss, and minority-isolation evidence as regression tests.
-
-### 9 — CI/CD and disposable AWS deployment — planned
-
-Run formatting and tests continuously. Make Terraform deployment and teardown
-manual, deploy a temporary AWS demonstration, collect evidence, and destroy all
-billable resources afterward.
-
-### 10 — Evaluation — planned
-
-Measure throughput, scaling with parallelism, failure interruption,
-reconciliation time, and memory use for different workload classes.
-
-## Development philosophy
-
-Each milestone should prove one behavior locally before adding another failure
-boundary. A service exists only when it has distinct ownership or scaling
-needs; a Go package does not automatically become a Pod. Availability claims
-must name the exact failure survived. Cloud infrastructure should be
-reproducible, manually activated, and disposable.
-
-Further documentation:
-
-- [Architecture](docs/architecture.md)
-- [Development and demonstrations](docs/development.md)
-- [Word-count example](examples/word-count/README.md)
-- [Agent and contribution conventions](AGENTS.md)
+See [`docs/`](docs/) for architecture, roadmap, and developer operations.
+Package-specific responsibilities and agent instructions live in the nearest
+`README.md` and `AGENTS.md` beside the code.

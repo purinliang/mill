@@ -6,8 +6,8 @@ scope.
 
 ## Current project state
 
-Mill currently has a Job process and a standalone execution process. The
-Job service validates and plans JSONL inputs and stores jobs, logical tasks,
+Mill currently has a Job process and a standalone execution process. The Job
+service validates and partitions JSONL inputs and stores jobs, logical tasks,
 attempts, retry eligibility, and progress in PostgreSQL. Execution replicas use
 gRPC to lease that work and launch one native Kubernetes Job for each attempt.
 The workload CLI contract, local-file execution, bounded retries, attempt
@@ -130,7 +130,7 @@ operational and maintenance cost.
   unless a deliberate architecture change is documented.
 - Store large datasets and task outputs in S3 or compatible object storage.
   Never store large binary datasets in PostgreSQL.
-- Keep object access URI-oriented. Planning may stream a whole input; workload
+- Keep object access URI-oriented. Partitioning may stream a whole input; workload
   attempts must read only their assigned range and publish only their unique
   output. Preserve file-backed tests while S3 is the shared-storage direction.
 - Keep one input URI and generated output root on the job. A logical task owns
@@ -256,106 +256,14 @@ job, task, shard, attempt, or state-transition semantics.
 
 ## Code organization
 
-- Keep Mill as one Go module with the implemented Job and execution
-  binaries. A logical module is not automatically a service; do not create more
-  service boundaries without a concrete operational reason.
-- Keep `cmd/mill-job` as the composition root: environment configuration,
-  dependency construction, route assembly, process lifecycle, and shutdown
-  belong there. Do not put job or execution policy in `main.go`.
-- Organize `internal` by cohesive capability, not by generic technical layers.
-  Keep job policy and required contracts in `internal/job`, then place concrete
-  adapters in `internal/job/httpapi`, `internal/job/partition`, and
-  `internal/job/postgres`. Keep attempt persistence in
-  `internal/execution/postgres`, beside the execution domain whose transitions
-  and ownership rules it implements.
-- Introduce a new package only for a concrete boundary with a distinct purpose,
-  such as a Kubernetes adapter or object-storage adapter. Do not pre-create
-  empty packages or speculative `common`, `util`, `service`, or `manager`
-  layers.
-- Keep dataset partitioning in `internal/job/partition`. Its public
-  `partitioner.go` implements the partitioner port owned by the job workflow;
-  `jsonl.go` keeps current format-specific scanning private. Logical shard
-  boundaries must be contiguous, non-empty, and aligned to complete records.
-- Keep `internal/objectstore` limited to file and S3-compatible access. A custom
-  endpoint is a local-development concern; use normal AWS SDK endpoint and
-  credential resolution in AWS. Close read bodies and require seekable bodies
-  for the current complete-object upload path.
-- Keep the exported object-store API in `internal/objectstore/store.go`.
-  URI parsing and the file and S3 backends belong in separate files with
-  lowercase implementation names. Backends receive only validated locations.
-- Keep backend-independent task observation/claim logic in
-  `internal/execution/coordinator`, Kubernetes types and API calls in
-  `internal/execution/kubernetes`, and their lifecycle/configuration in
-  `cmd/mill-execution/main.go`. Word-count aggregation stays in the example.
-- Require the execution service to select exactly one Kubernetes credential
-  source. Outside the cluster, use an explicit kubeconfig context. Inside it,
-  use client-go's standard service-account configuration. Do not silently fall
-  back between clusters. Keep namespace selection explicit in both modes.
-  Grant only the RBAC operations the execution service actually uses.
-- Keep the local deployment's Mill services in `mill-system` and generated Jobs
-  in `mill-workloads`. The Job service must not mount a service-account token.
-  The execution Role remains namespace-scoped to `create` and `get` Jobs unless
-  a concrete implemented operation requires another verb or resource. Never
-  provide PostgreSQL credentials to the execution service or grant it
-  permission to read workload Secrets.
-- Treat `deploy/kubernetes/local` as a kind-only, single-replica baseline. It
-  uses preloaded development images and external PostgreSQL/S3; do not reuse it
-  to claim K3s, database, node, or object-storage availability. Keep secret
-  values out of manifests and Git.
-- Preserve the first boundary refactor completed after Milestone 7: domain
-  packages own policy and interfaces, while HTTP, JSONL, PostgreSQL, gRPC, and
-  Kubernetes packages implement adapters. Defer another broad architecture
-  refactor until Milestone 8 provides new failure evidence.
-- Keep execution-facing attempt types, sentinel domain failures, and the
-  transport-independent store contract in `internal/execution`. Coordinator
-  and Kubernetes packages must not import `internal/job`.
-- Keep the versioned schema under `api/proto/mill/execution/v1` and transport
-  adapters in `internal/execution/rpc`. Lease duration is Job policy,
-  never an execution-service request field. Commit generated bindings with
-  schema changes and do not hand-edit them. The RPC client package must not
-  pull in `internal/job` or PostgreSQL transitively.
-- Keep the language-neutral CLI protocol and its Go serialization/parser in
-  `internal/workload`. Reserve top-level `cmd` for Mill's own executables.
-  Example executable entrypoints belong under `examples/<name>/cmd/<command>`,
-  alongside demonstration-specific computation, inputs, generators, and
-  documentation under `examples/<name>`. All must remain
-  separate from control-plane behavior. Introduce a top-level `workloads`
-  package only if Mill later owns reusable workload implementations beyond
-  examples.
-- Keep failure injection in test/demo wrappers, not production execution policy
-  or word-count computation. Prefer deterministic cases first. The example's
-  shared fail-once marker is a test fixture, not Mill's retry state. Aggregate
-  only successful attempt outputs returned by Mill; never glob all attempts.
-- Keep a reference workload's Dockerfile beside its command. Prefer a
-  multi-stage build and a minimal non-root runtime image; do not place build
-  tools in the final workload image.
-- Keep each Mill service Dockerfile beside its top-level `cmd` entrypoint. The
-  final service images contain only the static binary and CA certificates, run
-  as `65532:65532`, and are built together by the
-  `scripts/build-control-plane-images.sh` script. Image creation is distinct
-  from loading or deploying an image.
-- Commit small, stable source fixtures and deterministic generation
-  configuration when they explain a demonstration. Do not commit generated
-  JSONL inputs, task outputs, or other reproducible artifacts.
-- Keep interfaces at the consumer boundary and add them only for an existing
-  substitute. For example, the job HTTP handler owns the small store interface
-  used by its tests; the concrete PostgreSQL repository does not need an
-  interface merely because it accesses a database.
-- Keep numbered SQL migrations in `migrations`. After a migration has been
-  shared or applied outside a disposable local database, correct the schema
-  with a new migration instead of rewriting history.
-- Keep `scripts/setup.sh` idempotent and non-destructive. It may install pinned
-  user-space development tools and create or reuse the named local cluster, but
-  must not silently install Docker, change host permissions, replace clusters,
-  or delete resources.
-- Co-locate unit tests with the package under test. Name external-dependency
-  tests clearly as integration tests and make them opt-in when they require a
-  developer-managed service.
-- Update the module view, repository structure, and current status in
-  `README.md` when a change makes any of them materially inaccurate. Keep
-  detailed design in `docs/architecture.md` and operational commands and
-  structure in `docs/development.md`. Document planned paths as planned; do not
-  create placeholder files for them.
+Read [Architecture](docs/architecture.md) for system boundaries and
+[Development](docs/development.md) for the repository layout and commands.
+Before changing a package, follow its nearest `README.md` and `AGENTS.md`.
+Package guides currently exist for [Job](internal/job/README.md),
+[execution](internal/execution/README.md),
+[object storage](internal/objectstore/README.md), and
+[workload contract](internal/workload/README.md). Cross-package workflow tests
+belong under [test/integration](test/integration/README.md).
 
 ## Testing expectations
 
