@@ -574,7 +574,9 @@ examples/word-count/
   record-config.json              deterministic grouping configuration
   job.yaml.template               manual single-task manifest template
 internal/job/
-  model.go                        public job and submission model
+  job.go                          durable job status and progress
+  submission.go                   user submission and input descriptions
+  resources.go                    workload resource-class policy
   store.go                        durable Job-service storage contract
   partition.go                    partitioning contract and shard model
   service.go                      job creation and status workflow

@@ -1,4 +1,4 @@
-// This file tests resource-class policy and invalid classes.
+// This file tests workload resource profiles and invalid classes.
 package job
 
 import "testing"
@@ -17,7 +17,8 @@ func TestResolveResources(t *testing.T) {
 		if !valid {
 			t.Fatalf("class %q is invalid", test.class)
 		}
-		if resources.CPURequestMillis != 100 || resources.CPULimitMillis != 1000 ||
+		if resources.CPURequestMillis != 100 ||
+			resources.CPULimitMillis != 1000 ||
 			resources.MemoryRequestBytes != test.memoryMiB*mebibyte ||
 			resources.MemoryLimitBytes != test.memoryMiB*mebibyte {
 			t.Errorf("class %q resources = %+v", test.class, resources)
