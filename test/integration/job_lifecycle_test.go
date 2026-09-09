@@ -5,12 +5,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	executionpostgres "github.com/purinliang/mill/internal/execution/postgres"
 	"github.com/purinliang/mill/internal/job"
@@ -18,30 +15,10 @@ import (
 )
 
 func TestCompletedJobStatusIncludesResults(t *testing.T) {
-	databaseURL := os.Getenv("MILL_TEST_DATABASE_URL")
-	if databaseURL == "" {
-		t.Skip("MILL_TEST_DATABASE_URL is not set")
-	}
-	pool, err := pgxpool.New(context.Background(), databaseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := pool.Ping(context.Background()); err != nil {
-		pool.Close()
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
-
+	pool := openIntegrationDatabase(t)
 	key := fmt.Sprintf("lifecycle:%d", time.Now().UnixNano())
-	t.Cleanup(func() {
-		if _, err := pool.Exec(
-			context.Background(),
-			"DELETE FROM public.jobs WHERE idempotency_key = $1",
-			key,
-		); err != nil {
-			t.Errorf("delete test job: %v", err)
-		}
-	})
+	deleteJobByKey(t, pool, key)
+	t.Cleanup(func() { deleteJobByKey(t, pool, key) })
 
 	jobStore, err := jobpostgres.NewRepository(
 		pool,
