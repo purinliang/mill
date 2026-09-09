@@ -40,6 +40,15 @@ func TestRepositoryRejectsInvalidAttemptRequestsBeforeDatabaseAccess(
 			)
 			return err
 		},
+		"blank lease owner": func() error {
+			_, err := repository.ClaimNextAttempt(
+				context.Background(),
+				"kubernetes",
+				"",
+				15*time.Second,
+			)
+			return err
+		},
 		"invalid attempt ID": func() error {
 			_, err := repository.GetAttempt(context.Background(), "not-a-uuid")
 			return err
@@ -53,12 +62,38 @@ func TestRepositoryRejectsInvalidAttemptRequestsBeforeDatabaseAccess(
 			)
 			return err
 		},
+		"invalid lease token": func() error {
+			_, err := repository.CompleteAttempt(
+				context.Background(),
+				"00000000-0000-7000-8000-000000000001",
+				"not-a-uuid",
+			)
+			return err
+		},
 		"blank failure message": func() error {
 			_, err := repository.FailAttempt(
 				context.Background(),
 				"00000000-0000-7000-8000-000000000001",
 				"00000000-0000-7000-8000-000000000002",
 				" ",
+			)
+			return err
+		},
+		"oversized failure message": func() error {
+			_, err := repository.FailAttempt(
+				context.Background(),
+				"00000000-0000-7000-8000-000000000001",
+				"00000000-0000-7000-8000-000000000002",
+				strings.Repeat("x", 4097),
+			)
+			return err
+		},
+		"blank active-attempt executor": func() error {
+			_, err := repository.LeaseActiveAttempts(
+				context.Background(),
+				"",
+				"owner",
+				15*time.Second,
 			)
 			return err
 		},

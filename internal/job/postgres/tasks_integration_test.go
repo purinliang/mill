@@ -91,6 +91,29 @@ func TestRepositoryMaterializeLogicalShardsAndReportProgress(t *testing.T) {
 			ErrInputConflict,
 		)
 	}
+	changedShards = shards
+	changedShards.Shards = append(
+		changedShards.Shards,
+		LogicalShard{StartByte: 360, EndByte: 400},
+	)
+	if _, err := repository.Materialize(
+		context.Background(),
+		createdJob.ID,
+		changedShards,
+	); !errors.Is(err, ErrInputConflict) {
+		t.Fatalf(
+			"changed shard count error = %v, want %v",
+			err,
+			ErrInputConflict,
+		)
+	}
+	if _, err := repository.Materialize(
+		context.Background(),
+		"00000000-0000-7000-8000-000000000001",
+		shards,
+	); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing job error = %v, want %v", err, ErrNotFound)
+	}
 
 	if _, err := pool.Exec(context.Background(), `
 		UPDATE public.tasks

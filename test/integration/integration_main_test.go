@@ -1,5 +1,5 @@
-// This file serializes public PostgreSQL fixtures across test packages.
-package job_test
+// This file serializes cross-package PostgreSQL integration tests.
+package integration_test
 
 import (
 	"context"
@@ -21,7 +21,7 @@ func runWithDatabaseLock(m *testing.M) int {
 	}
 	connection, err := pgx.Connect(context.Background(), databaseURL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "acquire integration lock connection: %v\n", err)
+		fmt.Fprintf(os.Stderr, "acquire integration lock: %v\n", err)
 		return 1
 	}
 	defer connection.Close(context.Background())

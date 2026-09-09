@@ -117,6 +117,48 @@ func TestAttemptCanFailBeforeExternalExecutionStarts(t *testing.T) {
 	}
 }
 
+func TestAttemptMethodsReportMissingAttempt(t *testing.T) {
+	repository, _ := createAttemptTestJob(
+		t,
+		"integration:missing-attempt",
+		1,
+		1,
+	)
+	missingID := "00000000-0000-7000-8000-000000000001"
+
+	operations := map[string]func() error{
+		"get": func() error {
+			_, err := repository.GetAttempt(context.Background(), missingID)
+			return err
+		},
+		"start": func() error {
+			_, err := repository.MarkAttemptRunning(
+				context.Background(), missingID, missingID, "job-uid",
+			)
+			return err
+		},
+		"complete": func() error {
+			_, err := repository.CompleteAttempt(
+				context.Background(), missingID, missingID,
+			)
+			return err
+		},
+		"fail": func() error {
+			_, err := repository.FailAttempt(
+				context.Background(), missingID, missingID, "failed",
+			)
+			return err
+		},
+	}
+	for name, operation := range operations {
+		t.Run(name, func(t *testing.T) {
+			if err := operation(); !errors.Is(err, ErrAttemptNotFound) {
+				t.Fatalf("error = %v, want %v", err, ErrAttemptNotFound)
+			}
+		})
+	}
+}
+
 func TestAttemptClaimsRespectJobParallelism(t *testing.T) {
 	repository, _ := createAttemptTestJob(t, "integration:attempt-parallelism", 5, 2)
 

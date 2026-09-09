@@ -170,6 +170,57 @@ func TestRepositoryCreateReplayGetAndPersist(t *testing.T) {
 	}
 }
 
+func TestRepositoryFindSubmission(t *testing.T) {
+	databaseURL := integrationDatabaseURL(t)
+	pool := openIntegrationDatabase(t, databaseURL)
+	defer pool.Close()
+
+	key := "integration:find-submission"
+	deleteJobByKey(t, pool, key)
+	defer deleteJobByKey(t, pool, key)
+	repository, err := NewRepository(pool, "file:///tmp/mill-output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	submission := Submission{
+		Executable: Executable{Image: "mill/example:dev"},
+		Input:      InputSpec{URI: "file:///data/records.jsonl"},
+	}
+
+	value, found, err := repository.FindSubmission(
+		context.Background(), key, submission,
+	)
+	if err != nil || found || value.ID != "" {
+		t.Fatalf("initial lookup = %+v, found %t, error %v", value, found, err)
+	}
+	created, _, err := repository.Create(
+		context.Background(),
+		key,
+		submission,
+		testInputSHA256,
+		1,
+		1,
+		testResources,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, found, err = repository.FindSubmission(
+		context.Background(), key, submission,
+	)
+	if err != nil || !found || value.ID != created.ID {
+		t.Fatalf("stored lookup = %+v, found %t, error %v", value, found, err)
+	}
+
+	conflict := submission
+	conflict.Executable.Image = "mill/other:dev"
+	if _, _, err := repository.FindSubmission(
+		context.Background(), key, conflict,
+	); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("conflicting lookup error = %v", err)
+	}
+}
+
 func TestRepositoryConcurrentIdempotentCreate(t *testing.T) {
 	databaseURL := integrationDatabaseURL(t)
 	pool := openIntegrationDatabase(t, databaseURL)
