@@ -13,7 +13,7 @@ import (
 
 const maxRequestBodyBytes = 64 << 10
 
-func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
 		writeError(
@@ -75,7 +75,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		idempotencyKeys[0],
 		normalized,
 	)
-	if h.writeCreateError(w, err) {
+	if h.writeSubmissionError(w, err) {
 		return
 	}
 
@@ -87,7 +87,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, createdJob)
 }
 
-func (h *Handler) writeCreateError(w http.ResponseWriter, err error) bool {
+func (h *Handler) writeSubmissionError(
+	w http.ResponseWriter,
+	err error,
+) bool {
 	if err == nil {
 		return false
 	}
@@ -116,7 +119,7 @@ func (h *Handler) writeCreateError(w http.ResponseWriter, err error) bool {
 			"the input differs from the logical shards already planned for the job",
 		)
 	default:
-		h.logger.Printf("create job: %v", err)
+		h.logger.Printf("submit job: %v", err)
 		writeError(
 			w,
 			http.StatusInternalServerError,

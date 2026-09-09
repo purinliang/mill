@@ -15,7 +15,7 @@ import (
 
 const testMaxRequestBodyBytes = 64 << 10
 
-func TestCreateJob(t *testing.T) {
+func TestSubmitJob(t *testing.T) {
 	store := fakeStore{
 		create: func(
 			_ context.Context,
@@ -77,7 +77,7 @@ func TestCreateJob(t *testing.T) {
 	}
 }
 
-func TestCreateJobReplay(t *testing.T) {
+func TestSubmitJobReplay(t *testing.T) {
 	store := fakeStore{
 		create: func(
 			context.Context,
@@ -88,7 +88,7 @@ func TestCreateJobReplay(t *testing.T) {
 		},
 	}
 
-	response := serveValidCreate(t, store)
+	response := serveValidSubmission(t, store)
 	if response.Code != http.StatusOK {
 		t.Fatalf(
 			"status = %d, want %d",
@@ -98,7 +98,7 @@ func TestCreateJobReplay(t *testing.T) {
 	}
 }
 
-func TestCreateJobConflicts(t *testing.T) {
+func TestSubmitJobConflicts(t *testing.T) {
 	tests := []struct {
 		name string
 		err  error
@@ -127,7 +127,7 @@ func TestCreateJobConflicts(t *testing.T) {
 					return job.Job{}, false, test.err
 				},
 			}
-			response := serveValidCreate(t, store)
+			response := serveValidSubmission(t, store)
 			assertAPIError(
 				t,
 				response,
@@ -138,7 +138,7 @@ func TestCreateJobConflicts(t *testing.T) {
 	}
 }
 
-func TestCreateJobReportsInvalidInput(t *testing.T) {
+func TestSubmitJobReportsInvalidInput(t *testing.T) {
 	store := fakeStore{
 		create: func(
 			context.Context,
@@ -151,11 +151,11 @@ func TestCreateJobReportsInvalidInput(t *testing.T) {
 			}
 		},
 	}
-	response := serveValidCreate(t, store)
+	response := serveValidSubmission(t, store)
 	assertAPIError(t, response, http.StatusBadRequest, "invalid_input")
 }
 
-func TestCreateJobValidation(t *testing.T) {
+func TestSubmitJobValidation(t *testing.T) {
 	unusedStore := fakeStore{
 		create: func(
 			context.Context,
@@ -206,14 +206,14 @@ func TestCreateJobValidation(t *testing.T) {
 				"input":{"uri":"file:///data/records.jsonl"},
 				"unknown":true
 			}`,
-			headers: validCreateHeaders(),
+			headers: validSubmissionHeaders(),
 			status:  http.StatusBadRequest,
 			code:    "invalid_request",
 		},
 		{
 			name:    "multiple JSON values",
 			body:    `{} {}`,
-			headers: validCreateHeaders(),
+			headers: validSubmissionHeaders(),
 			status:  http.StatusBadRequest,
 			code:    "invalid_request",
 		},
@@ -223,14 +223,14 @@ func TestCreateJobValidation(t *testing.T) {
 				"executable":{"image":"mill/example:dev"},
 				"input":{"uri":"https://example.com/records.jsonl"}
 			}`,
-			headers: validCreateHeaders(),
+			headers: validSubmissionHeaders(),
 			status:  http.StatusBadRequest,
 			code:    "invalid_request",
 		},
 		{
 			name:    "body too large",
 			body:    strings.Repeat(" ", testMaxRequestBodyBytes+1),
-			headers: validCreateHeaders(),
+			headers: validSubmissionHeaders(),
 			status:  http.StatusBadRequest,
 			code:    "invalid_request",
 		},
@@ -256,7 +256,7 @@ func TestCreateJobValidation(t *testing.T) {
 	}
 }
 
-func TestCreateRejectsDuplicateIdempotencyHeaders(t *testing.T) {
+func TestSubmitRejectsDuplicateIdempotencyHeaders(t *testing.T) {
 	store := fakeStore{
 		create: func(
 			context.Context,
@@ -288,7 +288,7 @@ func TestCreateRejectsDuplicateIdempotencyHeaders(t *testing.T) {
 	)
 }
 
-func TestCreateHidesUnexpectedStoreErrors(t *testing.T) {
+func TestSubmitHidesUnexpectedStoreErrors(t *testing.T) {
 	backendFailure := errors.New(
 		"postgresql://admin:secret@database/mill",
 	)
@@ -301,7 +301,7 @@ func TestCreateHidesUnexpectedStoreErrors(t *testing.T) {
 			return job.Job{}, false, backendFailure
 		},
 	}
-	response := serveValidCreate(t, store)
+	response := serveValidSubmission(t, store)
 	assertAPIError(
 		t,
 		response,
@@ -313,7 +313,7 @@ func TestCreateHidesUnexpectedStoreErrors(t *testing.T) {
 	}
 }
 
-func serveValidCreate(
+func serveValidSubmission(
 	t *testing.T,
 	store fakeStore,
 ) *httptest.ResponseRecorder {
@@ -327,11 +327,11 @@ func serveValidCreate(
 			"executable":{"image":"mill/example:dev","args":[]},
 			"input":{"uri":"file:///data/records.jsonl"}
 		}`,
-		validCreateHeaders(),
+		validSubmissionHeaders(),
 	)
 }
 
-func validCreateHeaders() map[string]string {
+func validSubmissionHeaders() map[string]string {
 	return map[string]string{
 		"Content-Type":    "application/json",
 		"Idempotency-Key": "request-001",

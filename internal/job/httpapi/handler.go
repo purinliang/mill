@@ -40,7 +40,7 @@ func (h *Handler) handleCollection(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, http.MethodPost)
 		return
 	}
-	h.create(w, r)
+	h.submit(w, r)
 }
 
 func (h *Handler) handleResource(w http.ResponseWriter, r *http.Request) {
