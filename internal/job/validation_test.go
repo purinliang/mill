@@ -2,9 +2,37 @@
 package job
 
 import (
+	"errors"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+func TestValidateParallelismUsesDocumentedBounds(t *testing.T) {
+	for _, parallelism := range []int{1, MaxParallelism} {
+		if err := ValidateParallelism(parallelism); err != nil {
+			t.Fatalf("ValidateParallelism(%d): %v", parallelism, err)
+		}
+	}
+
+	for _, parallelism := range []int{0, MaxParallelism + 1} {
+		err := ValidateParallelism(parallelism)
+		var validationError *ValidationError
+		if !errors.As(err, &validationError) {
+			t.Fatalf(
+				"ValidateParallelism(%d) error = %T, want ValidationError",
+				parallelism,
+				err,
+			)
+		}
+		if validationError.Field != "parallelism" || !strings.Contains(
+			validationError.Problem,
+			strconv.Itoa(MaxParallelism),
+		) {
+			t.Fatalf("validation error = %+v", validationError)
+		}
+	}
+}
 
 func TestNormalizeSubmission(t *testing.T) {
 	submission, err := NormalizeSubmission(Submission{
