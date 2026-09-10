@@ -1,129 +1,113 @@
-# Mill roadmap
+# Roadmap
 
-This document records the staged development path. A milestone marked
-**implemented locally** has local evidence only; it is not a production or
-cloud availability claim.
+This file preserves milestone intent and evidence as the implementation
+changes. An **implemented locally** milestone has local evidence only; it does
+not make a production, cloud, or physical-node availability claim.
 
 ## Current status
 
 Implemented:
 
-- HTTP liveness, PostgreSQL-backed readiness, submission, and status;
+- HTTP submission, status, liveness, and PostgreSQL-backed readiness;
 - streaming JSONL validation, identity, and logical partitioning;
-- local-file and S3-compatible input and output adapters;
-- atomic task materialization and durable progress;
-- concurrency-safe claims, retries, attempt history, leases, and fencing;
+- durable jobs, tasks, attempts, retries, leases, and fencing;
 - native Kubernetes Job execution with deterministic attempt identity;
-- a versioned Protobuf/gRPC boundary between Job and execution services;
-- workload resource classes propagated from submission to Kubernetes;
-- minimal non-root images and a single-node kind deployment; and
-- exact-result demonstrations for local, S3-compatible, split-process, restart,
-  retry, execution Pod failure, and Job Pod failure paths.
+- a Protobuf/gRPC boundary between Job and execution services;
+- local-file and S3-compatible inputs and outputs;
+- workload resource classes and non-root example images; and
+- deterministic process, Pod, retry, and output demonstrations.
 
-Not implemented or not yet demonstrated on the target environment:
+Not yet demonstrated on the target environment:
 
-- internal gRPC authentication;
-- physical multi-node replica placement and PostgreSQL replication;
-- network-partition or physical-node failure tests;
-- arbitrary workload-output aggregation;
-- AWS/EKS, Terraform, or CI/CD; and
-- production security, operations, or availability guarantees.
+- physical multi-node placement and PostgreSQL replication;
+- node loss or network-minority behavior;
+- real AWS S3, EC2, ECR, and Terraform deployment;
+- CI/CD and measured scaling; and
+- production security or availability guarantees.
 
 ## 0 — Foundation — implemented
 
-Define goals, non-goals, terminology, architecture, lifecycle, and repository
-conventions.
+Defined goals, non-goals, terminology, architecture, lifecycle, and repository
+conventions before adding application code.
 
 ## 1 — Local control plane — implemented
 
-Create and retrieve jobs, persist metadata in PostgreSQL, partition JSONL
-input, materialize tasks, and report progress.
+Added job submission and retrieval, PostgreSQL persistence, JSONL validation,
+logical partitioning, task materialization, and durable progress.
 
 ## 2 — Workload contract — implemented
 
-Define a stable CLI contract for one task attempt, build trusted reference
-images, and verify assigned byte-range behavior.
+Defined stable task arguments for identity, input range, output URI, and
+unchanged user arguments. Reference images verify the byte-range contract.
 
 ## 3 — Kubernetes execution — implemented locally
 
-Create and observe one native Kubernetes Job per Mill attempt, enforce job
-parallelism, and expose successful output URIs.
+Added one native Kubernetes Job per attempt, bounded job parallelism, resource
+limits, successful output locations, and deterministic external identities.
 
 ## 4 — Reliable execution — in progress
 
-Bound retries, preserve attempt history, delay retry eligibility durably, and
-recover the same Kubernetes identities after execution process loss. Durable
-leases renew or transfer attempt ownership and reject stale state changes.
-Wider dispatch crash windows, resource deletion, long API stalls, and network
-ambiguity remain.
+Mill retains attempt history, waits five durable seconds before retry, and
+allows three attempts per task. Execution replicas lease active attempts,
+renew ownership, take over expired leases, and fence stale writers.
+
+Process restart, concurrent-replica takeover, and Pod deletion have preserved
+attempt and Kubernetes Job identities. Wider Kubernetes API ambiguity,
+resource deletion, long stalls, and network partitions remain unproven.
 
 ## 5 — Shared object storage — implemented locally
 
-Read and partition JSONL through S3-compatible storage, use byte-range requests
-inside workload Pods, and publish unique attempt outputs without hostPath or
-node pinning. Real AWS S3 remains untested.
+Added streaming and ranged S3-compatible access and unique attempt outputs.
+The complete batch runs without hostPath or node pinning against disposable
+SeaweedFS. Real AWS S3 remains untested.
 
-## 6 — Service boundary and resource classes — implemented locally
+## 6 — Service boundary and resources — implemented locally
 
-The execution domain contract, versioned Protobuf/gRPC adapters, Job-side
-listener, standalone execution service, direct-path removal, and execution
-failover proof are implemented. Named workload classes persist resolved CPU
-and memory values so retries remain stable if server profiles change.
+Separated the Job and execution processes through versioned Protobuf/gRPC.
+Only the Job service accesses PostgreSQL; execution replicas own Kubernetes
+reconciliation. Server-defined resource classes persist resolved values so a
+retry is not changed by later configuration.
 
-## 7 — Two-laptop replica availability — in progress
+## 7 — Replica availability — in progress
 
-Use one K3s server and one K3s agent. Spread two Job replicas and two execution
-replicas across the laptops. Run a CloudNativePG primary and standby with
-availability-oriented synchronous replication. Demonstrate individual Mill
-Pod failure and controlled PostgreSQL Pod promotion. This stage will not claim
-whole-laptop or network-partition tolerance.
+The single-node deployment runs both Mill services as Pods. Tests delete an
+active execution Pod or Job Pod and require takeover or reconnection without
+new attempts or Kubernetes Jobs.
 
-The single-node prerequisite is implemented. Both services run as Deployments
-and communicate through a ClusterIP Service. Workload Jobs are isolated in a
-namespace where the execution service may only create and get Jobs. The
-12-task S3 demonstration verifies exact results and bounded parallelism.
+A two-node kind simulation also passed synchronous PostgreSQL promotion and
+exact output recovery. The K3s installer, two-node manifests, and destructive
+acceptance runner exist, but they have not run on two physical laptops. This
+milestone therefore claims Pod recovery only, not whole-node tolerance.
 
-Single-node tests have also demonstrated execution Pod deletion with fenced
-lease takeover and Job Pod deletion with REST/gRPC reconnection. Attempt IDs,
-Kubernetes Job names, Job UIDs, and durable work remain stable.
+The operational procedure and required evidence are in the
+[availability](deployment/availability.md).
 
-Pinned role-based K3s installation, availability manifests, and a destructive
-two-node acceptance runner are implemented but have not run on two physical
-laptops. A two-node kind simulation passed Mill Pod deletion, synchronous
-standby promotion, connection recovery, stable execution identities, and
-byte-exact output. This validates the manifests, not a physical-laptop failure
-domain.
+## 8 — Disposable AWS three-node quorum — planned
 
-The manifests under `deploy/kubernetes/availability` define two replicas of
-each Mill service, required hostname anti-affinity, disruption budgets, and
-separate two- and three-node CloudNativePG profiles. Both profiles pass
-Kubernetes and CloudNativePG 1.30.0 admission validation.
+Use Terraform to provision three EC2 nodes across three Availability Zones.
+Run one K3s server/etcd voter and one CloudNativePG instance on each node. Use
+S3 for input and output objects and ECR for immutable images.
 
-Continue focused reviews after each slice, but defer the next overall
-architecture refactor until Milestone 8 supplies new failure evidence.
+First verify the local workload against real S3. Then run the 12-task batch on
+the cluster and test Pod loss, PostgreSQL primary loss, one EC2-node loss, and
+minority isolation. The majority must continue, the minority must refuse
+authoritative writes, PostgreSQL must retain one writer, and execution
+identities and final output must remain exact.
 
-## 8 — Three-node quorum availability — planned
+The three-instance database manifest is admission-tested, but the AWS
+infrastructure and runtime evidence do not exist yet. See the target
+[AWS deployment](deployment/aws.md).
 
-Add a third independent failure domain, run three K3s server/etcd voters, and
-place one PostgreSQL instance on each node. Use required synchronous
-replication and failover quorum, then test one physical-node loss and an
-isolated minority without conflicting writers or duplicate attempts.
-Full-stack claims also require replicated object storage or AWS S3.
+After this milestone, perform the next broad architecture review using the new
+Pod, database, node-loss, and minority-isolation evidence.
 
-The three-instance CloudNativePG manifest is implemented and admission-tested,
-but the three-node runtime and failure evidence remain planned.
+## 9 — CI/CD and deployment automation — planned
 
-After this milestone, perform the overall review using evidence from both the
-two-laptop and three-node systems. Preserve Pod failure, database promotion,
-node-loss, and minority-isolation evidence as regression tests.
-
-## 9 — CI/CD and disposable AWS deployment — planned
-
-Run formatting and tests continuously. Make Terraform deployment and teardown
-manual, deploy a temporary AWS demonstration, collect evidence, and destroy
-all billable resources afterward.
+Continuously run formatting and tests. Make installation, evidence capture,
+and teardown repeatable while keeping billable Terraform apply and destroy
+manual.
 
 ## 10 — Evaluation — planned
 
 Measure throughput, scaling with parallelism, failure interruption,
-reconciliation time, and memory use for different workload classes.
+reconciliation time, and memory use for each workload class.

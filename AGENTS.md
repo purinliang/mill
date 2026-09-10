@@ -5,9 +5,10 @@ Mill. Follow the current milestone and preserve the deliberately small,
 learning-oriented scope.
 
 Read the nearest package `README.md` and `AGENTS.md` before changing a package.
-The root [README](README.md) summarizes the project, while
-[Architecture](docs/architecture.md), [Development](docs/development.md), and
-the [roadmap](docs/roadmap.md) hold detailed system-wide documentation.
+The root [README](README.md) summarizes the project. System design lives in
+[Architecture](docs/architecture.md), staged work in the
+[roadmap](docs/roadmap.md), and operational guides are grouped under
+`docs/development` and `docs/deployment`.
 
 ## Scope discipline
 
